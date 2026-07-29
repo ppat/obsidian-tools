@@ -1,0 +1,50 @@
+# editor / OS noise
+.DS_Store
+._*
+Thumbs.db
+*.swp
+.idea/
+
+# python
+.cache
+.eggs/
+.Python
+build/
+eggs/
+dist/
+sdist/
+wheels/
+*.egg-info/
+*.egg
+*.py[cod]
+**/__pycache__/
+MANIFEST
+
+# python testing
+.coverage
+.coverage.*
+.hypothesis/
+.nox/
+.pytest_cache/
+.tox/
+coverage.xml
+htmlcov/
+cover/
+
+# python type checking
+.mypy_cache/
+.pyright/
+pyrightconfig.json
+
+# python linting
+.ruff_cache/
+
+# uv
+.venv/
+# uv.lock is intentionally NOT ignored — lock files belong in version control
+
+# node (commitlint)
+node_modules/
+
+# mise vscode extension
+.vscode/mise-tools/

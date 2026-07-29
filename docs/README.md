@@ -10,7 +10,7 @@ Read `DESIGN.md` first, and read it as current. Read the other three only for th
 ## Reading order and authority
 
 | Document | Role | Authority |
-|---|---|---|
+| --- | --- | --- |
 | [`DESIGN.md`](./DESIGN.md) | The design itself: what BRAIN is, why it's shaped this way, what remains open | **Current design of record.** Supersedes CANON-1 and CANON-2 wherever they conflict with it. |
 | [`FINDINGS-v1-source-review.md`](./FINDINGS-v1-source-review.md) | A primary-source review conducted to check claims made in CANON-1 and CANON-2 against upstream documentation and repositories | Corrects specific claims in the two canon documents below — see "Corrections to canon" in that file. Superseded, in turn, by anything `DESIGN.md` says explicitly. |
 | [`CANON-1-designing-brain.md`](./CANON-1-designing-brain.md) | Research input: community practice for vaults written and organised by multiple agents | Research input, not current guidance on its own. Read through `DESIGN.md` and `FINDINGS-v1`, not standalone. |
@@ -42,6 +42,6 @@ and check `FINDINGS-v1` before relying on it.
 
 ## Status
 
-No code in this repository exists yet — see the root [`README.md`](../README.md) and `CLAUDE.md`
+No code in this repository exists yet — see the root [`README.md`](../README.md) and [`CLAUDE.md`](../CLAUDE.md)
 for what's here today. These documents describe the target design that the rest of this repository, once
 written, implements.

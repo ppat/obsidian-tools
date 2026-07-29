@@ -181,6 +181,7 @@ Validate on ~100–200 notes:
 ## Recommendations
 
 **Stage 1 — Foundation (before any agent writes):**
+
 1. Write `AGENTS.md` + `CLAUDE.md` schema file first. Highest-leverage artifact.
 2. Adopt the base frontmatter schema; commit `_templates/`, `00-index.md` Home MOC, `log.md`, `TODO.md`.
 3. Lock the retroactively-painful settings.
@@ -195,6 +196,7 @@ Validate on ~100–200 notes:
 8. Put lint on a schedule; review weekly alongside the inbox. Enforce the finance overlay.
 
 **Thresholds that should change the approach:**
+
 - **Vault > ~500 notes with 5–10 captures/day and inbox regularly > 20** → automated maintenance pays for itself; formalise scheduled lint/triage.
 - **Flat `index.md` stops fitting in context (low thousands of pages)** → add hybrid search (BM25 + local embeddings); a retrieval concern, not a reorg.
 - **Near-duplicate pages appearing** → tighten the page-exists check and canonical naming before adding more agents.
