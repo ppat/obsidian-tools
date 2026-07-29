@@ -29,7 +29,7 @@
 ✅ native/strong · ⚠️ partial/needs work · ❌ absent/blocker
 
 | # | Criterion | cyanheads | shanehull/obsidian-remote | bitbonsai/mcpvault | Local REST API built-in MCP (v4) | StevenStavrakis | jlevere Vault MCP |
-|---|---|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | Active maintenance | ✅ 233 commits, v3.2.9 | ⚠️ active but 1★, single dev | ✅ 1.6k★, 243 commits | ✅ core plugin, active | ⚠️ 628★, last updated 2026-02-19 | ⚠️ niche, active |
 | 2 | Headless / no Electron | ❌ needs Obsidian+plugin (can be in-cluster headless) | ✅ bundles headless Obsidian | ✅ pure filesystem | ❌ runs inside Obsidian | ✅ pure filesystem | ❌ runs inside Obsidian |
 | 3 | Path-scoped writes | ✅ `OBSIDIAN_READ_PATHS`/`WRITE_PATHS`/`READ_ONLY` | ⚠️ inherits REST API; scoping if cyanheads layered | ❌ traversal guard only, no allow-list | ❌ none | ❌ none | ⚠️ schema-driven, not folder allow-list |
@@ -91,6 +91,7 @@ LiteLLM's MCP Gateway filters access **at the server (namespace) level per virtu
 **Stage 5 — Harden concurrency & recovery (next).** Confirm all clients only ever write through the single MCP→single headless-Obsidian path (never a second filesystem writer). Prefer append/patch over overwrite in agent prompts. Rely on git detect-and-escalate for conflict recovery. Add liveness/readiness probes on the REST API and MCP endpoints so Flux restarts a wedged Electron process.
 
 **Benchmarks that would change this recommendation:**
+
 - If Electron/Chromium in-cluster is intolerable (memory, flakiness), **flip to `bitbonsai/mcpvault`** and accept: (a) an HTTP-transport shim in front of it or per-client sidecars since it's stdio-only, and (b) hard single-writer discipline, because its concurrent-write race is real. Gains "no Electron," loses path-scoped writes and native HTTP.
 - If `shanehull/obsidian-remote` gains adoption, releases a pull-able image, and matures, it becomes the turnkey Stage-1+2 combo, collapsing two workloads into one.
 - If Obsidian ships/expands its official headless client for automation, revisit whether the REST-bridge stack can be simplified.

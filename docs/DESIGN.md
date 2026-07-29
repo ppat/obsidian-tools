@@ -23,7 +23,7 @@ Karpathy's LLM Wiki pattern is *"by design multi write with zero human involveme
 ### 1.2 Enumerating writers
 
 | Writer | Nature | Path to bytes |
-|---|---|---|
+| --- | --- | --- |
 | OpenClaw (WhatsApp-triggered) `[U]` | machine | LiteLLM → MCP `[U, C2]` |
 | Home Assistant voice `[U]` | not a distinct writer — HA's LLM hands off to OpenClaw | collapses into OpenClaw `[D]` |
 | n8n daily organise `[U]` | machine | LiteLLM only, SSRF-allowlisted `[U]` |
@@ -44,7 +44,7 @@ Karpathy's LLM Wiki pattern is *"by design multi write with zero human involveme
 The authoritative bytes are one directory on one volume in the cluster `[D]`. A writer is *gateable* iff every path from it to that directory crosses a control point. There are eleven named paths: six are closed or neutralised; P1 and P8 are the two live entrances named in §1.1; P1′ and P6′ are producers that feed into P1 rather than separate routes to bytes; P9 is a deliberate, rare, operator-initiated exception for disaster recovery, not part of ordinary operation.
 
 | # | Path | Gated by | Status |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | P1 | client → LiteLLM (agent handle) → cyanheads MCP (agent instance) → Local REST API → Obsidian → fs | LiteLLM handle + tool filtering `[C2, F]`; `OBSIDIAN_WRITE_PATHS` on the agent instance `[C2, F]`; append/patch primitives `[C2]`; optimistic-concurrency `ifMatch` on modify/patch `[F]`; promotion validator `[C2 Stage 4]` | **gated, 4 points — the live door** |
 | P1′ | batch producer → FIFO queue → batch processor → LiteLLM *ingestor* handle → ingestor cyanheads instance → REST API → Obsidian → fs | everything gating P1, plus: producer allowlist restricted to the Coder workspace `[U]`; base-commit staleness check, granularity flagged for implementation (§8b G9) `[U]`; `05-raw/` create-only immutability check `[U]` | a producer feeding P1, not a second route to bytes `[D]` |
 | P2 | client → Local REST API directly with bearer token | no path-scoped writes at this layer `[C2]` | gated only by network + secret isolation `[D]` |
@@ -74,6 +74,7 @@ Most of the multi-writer problem dissolves structurally: the raw layer is immuta
 **R1 — Lost update on read-modify-write.** Process serialisation prevents *torn files*, not *logical clobbering*. [CANON-2](./CANON-2-mcp-research.md) calls its own serialisation *"an architectural side-effect, not a promised feature"* `[C2]`, and the source review found no guarantee either — the property must not be over-trusted `[F]`.
 
 Three layers carry the load:
+
 - **Append/patch over overwrite** `[C2]` — disjoint-section operations commute, making the majority of agent writes immune by construction `[D]`. This carries the bulk of the load.
 - **Optimistic concurrency.** Local REST API **5.0.0** returns a content-hash `version` in the document map; passing it back as `ifMatch` on modify/patch makes a stale write fail `412 Precondition Failed` instead of applying silently `[F]`. Opt-in per request, and applied to modify/patch only — create and append have no prior version to assert against, so the extra round-trip would be unearned `[U]`. This is a new primitive under R1, additive to the commutativity argument, not a replacement for it.
 - Every mutating cyanheads tool returns `previousSizeInBytes`/`currentSizeInBytes`, usable for clobber self-detection `[F]`. For whole-page regeneration specifically: sentinel markers `[C1]` plus a page-level lease `[C1]` held only by regeneration jobs.
@@ -180,7 +181,7 @@ flowchart TB
 ### What must be up for what
 
 | Capability | Requires |
-|---|---|
+| --- | --- |
 | Any agent write | cluster only |
 | Ingest / lint / promotion | cluster only |
 | Bulk restructuring of the vault | cluster + the Coder workspace — i.e. a human started it `[U]` |
@@ -204,7 +205,7 @@ This isn't treated as a hard requirement, because Gate 5 (admission validation a
 **Gate 1 — LiteLLM handle, virtual key and tool scope** `[C2 Stage 3]`. `obsidian_delete_note` and `obsidian_execute_command` are on no agent key `[C2]`. Two handles onto two instances (§2):
 
 | Client | Handle | Tools |
-|---|---|---|
+| --- | --- | --- |
 | n8n | agent | read/search + narrow frontmatter-status update + append to `log.md` only `[D — see §8a D1]` |
 | OpenClaw | agent | read/search, create-in-inbox, append, patch, frontmatter, tags `[C2]` |
 | Claude Code | agent | as OpenClaw, plus section/structural edits `[C2]` |
@@ -237,6 +238,7 @@ Its built-in MCP endpoint **cannot be disabled** `[F]`: no such setting exists i
 ### The batch lane
 
 **The shape** `[U]`:
+
 - Producers don't edit the vault. A producer generates a git patch and enqueues it.
 - A patch is split into chunks at logical points, from day one — not added later once patches grow.
 - Chunk = one queue message = the transaction unit, not the batch. Atomicity is at the chunk, which is also the unit of redelivery.
@@ -279,7 +281,7 @@ One residual check survives even with a single producer: `05-raw/` is immutable,
 [CANON-2](./CANON-2-mcp-research.md): *"Schema enforcement and concurrency safety are gaps you own, not gaps a server closes for you."* `[C2]` Its options, scored (a = epistemically coherent, b = ontologically coherent, c = feasible, d = lowest downside among the options, e = evidence of success via community existence):
 
 | Option | a | b | c | d | e |
-|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- |
 | (i) Validation proxy in front of MCP | 3 | 2 | 2 | 2 | 1 |
 | (ii) Write-to-inbox + validate-and-promote worker | 4 | 5 | 5 | 4 | 3 |
 | (iii) Prompt discipline only | 2 | 3 | 5 | 1 | 2 |
@@ -324,7 +326,7 @@ For the todo engine specifically, this plane beats the Obsidian app because it p
 **Transport into the Mac clone.** Pull-only git clone `[D]`:
 
 | Transport | a | b | c | d | e |
-|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- |
 | **git clone, pull-only** ✅ | 5 | 5 | 5 | 5 | 4 |
 | rsync from NAS `[U]` | 4 | 3 | 5 | 3 | 4 |
 | SMB/NFS network mount `[U]` | 3 | 2 | 4 | 2 | 2 |
@@ -334,6 +336,7 @@ Git wins on **(b)**: the vault already needs git for history `[C1]`, so replicat
 **Git is not a merge authority here.** The volume is authoritative; git is a derived, append-only history `[D]`. The clone is downstream and never pushes. (A previous attempt at design recommended leaning on git as merge-authority-by-detect-and-escalate, which turned out, on inspection, to be circular — that recommendation was itself citing back that same previous attempt — so it's not treated as canon; §8a D2.) There are no concurrent writers here for git to reconcile; it records and distributes, nothing more.
 
 **The replication cycle, in the order it runs** `[U]`:
+
 1. **Before pulling**, compare the iCloud tree against a second local checkout pinned at the `LAST_CHECKOUT` tag — byte-identical to what was last placed there. `rsync -n -ai` between the two enumerates *which paths* drifted — it's a dry run, so it produces an enumeration, not file contents.
 2. For every path the enumeration flags, **copy that file's actual contents into a durable capture store on the cluster side** — not the Mac, which is the machine whose loss already forfeits the baseline (§4, below) — before anything is allowed to overwrite it. This is the step that keeps the *text*, not just the fact that something changed.
 3. The **drift-reconciliation channel** reads from that durable store — not from memory of step 1's enumeration — and dispatches into the funnel for reconciliation (§1.5 R2).
@@ -350,7 +353,7 @@ The enumeration and the content-capture are deliberately two separate steps rath
 "Optimize Mac Storage" **off** eliminates the eviction/dataless-stub class of failure specifically — it's *"a partial mitigation at best, not a fix"* for the other two mechanisms `[U]`. The measures compose:
 
 | Failure mechanism | Removed by |
-|---|---|
+| --- | --- |
 | Dataless `.icloud` stubs / eviction | "Optimize Mac Storage" **off** |
 | `.git` ref corruption (`main 2`) | `.git` **outside** iCloud |
 | `fileproviderd` reverting POSIX writes | neither — residual |
@@ -400,7 +403,7 @@ _ops/
 **Ownership contract** — the thing [CANON-1](./CANON-1-designing-brain.md) says actually matters:
 
 | Layer | Owner | Mutability |
-|---|---|---|
+| --- | --- | --- |
 | `05-raw/` | ingest | write-once, immutable `[C1]` — no concurrency semantics at all; enforced in the batch processor as create-permitted / modify-and-delete-refused `[U]` |
 | `00-inbox/`, `40-journal/`, `_ops/agent/` | agents | freely mutable, path-scoped `[C2]` |
 | `10-areas/`, `20-projects/` | promotion validator | mutable only via the promotion gate `[D]` |
@@ -458,7 +461,7 @@ Two precisions worth stating explicitly, because both are easy to get wrong in a
 A brief comparison of the alternative considered and rejected:
 
 | Option | a | b | c | d | e |
-|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- |
 | Single overloaded `source:` field, human/import as claim-authority values mixed with process names | 3 | 2 | 5 | 3 | 3 |
 | **Three fields: `source:` / `authority:` / `trigger:`** ✅ | **5** | **5** | **5** | **4** | **2** |
 
@@ -497,7 +500,7 @@ Drift is the single biggest failure mode at scale in the community pattern this 
 **Auto-fix vs flag** — a lint bot may auto-fix mechanical breakage (dead links) but never content claims `[C1]`:
 
 | Auto-fix (mechanical) | Flag only (judgment) |
-|---|---|
+| --- | --- |
 | YAML key order, ISO dates, lowercase tags, banned-Unicode characters `[C1, F]` | Contradictions between notes `[C1]` |
 | Insert *missing* required fields — never overwrite existing `[C1]` | Stale claims / expired recency markers `[C1]` |
 | `updated:` stamping `[C1]` | Orphan disposition `[C1]` |
@@ -509,6 +512,7 @@ Drift is the single biggest failure mode at scale in the community pattern this 
 **One-authority note:** the validator *admits*, the Linter *normalises*, at different times `[D]`. Normalisation is a lint-pass function, **not on-save** — otherwise a plugin could silently reshape frontmatter after the validator already approved it, giving frontmatter shape two owners. This is a permanent property of running Linter and Frontmatter Date Manager inside the writing instance, not a special case of any particular mode — it applies identically to ordinary agent traffic and to a batch run.
 
 **Where output surfaces — the phone constraint.** Three tiers `[D]`:
+
 1. `_ops/lint/YYYY-MM-DD.md` — full report, plus a one-line append to `log.md` `[C1]`.
 2. **WhatsApp digest via OpenClaw** `[U]` — ranked, hard-capped at ~7 items, one line each. Replies (`approve 1,3` / `skip 2` / `explain 4`) flow back through OpenClaw → LiteLLM → MCP and apply the fix. The review loop closes with zero new components — the mandatory review gate becomes something that actually gets done, because it arrives where the human already is.
 3. Grafana `[U]` — drift rate, quarantine depth, inbox depth. Alert when inbox is regularly >20 `[C1]`.
@@ -670,6 +674,7 @@ Each entry: the claim, what rests on it, where it now stands.
 **Named-external-dependency audit.** Everything named traces to [CANON-1](./CANON-1-designing-brain.md) (Obsidian and its named plugins, Karpathy's LLM Wiki, `obsidian-second-brain`, OKF, git, JSON Schema, BM25/embeddings, Bun), [CANON-2](./CANON-2-mcp-research.md) (cyanheads, Local REST API, shanehull/linuxserver/sytone images, mcpvault, jlevere, LiteLLM MCP Gateway, Xvfb/Electron, CronJob/Ingress/sidecar), [FINDINGS-v1](./FINDINGS-v1-source-review.md)'s primary sources (iCloud as Obsidian's own documented iOS path; Selkies/KasmVNC as what the recommended bases already ship), or the operator directly (Kubernetes/k3s, Flux, Longhorn, Traefik, cert-manager, external-dns, ExternalSecrets, Bitwarden, Prometheus/Grafana/Loki, Synology, NFS/SMB/rsync, s6-overlay, NATS or RabbitMQ, OpenClaw, n8n, Open WebUI, Claude Code and the Coder workspace, Home Assistant, WhatsApp, MacBook, iOS).
 
 **What the audit caught** — candidates reached for and removed, and one that came back on different grounds:
+
 - a named sync product for the iOS read path → replaced by G1, which then closed on iCloud — named not because a product was reached for, but because it's the vendor's own free, documented recommendation, established by primary-source review. That distinction is the whole point of the audit: it's named as canon-equivalent fact, not as a chosen dependency.
 - a named git-hosting product for the remote → replaced by G3; git itself stays because [CANON-1](./CANON-1-designing-brain.md) names it, but no server product does.
 - a named embedding/vector store → replaced by G6.
@@ -680,7 +685,7 @@ Each entry: the claim, what rests on it, where it now stands.
 **One-authority-per-concern audit.** Candidate collisions, all resolved:
 
 | Concern | Candidates | Resolution |
-|---|---|---|
+| --- | --- | --- |
 | Authoritative bytes | volume vs git | **Volume.** Git is derived history |
 | Frontmatter shape | validator vs Linter vs Date Manager | **Validator admits; Linter normalises** in the lint pass only — never on save |
 | Access control: who may call | LiteLLM handles | **Two handles** — agent and ingestor |

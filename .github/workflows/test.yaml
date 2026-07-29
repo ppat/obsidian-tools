@@ -1,0 +1,35 @@
+---
+# yamllint disable rule:line-length
+name: test
+
+on:
+  pull_request:
+  push:
+    branches:
+    - main
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+    - name: Setup repository and tools
+      uses: ppat/homelab-ops-actions/actions/setup-repository-tools@f1ae73db4ab080b7e8dc66d078e5905d5ca526cb # v2.1.0
+      with:
+        current_git_ref: ${{ github.head_ref || github.ref }}
+        current_repository: ${{ github.repository }}
+        token: ${{ secrets.GITHUB_TOKEN }}
+    - name: Install dependencies
+      working-directory: ./current
+      run: mise exec -- uv sync --all-extras
+    - name: Run tests
+      working-directory: ./current
+      run: mise exec -- uv run pytest

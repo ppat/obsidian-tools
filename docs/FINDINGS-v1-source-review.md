@@ -99,23 +99,28 @@ These are deployment-specific questions with no externally citable claim.
 ## 2. New findings by source
 
 ### coddingtonbear/obsidian-local-rest-api
+
 - Major rewrite to **5.0.2**: PATCH engine v1→v2 with JSON-object instructions; **DELETE now trashes by default** rather than permanently deleting.
 - **Footgun:** 5.0.0 and 5.0.1 briefly required a Catalyst-only Obsidian pre-release. Relevant to anyone pinning `latest`.
 - Periodic-note support split out into a separate companion plugin.
 
 ### Karpathy `llm-wiki` gist comment thread
+
 - A **four-tier versioning model** — Raw → Staging → Mart/Wiki → Schema — beyond canon's two/three-layer summary.
 - A specific **two-stage embedding + LLM dedup pipeline** reported reaching *"F1 to 1.000"*.
 - A governance note: the schema should have **"one owner (or small council)"**, not open co-evolution.
 
 ### eugeniughelbur/obsidian-second-brain
+
 - The hook script's **path-exclusion list** (`raw/`, `templates/`, `_export/`, `.obsidian/`, `.git/`, `boards/`, plus named operating files) is a concrete precedent for content-vs-operating-file separation.
 - A **banned-Unicode-character mechanical rule** not mentioned in canon.
 
 ### codeculture.store / greg-asher/codex-obsidian
+
 The repo is real (23★, active) but its own README explicitly states *"it does not bundle MCP servers or connector apps"* — contradicting the marketing article's "official Codex AI Agent plugin" framing and its specific behavioural claims. **Corroborates canon's fraud flag.**
 
 ### obsidianmd/obsidian-headless
+
 A genuinely new **official npm CLI** for Obsidian Sync, supporting `--mode pull-only`. Named by neither canon doc. Requires paid Sync.
 
 ---
@@ -123,7 +128,7 @@ A genuinely new **official npm CLI** for Obsidian Sync, supporting `--mode pull-
 ## 3. Corrections to canon
 
 | # | Correction | Severity |
-|---|---|---|
+| --- | --- | --- |
 | 1 | **[CANON-1](./CANON-1-designing-brain.md)'s "PostToolUse blocks writes" claim is false** — per Claude Code's own docs and per the reference project's own hook config (V9) | **Highest** |
 | 2 | [CANON-2](./CANON-2-mcp-research.md)'s *"no published image"* for `shanehull/obsidian-remote` is outdated (V10) | Moderate |
 | 3 | [CANON-2](./CANON-2-mcp-research.md)'s date for `StevenStavrakis/obsidian-mcp` (*"last updated 2026-02-19"*) does not match GitHub's `pushed_at` (**2025-06-23**) — a year earlier and far staler than stated. Flagged as a discrepancy, not resolved | Moderate |
