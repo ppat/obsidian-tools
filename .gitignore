@@ -1,3 +1,10 @@
+# editor / OS noise
+.DS_Store
+._*
+Thumbs.db
+*.swp
+.idea/
+
 # python
 .cache
 .eggs/
@@ -9,7 +16,7 @@ sdist/
 wheels/
 *.egg-info/
 *.egg
-*.pyc
+*.py[cod]
 **/__pycache__/
 MANIFEST
 

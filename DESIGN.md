@@ -40,6 +40,26 @@ of these components is reusable outside this project. One repository, one Python
 | Frontmatter validator | Enforce the JSON-Schema contract at the promotion gate | Silently drop or "fix" a note that fails validation — quarantine it, never delete it |
 | Replication script (Mac) | Keep the iCloud-synced Obsidian vault current from the cluster's authoritative copy, one-way | Push a device-side edit back onto the authoritative volume — that's the drift channel's job, not this script's |
 
+## The volume mount contract
+
+Exactly three processes ever mount the vault volume, each on a deliberately disjoint or read-only slice — see
+`docs/DESIGN.md` §1.3 (path P4) and §2 (items 1, 4, 5) for the full reasoning: headless Obsidian, read-write on
+content; the **vault worker**, read-only on content; and the **git committer**, read-only on content and
+write-only on `.git/`. Nothing else mounts it — this is the same "single writer" invariant from
+["The write model, in one paragraph"](#the-write-model-in-one-paragraph) restated as a mount policy, not a
+separate rule.
+
+- The vault worker's read-only content mount exists specifically for its **lint entrypoint**: lint needs
+  whole-vault visibility, and routing that many reads through the MCP gateway into headless Obsidian's
+  single-threaded event loop would contend with the same path a bulk import already saturates for hours at a
+  time (`docs/DESIGN.md` §2 item 4, §3 "The throughput cost, and the escape hatch"). Reading is not writing, so
+  this mount doesn't touch the single-writer invariant — the worker still **writes exclusively through the MCP
+  gateway**, never to the filesystem, exactly like every other writer.
+- The **batch processor** takes no volume mount at all — its input is the patch queue, not the filesystem, and
+  every write it makes travels through the same MCP path as ordinary ingest, under the ingestor handle
+  (`docs/DESIGN.md` §1.3 path P1′, §2 item 9, §3 "The batch lane"). Giving it a mount would make it a fourth
+  mounter and break the invariant above; don't add one.
+
 ## Architecture
 
 ```mermaid

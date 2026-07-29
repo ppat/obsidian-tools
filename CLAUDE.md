@@ -32,11 +32,18 @@ Obsidian image, the MCP server deployment, cluster storage) that doesn't exist y
   intentionally empty. When a component's ticket lands, add exactly the dependencies that component needs, and
   verify the pinned version against the package's own release notes — don't copy a version from another repo
   on trust.
-- **`/home/coder/code/dependency-migrator`** (the owner's other Python/uv repo, if present in your environment)
-  is a source of *shape* only — file layout, how pieces relate — never of proven configuration. It never
-  reached a released state (no CI beyond lint/test, no `LICENSE`, no release-please wiring). Several of its
-  pinned tool versions were stale when this repository was scaffolded from it. If you're tempted to copy a
-  version number or a config value from it, verify it against upstream documentation first.
+- **Don't copy a version number or config value from another repo on trust, even one that looks like a close
+  analog.** A repo can look authoritative — matching CI shape, matching toolchain — while several of its pinned
+  versions are simply stale because it never reached a released state. Treat any such repo as a source of
+  *shape* only (file layout, how pieces relate); verify every version and config value against current upstream
+  documentation independently, the same way this repository's own scaffold was verified rather than copied.
+- **Exactly three processes may ever mount the vault volume** — see `DESIGN.md` "The volume mount contract" and
+  `docs/DESIGN.md` §1.3/§2 for the full reasoning: headless Obsidian (read-write, content), the vault worker
+  (read-only, content), and the git committer (read-only, content; write-only, `.git/`). The **batch processor
+  takes no mount** — it reads the patch queue and writes only through the MCP gateway. When implementing any of
+  these components' Job/CronJob/Deployment spec (in `ppat/homelab-ops-kubernetes-apps`, not here, but the code
+  here assumes it), don't add a volume mount beyond what's listed above without revisiting that invariant first
+  — an unlisted fourth mounter breaks it, not just violates a style preference.
 
 ## Working conventions
 
@@ -48,6 +55,15 @@ Obsidian image, the MCP server deployment, cluster storage) that doesn't exist y
   aren't specific to one component (scaffold, CI, shared utilities).
 - **Lint before pushing**: `pre-commit run --all-files` mirrors `.github/workflows/lint.yaml` and
   `.pre-commit-config.yaml`. Individual checks can be run standalone — see `README.md` "Development".
+- **Property-based testing (`hypothesis`, in the `dev` dependency group) is for code with invariants that must
+  hold across arbitrary valid inputs — not a default for every test.** Reach for it where structured input and
+  a checkable invariant both exist; use ordinary example-based `pytest` tests everywhere else. The two candidates
+  this repository is expected to have, once the corresponding component lands: the **frontmatter validator**
+  (arbitrary frontmatter, valid or invalid, should round-trip through the JSON-Schema contract consistently —
+  `docs/DESIGN.md` §3 "Schema enforcement") and the **batch processor's patch chunking** (a patch split into
+  chunks, however the splits land, must always reassemble to the original patch — `docs/DESIGN.md` §3 "The batch
+  lane"). Don't write property tests — or any tests — for a component that doesn't exist yet; add them when its
+  ticket lands.
 - **Releases** are independent and automatic via release-please (`release-please-config.json` +
   `.release-please-manifest.json`). Don't hand-edit `CHANGELOG.md`; it's generated when a release PR merges.
 - **Dependency updates** are managed by Renovate (`.github/renovate.json`), extending the shared
