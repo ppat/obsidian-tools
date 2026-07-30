@@ -32,6 +32,11 @@ vault root transiently for the duration of the GUI session and removed afterward
 itself explains that. It carries no authority over `DESIGN.md` and nothing in the table
 above defers to it.
 
+[`gui-access.md`](./gui-access.md) is likewise operational, not design: the runbook for
+reaching that same GUI (P8) at all — connection steps, and the hazards hit the first time
+it was actually used. It carries no authority over `DESIGN.md` either, and nothing in the
+table above defers to it.
+
 ## What FINDINGS-v1 corrects
 
 `FINDINGS-v1-source-review.md` § "Corrections to canon" lists, with severity, every claim in CANON-1/CANON-2 it
