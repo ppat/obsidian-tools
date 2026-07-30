@@ -82,6 +82,27 @@ moment it lands.
       markdown only.
 - [ ] Use `[[Wikilinks]]`: on.
 - [ ] New link format: shortest path when possible.
+- [ ] Deleted files: **Move to Obsidian trash (`.trash/`)**. Already the behaviour in
+      effect, so this pins it rather than changes it - see below for why pinning a default
+      is still worth a line.
+
+This setting decides how destructive a delete is, and nothing else does: there is no move or
+rename tool in the MCP surface, so every relocation - a rolled-up source into `90-archive/`,
+a slug correction - is a write to the new path followed by a delete at the old one. Soft
+delete was verified as the current behaviour by deleting a note through the MCP and finding
+it in `/vault/.trash/` with its original mtime intact, which means the delete was a rename
+rather than a truncation. It is pinned anyway because it is a vendor default and not a
+decision: a later version or a stray GUI change could move it silently, and nothing in the
+system would notice. The other two values are both worse. **System trash** is undefined here,
+since the image ships no desktop trash implementation, so the call may fail or fall back
+without saying so - undefined is worse than either alternative because it is unknown rather
+than chosen. **Permanent delete** leaves git history as the only recovery.
+
+Note `.trash/` is gitignored, so it is a local-volume-only net: it never reaches git and is
+lost with the volume. There are three recovery surfaces and they fail independently -
+`.trash/`, git history, and the lagging macOS replica. The first and last hold the *file*, so
+recovery is copying it back; git holds the *history*, so recovery means knowing what to look
+for and when.
 
 ## Templates and daily notes
 
@@ -204,6 +225,14 @@ Linter or date-stamping plugin is installed for this job; see `CLAUDE.md` sectio
       result in `log.md`; it is an input to the validation-plugin decision.
 
 ## Commit
+
+**This section does not run during the GUI session.** Everything above it is GUI work and
+completes in one sitting. Everything below needs a git working tree on the volume and a
+`git update-index` run against the committer's own index - and the committer does not exist
+until Phase 2, which is deliberately sequenced *after* this checklist so that its first push
+baselines a fully configured `.obsidian/` rather than a half-finished one. So these steps are
+committer *provisioning*, and belong to that work. Do not stall here looking for
+preconditions that are not there yet.
 
 `.gitignore` carries `.obsidian/` wholesale. The directory is a bootstrap artefact whose
 job is a common config compatible with the minimum plugin and feature set the cluster
