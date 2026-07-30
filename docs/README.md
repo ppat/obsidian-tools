@@ -22,6 +22,16 @@ in it. A claim in a CANON document that `FINDINGS-v1` corrects, or that `DESIGN.
 superseded — the CANON documents are kept unedited as a historical record of what was researched, not as a
 document to reconcile against current decisions.
 
+## Also in this directory, and not canon
+
+[`settings-lock.md`](./settings-lock.md) is a one-time operational procedure, not design:
+the checklist a human works through at the headless Obsidian instance's GUI before any vault
+content exists. It lives here rather than in the vault because it is executed once and is
+then history, whereas the vault holds durable, regenerable content. It is copied into the
+vault root transiently for the duration of the GUI session and removed afterwards; the file
+itself explains that. It carries no authority over `DESIGN.md` and nothing in the table
+above defers to it.
+
 ## What FINDINGS-v1 corrects
 
 `FINDINGS-v1-source-review.md` § "Corrections to canon" lists, with severity, every claim in CANON-1/CANON-2 it
