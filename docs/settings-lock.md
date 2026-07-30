@@ -44,17 +44,37 @@ moment it lands.
 ## Core plugins
 
 - [ ] Enable: Properties, Bases, Templates, Daily Notes, Backlinks, Outgoing Links.
+- [ ] Turn **off**: **Sync** and **Publish**. Both are gated behind an Obsidian account
+      and neither account is logged in, but **Sync was found enabled** as a core
+      plugin regardless - a logged-out account does not stop it being on. The design
+      rejected Sync partly on principle, not just on cost: it means handing vault
+      content to a third party who may train on it, and the vault holds
+      `10-areas/finance/`.
+- [ ] Turn **off**: **Unique note creator**. It timestamps new filenames, which
+      violates the `slug(title)` filename rule.
+- [ ] **Zettelkasten prefixer was not present** in this Obsidian version. Do not spend
+      time looking for it to disable.
+- [ ] The remaining core plugins Obsidian enables by default - Bookmarks, Canvas,
+      Command palette, Search, Graph view, Page preview, Word count - are harmless UI
+      with no vault-write path. Leave them; they need no action here.
 
 ## Community plugins
 
-- [ ] Verify Tasks and Dataview, and only those two, are present and enabled. Do not
-      install them by hand: both arrive baked into the image and are enabled
-      automatically the first time each one's plugin directory is seeded, which is
-      exactly this first launch, so this step is a check, not an installation. If
-      either is missing or disabled, that means the image did not seed correctly;
-      fix that rather than installing the plugin from the GUI, which would leave the
-      vault out of step with what the image bakes in on every rebuild. That is the
-      whole set.
+- [ ] Verify three community plugins, and only those three, are present and enabled:
+      **Local REST API with MCP**, Tasks, Dataview. Do not install them by hand: all
+      three arrive baked into the image and are enabled automatically the first time
+      each one's plugin directory is seeded, which is exactly this first launch, so
+      this step is a check, not an installation. If any is missing or disabled, that
+      means the image did not seed correctly; fix that rather than installing the
+      plugin from the GUI, which would leave the vault out of step with what the
+      image bakes in on every rebuild. That is the whole set.
+      The REST API plugin is the load-bearing one: it is the only route from outside
+      the container into the vault, and its `/mcp` endpoint cannot be disabled from
+      the GUI - the design cites that undisableable endpoint as the reason
+      NetworkPolicy, not application configuration, has to be the boundary (see
+      [`DESIGN.md`](./DESIGN.md)). The ratified *additional* plugin set (Tasks,
+      Dataview) is easy to confuse with the complete set; this line names all three
+      because the earlier wording did not.
 - [ ] Do **not** install Templater or QuickAdd. Both declare a minimum application
       version above the stable release the image pins, so neither would load. QuickAdd
       is hotkey-driven and no automated writer needs it. Templater is a real loss:
@@ -73,6 +93,15 @@ moment it lands.
       truth competing with the Python validator that runs outside the application.
 - [ ] Keep the set small. A plugin that is not on this list does not go on.
 
+## Updates
+
+- [ ] Turn **off** automatic update checks (General settings). The image pins the
+      Obsidian version and Renovate drives version bumps, not the application, and
+      the pod log shows an update check hitting GitHub on every start regardless of
+      whether anything is installed. An in-container update could not apply even if
+      one were found - `/opt/obsidian` is root-owned and the root filesystem is
+      read-only - so the check is pure egress noise with no possible effect.
+
 ## Files and links
 
 - [ ] Default location for new notes: **`00-inbox/`**.
@@ -82,21 +111,41 @@ moment it lands.
       markdown only.
 - [ ] Use `[[Wikilinks]]`: on.
 - [ ] New link format: shortest path when possible.
-- [ ] Deleted files: **Move to Obsidian trash (`.trash/`)**. Already the behaviour in
-      effect, so this pins it rather than changes it - see below for why pinning a default
-      is still worth a line.
+- [ ] Deleted files: **Move to Obsidian trash (`.trash/`)**. Set here, this session - it
+      is not already the effective default. The GUI showed **System trash** in effect,
+      and this session changed it. See below for what is, and is not, established about
+      what that setting actually governs.
 
-This setting decides how destructive a delete is, and nothing else does: there is no move or
-rename tool in the MCP surface, so every relocation - a rolled-up source into `90-archive/`,
-a slug correction - is a write to the new path followed by a delete at the old one. Soft
-delete was verified as the current behaviour by deleting a note through the MCP and finding
-it in `/vault/.trash/` with its original mtime intact, which means the delete was a rename
-rather than a truncation. It is pinned anyway because it is a vendor default and not a
-decision: a later version or a stray GUI change could move it silently, and nothing in the
-system would notice. The other two values are both worse. **System trash** is undefined here,
-since the image ships no desktop trash implementation, so the call may fail or fall back
-without saying so - undefined is worse than either alternative because it is unknown rather
-than chosen. **Permanent delete** leaves git history as the only recovery.
+This setting decides how destructive a *GUI* delete is. Whether it also governs an *MCP*
+delete is unknown - see the last two paragraphs below - and that unknown is live, not
+academic: there is no move or rename tool in the MCP surface, so every relocation - a
+rolled-up source into `90-archive/`, a slug correction - is a write to the new path
+followed by a delete at the old one.
+
+`.trash/` was chosen over the other two values on their own merits, independent of what
+the GUI happened to be set to. **System trash** is undefined here: the image ships no
+desktop trash implementation, so the call may fail or fall back without saying so, and
+undefined is worse than either alternative because it is unknown rather than chosen.
+**Permanent delete** leaves git history as the only recovery. `.trash/` at least names
+its behaviour and is inspectable.
+
+Deleting a note through the MCP was observed landing in `/vault/.trash/` with its
+original mtime intact - a rename, not a truncation - while the GUI setting was still at
+System trash. That observation establishes what an MCP delete does; it does not establish
+what governs it, since the setting in effect at the time was the opposite of what the
+delete actually did. Two explanations are undistinguished: the Local REST API plugin may
+call the local-trash path directly, ignoring the app setting entirely; or Electron's
+system-trash call may simply fail in a container with no desktop trash implementation,
+and Obsidian falls back to `.trash/` regardless of what the setting says. An earlier
+version of this entry treated the observation as confirming the setting, and called
+leaving it alone a decision to "pin" the current behaviour rather than change it - that
+was false: the setting was System trash, and this session changed it.
+
+The experiment that would distinguish the two explanations has not been run: set
+*Deleted files* to permanent delete, delete a throwaway note through the MCP, and see
+whether it still lands in `.trash/`. Worth running before the ingestor is granted delete
+in anger - if the app setting does not govern MCP deletes at all, choosing a "safer"
+value here buys nothing on the write path that actually matters.
 
 Note `.trash/` is gitignored, so it is a local-volume-only net: it never reaches git and is
 lost with the volume. There are three recovery surfaces and they fail independently -
@@ -132,8 +181,13 @@ for and when.
 
 ## Property types
 
-Declare every property's type before any note exists. A field that holds a date in one
-note and a string in another silently breaks every view over it, with no error.
+Declare every property's type before any note exists. There are **16** properties below;
+finishing this section means 16 ticks, not a count done from memory. A field that holds a
+date in one note and a string in another silently breaks every view over it, with no
+error - not hypothetical: during this checklist's first live run, `salience` was
+auto-recorded as **Text** on creation and had to be corrected to **Number** by hand,
+exactly the failure this section exists to prevent, caught only because the type was
+checked.
 
 **Assign each one by hand.** Obsidian records only the types you select manually; every
 other property's type is inferred per note, which is exactly the drift this list exists
@@ -145,7 +199,9 @@ to prevent. Tick a line only after selecting the type in the Properties view.
 - [ ] `consolidated` - **Date**
 - [ ] `salience` - **Number**
 - [ ] `tags` - **List** (tags)
-- [ ] `aliases` - **List**
+- [ ] `aliases` - **Aliases** (native type; not List, and cannot be changed to List -
+      confirmed in the GUI). Needs no manual assignment; tick this as a check that it
+      is already correct, not as an action.
 - [ ] `related` - **List**
 - [ ] `refs` - **List**
 - [ ] `type` - **Text**
@@ -159,15 +215,52 @@ to prevent. Tick a line only after selecting the type in the Properties view.
 `authority` and `trigger` did not exist in earlier drafts of this schema. They are the
 whole reason this checklist is done on day one.
 
-`consolidated` and `salience` are the two properties that no note carries at creation:
-both are absent until the consolidation pass sets them (`CLAUDE.md` section 12). A property
-no note carries may not be listed in the Properties view at all, so to declare its type,
-create a throwaway note in `_ops/agent/` carrying `consolidated: 2026-01-01` and
-`salience: 5`, assign both types by hand, then delete the note.
+Every note the vault actually holds carries exactly 13 of these 16 fields at creation:
+`consolidated` and `salience` are absent until the consolidation pass sets them
+(`CLAUDE.md` section 12), and `aliases` is absent from any note that has no alias. A
+property no note carries is not offered in the Properties view at all, so declaring its
+type needs a note that carries it. Rather than work out case by case which of the 16
+need this, carry all 16 on one scratch note and type them in one pass:
 
-- [ ] After deleting the throwaway note, confirm both type declarations survived it. If
-      Obsidian dropped either one, keep a single scratch note in `_ops/agent/` carrying
-      both fields and record that in `log.md`, so the next reader knows why it exists.
+```yaml
+---
+created: 2026-01-01
+updated: 2026-01-01
+reviewed:
+consolidated: 2026-01-01
+salience: 5
+tags: [scratch]
+aliases: [scratch-alias]
+related: [scratch]
+refs: [scratch]
+type: note
+title: scratch
+source: scratch
+authority: human
+trigger: manual
+status: draft
+confidence: high
+---
+```
+
+Use non-empty values for every list field so the List type is unambiguous in the
+Properties view, and leave `reviewed` empty rather than `null` - `null` is a value, not
+the absence of one, and would declare the wrong thing.
+
+- [ ] Create the scratch note in `_ops/agent/` by `kubectl exec`, not by typing it in at
+      the GUI. There is no working clipboard through this path (see
+      [`gui-access.md`](./gui-access.md)), and hand-typing sixteen fields invites exactly
+      the kind of error this section exists to catch. Use the same delivery mechanism
+      already used to get this checklist itself onto the vault root.
+- [ ] Assign each property's type by hand in the Properties view, tick the 16 lines
+      above, then delete the scratch note.
+- [ ] Confirm the declarations survived deleting the note. Obsidian persists
+      manually-assigned property types in `.obsidian/types.json`: `cat` it before
+      deleting the note, delete the note, `cat` it again, and compare. All 16
+      declarations survived deletion of the only note carrying them when this was run -
+      declaring a type is not tied to a note continuing to exist. Expect roughly 22
+      `TQ_*` entries in the same file, registered by the Tasks plugin for its own query
+      properties; that is expected and is not schema drift.
 
 Two vocabulary changes are easy to miss when checking values against an older draft:
 
