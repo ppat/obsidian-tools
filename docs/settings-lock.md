@@ -174,10 +174,10 @@ Two vocabulary changes are easy to miss when checking values against an older dr
 - **`confidence` has three values, not four: `high`, `medium`, `speculation`.** `stated`
   was removed. It was never a confidence level - it meant "the source says this", which is
   provenance, and provenance is `authority`. See `CLAUDE.md` section 4.
-- **There is no `person` type.** It folded into `entity`, distinguished by a required kind
-  tag (`person`, `org`, `tool`, `place`). The `type` vocabulary is closed and has eleven
-  values: `note`, `source`, `entity`, `concept`, `project`, `task`, `decision`, `devlog`,
-  `meeting`, `research`, `moc`.
+- **There is no `person` type.** It folded into `entity`. There is no kind tag and no closed
+  kind vocabulary to go with it - `tags:` stays free-form. The `type` vocabulary is closed
+  and has eleven values: `note`, `source`, `entity`, `concept`, `project`, `task`,
+  `decision`, `devlog`, `meeting`, `research`, `moc`.
 
 Frontmatter normalisation (key order, ISO dates, lowercase tags, banned characters,
 inserting missing required fields, stamping `created`/`updated`) is owned entirely by
