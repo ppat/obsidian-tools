@@ -14,40 +14,15 @@ from __future__ import annotations
 import os
 import subprocess
 from collections.abc import Sequence
-from dataclasses import dataclass
 from pathlib import Path
 
 from obsidian_tools.retry import retry_with_backoff
+from obsidian_tools.vault_git.name_status import NameStatusEntry, parse_name_status, split_nul_terminated
 
-
-def _split_nul(output: str) -> list[str]:
-    """Split ``-z``-terminated git output into entries.
-
-    ``core.quotePath`` defaults to true, so the ordinary line-oriented form of every git command
-    that lists paths (``ls-tree --name-only``, ``diff --name-only``, ``diff --name-status``)
-    C-quotes any path containing a non-ASCII byte, a literal quote, a backslash, or a control
-    character — including a literal newline, which would otherwise land mid-record and desync a
-    line-based split entirely. The quoted form also wraps the whole path in `"..."`, and those
-    quote characters are part of the string `splitlines()` would hand back — passing that straight
-    to another git invocation (`update-index --skip-worktree --`, in this codebase) fails with
-    `fatal: Unable to mark file` because the quoted string no longer names a real path. ``-z``
-    sidesteps all of it: entries come back NUL-delimited and completely unquoted, so every call
-    site that lists git paths in this codebase uses it exclusively, never the line-oriented form.
-    """
-    return [entry for entry in output.split("\0") if entry]
-
-
-@dataclass(frozen=True, slots=True)
-class NameStatusEntry:
-    """One record from `git diff --cached --name-status -z`.
-
-    `old_path` is set only for a detected rename/copy (status `R*`/`C*`), where git reports the
-    source path in addition to the (always-present) current path.
-    """
-
-    status: str
-    path: str
-    old_path: str | None = None
+# Re-exported: every existing call site in this codebase imports NameStatusEntry from here, and
+# `vault_git/name_status.py` (the pure parsing module this runner delegates to — see
+# `staged_name_status` below) is where it's actually defined.
+__all__ = ["GitCommandError", "GitRunner", "NameStatusEntry"]
 
 
 class GitCommandError(RuntimeError):
@@ -147,40 +122,28 @@ class GitRunner:
 
     def list_tree_paths(self, tree_ish: str, path: str | None = None) -> list[str]:
         """Every path git tracks under `tree_ish` (a ref, SHA, or any other tree-ish), optionally
-        scoped to `path`. `-z`: see `_split_nul`."""
+        scoped to `path`. `-z`: see `split_nul_terminated`."""
         args = ["ls-tree", "-r", "--name-only", "-z", tree_ish]
         if path is not None:
             args.extend(["--", path])
         result = self.run(args)
-        return _split_nul(result.stdout)
+        return split_nul_terminated(result.stdout)
 
     def staged_paths(self, pathspec: str | None = None) -> list[str]:
         """Paths currently staged relative to HEAD (`git diff --cached --name-only -z`), optionally
-        scoped to `pathspec`. `-z`: see `_split_nul`."""
+        scoped to `pathspec`. `-z`: see `split_nul_terminated`."""
         args = ["diff", "--cached", "--name-only", "-z"]
         if pathspec is not None:
             args.extend(["--", pathspec])
         result = self.run(args)
-        return _split_nul(result.stdout)
+        return split_nul_terminated(result.stdout)
 
     def staged_name_status(self) -> list[NameStatusEntry]:
-        """`git diff --cached --name-status -z`, parsed into structured records. `-z`: see
-        `_split_nul` — a rename/copy record is three NUL-delimited fields (status, old path, new
-        path) rather than two, which this parses explicitly rather than assuming every record is
-        the same shape."""
+        """`git diff --cached --name-status -z`, parsed into structured records by
+        `vault_git/name_status.py`'s pure `parse_name_status` — this method's only job is running
+        the git command and handing its raw stdout over."""
         result = self.run(["diff", "--cached", "--name-status", "-z"])
-        fields = _split_nul(result.stdout)
-        entries: list[NameStatusEntry] = []
-        i = 0
-        while i < len(fields):
-            status = fields[i]
-            if status[:1] in ("R", "C"):
-                entries.append(NameStatusEntry(status=status, path=fields[i + 2], old_path=fields[i + 1]))
-                i += 3
-            else:
-                entries.append(NameStatusEntry(status=status, path=fields[i + 1]))
-                i += 2
-        return entries
+        return parse_name_status(result.stdout)
 
     def write_staged_tree(self) -> str:
         """Write the tree object the current index would produce if committed right now, without
