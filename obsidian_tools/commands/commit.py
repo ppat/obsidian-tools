@@ -68,14 +68,14 @@ def run(config: CommitConfig) -> int:
         # fixes, so tell them apart here rather than blaming NFS for both (provisioning already
         # clears a stale lock before this point — see vault_git/provisioning.py — so seeing one
         # here means something recreated it after that, not the ordinary case this misattributed).
-        # Roll back any partially-staged index state (git add can stage some paths before failing
-        # on another) so the next run starts clean rather than committing a partial tree, then
-        # still give a previous run's stuck-unpushed commit a chance to catch up before failing.
+        # No index reset here: the next run's stage_all() re-runs `git add -A` in full regardless
+        # of what a prior partial stage left behind, since -A reconciles the whole index against
+        # the current work tree rather than applying incrementally. Still give a previous run's
+        # stuck-unpushed commit a chance to catch up before failing.
         if is_index_lock_error(exc):
             logger.exception("staging failed: the git-dir is locked", extra={"event": "stage_failed_locked"})
         else:
             logger.exception("staging failed, likely a persistent vault read error", extra={"event": "stage_failed"})
-        _reset_index_to_head(runner)
         push_all(runner, branch=config.branch)
         return 1
 
@@ -105,10 +105,6 @@ def run(config: CommitConfig) -> int:
         extra={"event": "cycle_complete", "committed": committed, "push_failed": any_push_failed},
     )
     return 1 if any_push_failed else 0
-
-
-def _reset_index_to_head(runner: GitRunner) -> None:
-    runner.run(["reset", "--mixed", "--quiet"], check=False)
 
 
 def is_index_lock_error(exc: BaseException) -> bool:
