@@ -1,0 +1,81 @@
+---
+# yamllint disable rule:line-length
+name: build-image
+
+# Builds on PR branches, not only on merge to main: a Harbor branch tag has to exist before merge
+# so the apps repo (homelab-ops-kubernetes-apps#3443) can consume this image while its manifests
+# are still being developed against a PR branch of this repo. See build-docker-image.yaml's own
+# `docker/metadata-action` tag rules for the exact tag format produced (documented in this repo's
+# PR description rather than duplicated here, since it's derived from that workflow, not chosen by
+# this one).
+on:
+  pull_request:
+    paths:
+    - Dockerfile
+    - .dockerignore
+    - obsidian_tools/**
+    - pyproject.toml
+    - uv.lock
+    - .github/workflows/build-image.yaml
+  push:
+    branches:
+    - main
+    tags:
+    # release-please tags releases `vX.Y.Z` (see .release-please-manifest.json) — without this, no
+    # image is ever published for a released version, and the manifest's plan to track a release
+    # tag instead of `branch-main` can never happen (ppat/obsidian-tools#22 review). GitHub does
+    # not evaluate `paths` against a tag push (a tag is always a new ref with nothing to diff), so
+    # the `paths` filter below applies to branch pushes only and doesn't need its own copy here.
+    - 'v*'
+    paths:
+    - Dockerfile
+    - .dockerignore
+    - obsidian_tools/**
+    - pyproject.toml
+    - uv.lock
+    - .github/workflows/build-image.yaml
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-image:
+    # Calls the shared reusable workflow directly rather than routing through ppat/images: this
+    # repo builds its own image (the ppat/coder precedent) because it COPYs and installs its own
+    # source, not a published artifact from anywhere else — see the Dockerfile's own comments.
+    uses: ppat/github-workflows/.github/workflows/build-docker-image.yaml@10103e49c72fbd6d3e06d7e29f51815b9b8644a6 # v4.2.0
+    with:
+      image_context_path: .
+      label_title: "obsidian-tools"
+      label_description: "BRAIN vault tooling: the in-cluster git committer, and future Mac-side replication CLI"
+      platforms: linux/amd64,linux/arm64
+      private_registry_repository: ${{ vars.CONTAINER_REGISTRY_PATH }}/obsidian-tools
+      private_registry_build_cache: ${{ vars.CONTAINER_REGISTRY_CACHE_PATH }}/obsidian-tools
+      source_git_ref: ${{ github.head_ref || github.ref }}
+      timeout_minutes: 20
+      # Published on EVERY build, branch and PR included — deliberately, and unlike ppat/images,
+      # which keeps PR builds off Docker Hub by splitting into two workflows.
+      #
+      # The reason is reachability, not policy: the private registry is only reachable over
+      # Tailscale, which GitHub-hosted runners do not have, and the shared chainsaw-test workflow
+      # exposes no way to add it (six inputs, no secrets block) — wiring it in would mean changing
+      # a workflow the whole fleet depends on. Publishing branch builds here instead means the apps
+      # repo's chainsaw suite can pull `branch-<name>` and exercise this image *before* the PR
+      # that produced it lands, which is the point of building on PR branches at all.
+      #
+      # Accepted cost: branch tags accumulate on a public repository and are not garbage-collected.
+      # `latest` is unaffected — the shared workflow only sets it when a semver tag is present.
+      dockerhub_repository: ppatlabs/obsidian-tools
+    secrets:
+      dockerhub_username: ${{ secrets.DOCKERHUB_USERNAME }}
+      dockerhub_token: ${{ secrets.DOCKERHUB_TOKEN }}
+      private_registry_username: ${{ secrets.CONTAINER_REGISTRY_USERNAME }}
+      private_registry_token: ${{ secrets.CONTAINER_REGISTRY_PASSWORD }}
+      private_registry: ${{ secrets.CONTAINER_REGISTRY }}
+      tailscale_oauth_client_id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
+      tailscale_oauth_secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}

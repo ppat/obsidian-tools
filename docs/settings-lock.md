@@ -330,17 +330,51 @@ preconditions that are not there yet.
 `.gitignore` carries `.obsidian/` wholesale. The directory is a bootstrap artefact whose
 job is a common config compatible with the minimum plugin and feature set the cluster
 instance supports, not a mirror of that instance's evolving state. So the baseline needs a
-forced add, and the add must exclude the two per-instance workspace-state files the vendor
-documents as ones to ignore. `--force` overrides every ignore rule, a specific one
-included, which is why the exclusion has to live in the pathspec:
+forced add — but **the pathspec must be an allowlist, never a denylist naming only the two
+workspace files.** A denylist here would commit
+`.obsidian/plugins/obsidian-local-rest-api/data.json` — the file holding the vault's Local
+REST API bearer token (`DESIGN.md` §2 item 5) — into permanent history on both remotes,
+pulled to the Mac clone and published into iCloud and onto the phone (caught by review
+before this ever ran; see `ppat/obsidian-tools#3`). `data.json` is the conventional
+filename for *every* Obsidian plugin's settings, so a denylist would have to enumerate
+every current and future secret-bearing file to stay safe; the next plugin that stores a
+credential there would reintroduce the leak silently. Capture only what a device baseline
+actually needs — shared application config, and a plugin's *code*, never its *state*:
+
+**The same mistake recurs one level down if `snippets/`/`themes/` are named bare.** An
+earlier version of this command did exactly that, and a bare directory prefix inside an
+allowlist admits every file of any name at any depth underneath it, sight unseen — themes
+are third-party code installed through the ungated GUI path, so "nothing secret would ever
+land there" is not a claim this checklist gets to make. A probe against that version staged
+`.obsidian/themes/Minimal/data.json`, `.obsidian/themes/deep/nested/inner/data.json` and
+`.obsidian/snippets/sub/dir/creds.json`. Narrowed to file globs below, which costs a device
+baseline nothing: `*.css` under both, plus a theme's own `manifest.json`.
 
 ```sh
-git add --force -- .obsidian/ \
-  ':!.obsidian/workspace.json' ':!.obsidian/workspaces.json'
+git add --force -- \
+  .obsidian/app.json \
+  .obsidian/appearance.json \
+  .obsidian/core-plugins.json \
+  .obsidian/community-plugins.json \
+  .obsidian/hotkeys.json \
+  .obsidian/types.json \
+  .obsidian/snippets/*.css \
+  .obsidian/themes/*/*.css \
+  .obsidian/themes/*/manifest.json \
+  .obsidian/plugins/*/manifest.json \
+  .obsidian/plugins/*/main.js \
+  .obsidian/plugins/*/styles.css
 ```
 
-- [ ] Run the command above, confirm with `git diff --cached --name-only` that neither
-      workspace file is staged, and commit. This is the only time `.obsidian/` is committed.
+Only pass a given path if it actually exists — `git add` fails outright on a pathspec that
+matches nothing, and not every device baseline needs every line above (a plugin that ships
+with no stylesheet has no `styles.css` to add, for instance). `obsidian_tools/vault_git/baseline.py`
+does this programmatically; if running this by hand, drop any line that doesn't apply here
+rather than passing it as-is.
+
+- [ ] Run the command above (with any inapplicable lines dropped), confirm with
+      `git diff --cached --name-only` that no `data.json` and neither workspace file is
+      staged, and commit. This is the only time `.obsidian/` is committed.
 - [ ] Run `git update-index --skip-worktree` on every file committed in that baseline, on
       the committer's own working tree. `.gitignore` alone does not close this: git
       consults ignore rules only for untracked files, so a later change to a baselined
