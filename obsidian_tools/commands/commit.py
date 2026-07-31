@@ -22,6 +22,7 @@ from obsidian_tools.vault_git.commit import (
     push_all,
     stage_all,
 )
+from obsidian_tools.vault_git.git_errors import ErrorKind, classify_git_error
 from obsidian_tools.vault_git.provisioning import GitDivergenceError, provision_repository
 from obsidian_tools.vault_git.runner import GitCommandError, GitRunner
 from obsidian_tools.vault_git.ssh import build_ssh_command
@@ -122,15 +123,14 @@ def is_index_lock_error(exc: BaseException) -> bool:
     """True only for the specific "the lock file is already there" failure — git's own message when
     it can't create an `index.lock` because one already exists.
 
-    Matching the lock path alone is not enough: a full or read-only git-dir PVC fails with
-    `Unable to create '.../index.lock': No space left on device` or `... Permission denied` —
-    `index.lock` appears in that message too, since it's the path git was trying to create, but the
-    actual problem is the volume, not a stale lock, and misattributing it points a human at
-    completely the wrong fix. `File exists` is what actually distinguishes "a lock is already
-    there" from every other reason creating that path could fail.
+    The actual classification (stale lock vs. no space vs. permission denied vs. a vault read
+    failure) lives in `classify_git_error` (`vault_git/git_errors.py`) — pure, over the stderr text
+    alone. This function's job is just gathering that text out of whatever exception `commit.py`'s
+    `_STAGING_FAILURES` handling caught: either a bare `GitCommandError`, or a `RetryExhaustedError`
+    chaining one as `__cause__` once `stage_all`'s retried `git add` has exhausted every attempt.
     """
     git_error = exc if isinstance(exc, GitCommandError) else exc.__cause__
     if not isinstance(git_error, GitCommandError):
         return False
     stderr = git_error.result.stderr or ""
-    return "index.lock" in stderr and "File exists" in stderr
+    return classify_git_error(stderr) is ErrorKind.STALE_LOCK
