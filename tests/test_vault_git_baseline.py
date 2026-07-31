@@ -21,6 +21,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
 from conftest import make_runner, run_git
 
 from obsidian_tools.vault_git.baseline import ensure_obsidian_baseline
@@ -213,3 +214,52 @@ def test_no_baseline_taken_when_obsidian_dir_absent(
 
     assert took_baseline is False
     assert not has_staged_changes(runner)
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "日本語.css",  # non-ASCII bytes
+        'quote".css',  # a literal double-quote
+        "line\nbreak.css",  # a literal newline
+    ],
+    ids=["non-ascii", "literal-quote", "embedded-newline"],
+)
+def test_baseline_survives_quotepath_hostile_filenames(
+    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path, filename: str
+) -> None:
+    """`core.quotePath` defaults to true, so git C-quotes any of these filenames -- including the
+    surrounding quote characters -- in the line-oriented form of `ls-tree --name-only` and
+    `diff --cached --name-only`. Feeding that quoted string straight into
+    `git update-index --skip-worktree --` fails with `fatal: Unable to mark file`, which the
+    staging-failure handler in obsidian_tools/commands/commit.py then misattributes as "likely a
+    persistent vault read error" -- the exact misattribution the lock/read-failure disambiguation
+    fix there existed to remove. A filename containing a newline used to crash the baseline
+    outright. `-z` (NUL-delimited, unquoted output) is what fixes all three at every site that
+    parses git path output: baseline.py's capture branch, its reapply branch, and
+    `GitRunner.list_tree_paths` itself."""
+    nas = make_bare_repo()
+    git_dir = tmp_path / "git-dir"
+    _write_obsidian_dir(vault_dir)
+    (vault_dir / ".obsidian" / "snippets").mkdir()
+    (vault_dir / ".obsidian" / "snippets" / filename).write_text("body {}\n")
+
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    took_baseline = ensure_obsidian_baseline(runner, vault_dir)
+    stage_all(runner)
+    assert took_baseline
+    create_commit(runner, cycle_time=datetime.now(UTC))
+
+    committed_tree = set(runner.list_tree_paths("HEAD", ".obsidian"))
+    assert f".obsidian/snippets/{filename}" in committed_tree
+
+    # The reapply branch (a later run, against a fresh provisioning pass) must also survive this
+    # filename without raising -- the second of the "three sites" this fix covers.
+    runner_2 = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    took_baseline_again = ensure_obsidian_baseline(runner_2, vault_dir)
+    assert took_baseline_again is False
+
+    # And a later edit to the baselined file must stay frozen, exactly like any other baselined path.
+    (vault_dir / ".obsidian" / "snippets" / filename).write_text("body { color: red; }\n")
+    stage_all(runner_2)
+    assert not has_staged_changes(runner_2)

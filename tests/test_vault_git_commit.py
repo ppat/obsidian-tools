@@ -68,6 +68,31 @@ def test_commit_message_names_the_cycle_and_change_counts(
     assert not message.startswith(("feat", "fix", "chore", "docs", "refactor"))
 
 
+def test_commit_message_survives_a_quotepath_hostile_path(
+    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+) -> None:
+    """`build_commit_message` parses `git diff --cached --name-status`, one of the sites this
+    codebase must never read in git's line-oriented, quoted form: `core.quotePath` defaults to
+    true, so a non-ASCII path is C-quoted (surrounding quotes included), and a path containing a
+    literal newline would otherwise land mid-record. `-z` is what keeps this from ever producing a
+    corrupted or wrong-count commit message."""
+    nas = make_bare_repo()
+    git_dir = tmp_path / "git-dir"
+
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    (vault_dir / "10-areas").mkdir()
+    (vault_dir / "10-areas" / "日本語.md").write_text("# Note\n")
+    stage_all(runner)
+    cycle_time = datetime(2026, 7, 31, 4, 0, 0, tzinfo=UTC)
+
+    create_commit(runner, cycle_time=cycle_time)
+
+    message = runner.run(["log", "-1", "--format=%B"]).stdout
+    assert "1 added" in message
+    assert "10-areas/日本語.md" in message
+    assert '"' not in message  # no leftover C-quoting artifacts
+
+
 def test_check_for_mass_deletion_trips_on_deletion_fraction(
     tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
 ) -> None:
@@ -86,7 +111,7 @@ def test_check_for_mass_deletion_trips_on_deletion_fraction(
     stage_all(runner)  # 3/4 tracked paths staged as deletions -- well over the 50% threshold
 
     with pytest.raises(MassDeletionError):
-        check_for_mass_deletion(runner, vault_dir)
+        check_for_mass_deletion(runner)
 
 
 def test_check_for_mass_deletion_trips_on_zero_markdown_even_below_the_fraction_threshold(
@@ -109,7 +134,43 @@ def test_check_for_mass_deletion_trips_on_zero_markdown_even_below_the_fraction_
     stage_all(runner)  # only 1/10 tracked paths deleted
 
     with pytest.raises(MassDeletionError):
-        check_for_mass_deletion(runner, vault_dir)
+        check_for_mass_deletion(runner)
+
+
+def test_unreadable_directories_do_not_false_trip_the_zero_markdown_tripwire(
+    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+) -> None:
+    """An unreadable directory must not manufacture a false "zero markdown" mass-deletion alarm.
+
+    `Path.rglob` silently swallows `PermissionError`, so a filesystem-walk-based after-count sees
+    zero notes under a directory it cannot list, even though those files are completely untouched
+    and still tracked -- confusing "I can't see it" with "it's gone". `git add -A` compounds this:
+    it succeeds against a directory it cannot open, leaving that directory's existing index entries
+    exactly as they were rather than failing the add. This reproduces both halves at once: one
+    ordinary, legitimate deletion (00-index.md, as if promoted elsewhere) plus a coincidental
+    permission glitch on two unrelated directories whose notes are never actually touched. Deriving
+    the after-state from git's own staged tree (`git write-tree`), rather than a filesystem walk,
+    is what keeps that glitch from being amplified into a fabricated total-loss alarm."""
+    nas = make_bare_repo()
+    git_dir = tmp_path / "git-dir"
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    for name in ("locked-a", "locked-b"):
+        d = vault_dir / name
+        d.mkdir()
+        (d / "note.md").write_text(f"# {name}\n")
+    stage_all(runner)
+    create_commit(runner, cycle_time=datetime.now(UTC))
+    # HEAD now tracks 00-index.md, locked-a/note.md and locked-b/note.md: 3 markdown notes.
+
+    (vault_dir / "00-index.md").unlink()  # one ordinary, legitimate deletion
+    for name in ("locked-a", "locked-b"):
+        (vault_dir / name).chmod(0)  # unrelated permission glitch; content untouched, still tracked
+    try:
+        stage_all(runner)
+        check_for_mass_deletion(runner)  # must not raise: only one note was actually deleted
+    finally:
+        for name in ("locked-a", "locked-b"):
+            (vault_dir / name).chmod(0o750)
 
 
 def test_check_for_mass_deletion_allows_an_ordinary_partial_deletion(
@@ -130,7 +191,7 @@ def test_check_for_mass_deletion_allows_an_ordinary_partial_deletion(
     (vault_dir / "10-areas" / "note-0.md").unlink()
     stage_all(runner)  # 1/6 tracked paths deleted, and 5 markdown notes remain
 
-    check_for_mass_deletion(runner, vault_dir)  # must not raise
+    check_for_mass_deletion(runner)  # must not raise
 
 
 def test_push_failure_on_one_remote_does_not_block_the_other(

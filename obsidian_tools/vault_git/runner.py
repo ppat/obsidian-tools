@@ -14,9 +14,40 @@ from __future__ import annotations
 import os
 import subprocess
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from obsidian_tools.retry import retry_with_backoff
+
+
+def _split_nul(output: str) -> list[str]:
+    """Split ``-z``-terminated git output into entries.
+
+    ``core.quotePath`` defaults to true, so the ordinary line-oriented form of every git command
+    that lists paths (``ls-tree --name-only``, ``diff --name-only``, ``diff --name-status``)
+    C-quotes any path containing a non-ASCII byte, a literal quote, a backslash, or a control
+    character — including a literal newline, which would otherwise land mid-record and desync a
+    line-based split entirely. The quoted form also wraps the whole path in `"..."`, and those
+    quote characters are part of the string `splitlines()` would hand back — passing that straight
+    to another git invocation (`update-index --skip-worktree --`, in this codebase) fails with
+    `fatal: Unable to mark file` because the quoted string no longer names a real path. ``-z``
+    sidesteps all of it: entries come back NUL-delimited and completely unquoted, so every call
+    site that lists git paths in this codebase uses it exclusively, never the line-oriented form.
+    """
+    return [entry for entry in output.split("\0") if entry]
+
+
+@dataclass(frozen=True, slots=True)
+class NameStatusEntry:
+    """One record from `git diff --cached --name-status -z`.
+
+    `old_path` is set only for a detected rename/copy (status `R*`/`C*`), where git reports the
+    source path in addition to the (always-present) current path.
+    """
+
+    status: str
+    path: str
+    old_path: str | None = None
 
 
 class GitCommandError(RuntimeError):
@@ -92,9 +123,49 @@ class GitRunner:
         result = self.run(["cat-file", "-e", f"{ref}:{path}"], check=False)
         return result.returncode == 0
 
-    def list_tree_paths(self, ref: str, path: str) -> list[str]:
-        result = self.run(["ls-tree", "-r", "--name-only", ref, "--", path])
-        return [line for line in result.stdout.splitlines() if line]
+    def list_tree_paths(self, tree_ish: str, path: str | None = None) -> list[str]:
+        """Every path git tracks under `tree_ish` (a ref, SHA, or any other tree-ish), optionally
+        scoped to `path`. `-z`: see `_split_nul`."""
+        args = ["ls-tree", "-r", "--name-only", "-z", tree_ish]
+        if path is not None:
+            args.extend(["--", path])
+        result = self.run(args)
+        return _split_nul(result.stdout)
+
+    def staged_paths(self, pathspec: str | None = None) -> list[str]:
+        """Paths currently staged relative to HEAD (`git diff --cached --name-only -z`), optionally
+        scoped to `pathspec`. `-z`: see `_split_nul`."""
+        args = ["diff", "--cached", "--name-only", "-z"]
+        if pathspec is not None:
+            args.extend(["--", pathspec])
+        result = self.run(args)
+        return _split_nul(result.stdout)
+
+    def staged_name_status(self) -> list[NameStatusEntry]:
+        """`git diff --cached --name-status -z`, parsed into structured records. `-z`: see
+        `_split_nul` — a rename/copy record is three NUL-delimited fields (status, old path, new
+        path) rather than two, which this parses explicitly rather than assuming every record is
+        the same shape."""
+        result = self.run(["diff", "--cached", "--name-status", "-z"])
+        fields = _split_nul(result.stdout)
+        entries: list[NameStatusEntry] = []
+        i = 0
+        while i < len(fields):
+            status = fields[i]
+            if status[:1] in ("R", "C"):
+                entries.append(NameStatusEntry(status=status, path=fields[i + 2], old_path=fields[i + 1]))
+                i += 3
+            else:
+                entries.append(NameStatusEntry(status=status, path=fields[i + 1]))
+                i += 2
+        return entries
+
+    def write_staged_tree(self) -> str:
+        """Write the tree object the current index would produce if committed right now, without
+        actually committing (`git write-tree`). Reads only the index and the object store, never
+        the work tree — used to derive the after-state of a staged change from git's own
+        bookkeeping rather than by re-walking a work tree that may be partially unreadable."""
+        return self.run(["write-tree"]).stdout.strip()
 
     def index_file_exists(self) -> bool:
         return (self.git_dir / "index").exists()

@@ -162,7 +162,7 @@ def ensure_obsidian_baseline(runner: GitRunner, work_tree: Path) -> bool:
         return False
 
     runner.run(["add", "--force", "--", *baseline_paths], retry=True)
-    staged_paths = runner.run(["diff", "--cached", "--name-only", "--", f"{OBSIDIAN_DIR}/"]).stdout.splitlines()
+    staged_paths = runner.staged_paths(f"{OBSIDIAN_DIR}/")
     for path in staged_paths:
         runner.run(["update-index", "--skip-worktree", "--", path])
 
