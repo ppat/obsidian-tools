@@ -5,10 +5,13 @@ platform this repository's code implements — read [`docs/DESIGN.md`](./docs/DE
 record. This document is the narrower view: what belongs in *this* repository specifically, and why its pieces
 relate to each other the way they do.
 
-**Status: the `commit` subcommand (the in-cluster git committer) is implemented.** Everything else this
-document describes — `promotion-processor`, `batch-processor`, the drift-reconciliation channel, the
-frontmatter validator, and `local-replicator` (the Mac-side `replicate` subcommand) — is still a future
-ticket, landing one at a time; see the epic
+**Status: the `commit` subcommand (the in-cluster git committer) and the `replicate` subcommand
+(`local-replicator`, the Mac-side read-replica publisher) are implemented.** Capture ships as a
+stub with a real contract (docs/DESIGN.md §7 Phase 2) — it reads a drifted path's current iCloud
+contents and discards them; only its destination changes at Phase 5, not its ordering. Everything
+else this document describes — `promotion-processor`, `batch-processor`, the drift-reconciliation
+channel proper, and the frontmatter validator — is still a future ticket, landing one at a time;
+see the epic
 [`ppat/homelab-ops-kubernetes-apps#3439`](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3439)
 for sequencing.
 
