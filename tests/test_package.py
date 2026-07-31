@@ -1,7 +1,7 @@
 """Smoke test proving the package is importable and the test harness is wired up.
 
-No application code exists yet (see ppat/obsidian-tools#1) — this exists so `uv run pytest` and CI have
-something real to run rather than exiting non-zero on "no tests collected."
+See tests/test_commands_commit.py and tests/vault_git_* for the `commit` subcommand's own coverage;
+this file is deliberately minimal.
 """
 
 import obsidian_tools
