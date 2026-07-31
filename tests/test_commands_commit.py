@@ -334,3 +334,52 @@ def test_non_utf8_filename_does_not_wedge_the_committer(
 
     assert exit_code == 0
     assert commit_count(seeded_origin) == 2
+
+
+def test_max_deletion_fraction_env_var_actually_reaches_the_mass_deletion_guard(
+    tmp_path: Path,
+    seeded_origin: Path,
+    make_bare_repo: Callable[[], Path],
+    vault_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test gap (`#22`): `commands/commit.py` builds `CommitConfig` from the environment and calls
+    `check_for_mass_deletion`, but nothing end to end proved the value actually travels from one to
+    the other -- `test_config.py` proves env reaches `CommitConfig.max_deletion_fraction`,
+    `test_vault_git_commit.py::test_max_deletion_fraction_at_or_above_one_disables_both_tripwires`
+    proves the guard honours a value it's given directly, but severing the
+    `max_deletion_fraction=config.max_deletion_fraction` kwarg in `commands/commit.py::run` left
+    every one of those 53 tests passing. Confirmed (not assumed) the kwarg is actually wired today
+    by reading `commands/commit.py` directly before writing this test. This test goes through
+    `CommitConfig.from_env()` and `commit_command.run` -- the actual wire -- with the escape-hatch
+    env var set to disable the guard for a genuine archive purge; it fails if that kwarg is ever
+    severed again, because a severed wire silently falls back to the guard's own default (0.5),
+    which would refuse this exact deletion."""
+    nas = make_bare_repo()
+    git_dir = tmp_path / "git-dir"
+    (vault_dir / "10-areas").mkdir()
+    for i in range(4):
+        (vault_dir / "10-areas" / f"note-{i}.md").write_text(f"# Note {i}\n")
+    monkeypatch.setenv("OBSIDIAN_GIT_DIR", str(git_dir))
+    monkeypatch.setenv("OBSIDIAN_VAULT_DIR", str(vault_dir))
+    monkeypatch.setenv("GIT_COMMIT_BRANCH", "main")
+    monkeypatch.setenv("GIT_REMOTE_ORIGIN_URL", str(seeded_origin))
+    monkeypatch.setenv("GIT_REMOTE_NAS_URL", str(nas))
+    monkeypatch.setenv("GIT_COMMIT_MAX_DELETION_FRACTION", "1.0")  # the operator escape hatch
+
+    assert commit_command.run(CommitConfig.from_env()) == 0
+    commits_before = commit_count(seeded_origin)
+
+    # The volume comes back blank -- every markdown note deleted, which trips both tripwires at
+    # their default threshold. Only the env var reaching the guard through `commands/commit.py`
+    # keeps this from being refused.
+    for path in vault_dir.iterdir():
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+
+    exit_code = commit_command.run(CommitConfig.from_env())
+
+    assert exit_code == 0
+    assert commit_count(seeded_origin) == commits_before + 1
