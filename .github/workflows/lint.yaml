@@ -23,6 +23,8 @@ jobs:
       files_yaml: |
         actions:
         - .github/workflows/**
+        docker:
+        - Dockerfile
         markdown:
         - '**.md'
         - '!**/CHANGELOG.md'
@@ -49,6 +51,15 @@ jobs:
       fetch_depth: ${{ github.event.pull_request.commits || 0 }}
       from: ${{ github.event.pull_request.head.sha || 'HEAD' }}~${{ github.event.pull_request.commits || '1' }}
       to: ${{ github.event.pull_request.head.sha || 'HEAD' }}
+
+  docker-files:
+    needs: [detect-changes]
+    if: ${{ github.event_name != 'pull_request' || fromJSON(needs.detect-changes.outputs.results).docker_any_changed == 'true' }}
+    uses: ppat/github-workflows/.github/workflows/lint-hadolint.yaml@10103e49c72fbd6d3e06d7e29f51815b9b8644a6 # v4.2.0
+    with:
+      git_ref: ${{ github.head_ref || github.ref }}
+      files: ${{ github.event_name != 'pull_request' && 'ALL' || fromJSON(needs.detect-changes.outputs.results).docker_all_changed_files }}
+      hadolint_config: .hadolint.yaml
 
   github-actions:
     needs: [detect-changes]

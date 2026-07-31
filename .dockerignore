@@ -1,0 +1,14 @@
+# The image build context is the whole repository root (see Dockerfile's own comment on why: it
+# has to COPY this repo's own source to install it locally, per the build workflow's design — see
+# .github/workflows/build-image.yaml). Everything below is excluded from what's sent to the
+# builder; only pyproject.toml, uv.lock, README.md and obsidian_tools/ are actually COPYed in.
+.git/
+.github/
+.pytest_cache/
+.ruff_cache/
+.venv/
+CHANGELOG.md
+CLAUDE.md
+DESIGN.md
+docs/
+tests/
