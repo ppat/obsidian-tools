@@ -55,7 +55,7 @@ def provision_repository(
 ) -> None:
     """Bring `runner`'s git-dir to a valid, up-to-date-with-origin state. Safe to call every run."""
     runner.git_dir.mkdir(parents=True, exist_ok=True)
-    _clear_stale_index_lock(runner.git_dir)
+    _clear_stale_locks(runner.git_dir)
     index_existed_before = runner.index_file_exists()
 
     # `git init --bare` rejects an explicit `--work-tree` outright ("not allowed without
@@ -93,22 +93,40 @@ def provision_repository(
         runner.run(["read-tree", "HEAD"])
 
 
-def _clear_stale_index_lock(git_dir: Path) -> None:
-    """Remove a leftover `$GIT_DIR/index.lock` from a run that was killed mid-write.
+def _clear_stale_locks(git_dir: Path) -> None:
+    """Remove every leftover `*.lock` file under `$GIT_DIR` from a run that was killed mid-write.
 
-    Unconditional, with no age check or "was it really this process" guess: this CronJob runs
-    with `concurrencyPolicy: Forbid` against its own single-writer RWO cache PVC, so at most one
-    committer process ever holds this git-dir at a time — a lock file found here can only be a
-    corpse left by a previous run that didn't get to clean up after itself (this process is PID 1
-    in-container, and the platform delivers SIGKILL, not SIGTERM, once the termination grace
-    period elapses; see obsidian_tools/cli.py's SIGTERM handler for the other half of this). It
-    can never be a lock genuinely held by a concurrent writer, so there is nothing to guess about.
+    A killed run can strand more than `index.lock`: `config.lock` (from the `git config` calls
+    below), `HEAD.lock` and `refs/heads/<branch>.lock` (from `update-ref` during a branch sync, or
+    from `git commit`) are each left behind by the same failure mode, at whichever git invocation
+    was in flight when the kill landed — measured directly: `config.lock` wedges the next run's
+    provisioning with exit 1, and `HEAD.lock`/`refs/heads/<branch>.lock` wedge it with an uncaught
+    `GitCommandError` traceback, since the commit path has its own, separate exception handling
+    (see `obsidian_tools/commands/commit.py`). Clearing only `index.lock`, as an earlier revision
+    of this function did, leaves the other three to wedge every later run permanently, one
+    directory removal short of the fix `index.lock` already got.
+
+    Unconditional, with no age check or "was it really this process" guess, for every lock found:
+    this CronJob runs with `concurrencyPolicy: Forbid` against its own single-writer RWO cache PVC,
+    so at most one committer process ever holds this git-dir at a time — a lock file found here can
+    only be a corpse left by a previous run that didn't get to clean up after itself (the platform
+    delivers SIGKILL, not SIGTERM, once the termination grace period elapses; see
+    `obsidian_tools/cli.py`'s SIGTERM handler for the other half of this). Under *ordinary*
+    operation there is nothing to guess about.
+
+    One residual this does not solve, worth stating rather than leaving implicit: a manually
+    created Job (`kubectl create job --from=cronjob/...`) is not managed by the CronJob controller
+    and bypasses `concurrencyPolicy` entirely. Under that kind of operator-initiated concurrency —
+    not ordinary operation, but a real possibility on a disaster-recovery-adjacent tool like this
+    one — an unconditional unlink here would remove a lock a second, genuinely concurrent writer
+    still holds.
     """
-    lock_path = git_dir / "index.lock"
-    if lock_path.exists():
+    for lock_path in sorted(git_dir.rglob("*.lock")):
+        if not lock_path.is_file():
+            continue
         logger.warning(
-            "clearing stale index.lock left by a previous run",
-            extra={"event": "stale_index_lock_cleared", "path": str(lock_path)},
+            "clearing stale lock file left by a previous run",
+            extra={"event": "stale_lock_cleared", "path": str(lock_path)},
         )
         lock_path.unlink()
 

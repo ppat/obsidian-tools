@@ -153,6 +153,71 @@ def test_stale_index_lock_from_a_killed_run_is_cleared_and_the_next_run_recovers
     assert commit_count(seeded_origin) == 2
 
 
+def test_stale_config_head_and_branch_locks_from_a_killed_run_are_all_cleared(
+    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+) -> None:
+    """A SIGKILL can strand more than `index.lock`: `config.lock`, `HEAD.lock` and
+    `refs/heads/<branch>.lock` are each left behind by the same failure mode, at whatever git
+    invocation was in flight when the kill landed. Measured: `config.lock` alone wedges the next
+    run's provisioning with exit 1, and `HEAD.lock`/`refs/heads/main.lock` wedge it with an
+    uncaught `GitCommandError` traceback. Clearing only `index.lock`, as an earlier revision did,
+    leaves the other three to wedge every later run permanently."""
+    nas = make_bare_repo()
+    git_dir = tmp_path / "git-dir"
+    git_dir.mkdir(parents=True)
+    (git_dir / "index.lock").write_text("")
+    (git_dir / "config.lock").write_text("")
+    (git_dir / "HEAD.lock").write_text("")
+    (git_dir / "refs" / "heads").mkdir(parents=True)
+    (git_dir / "refs" / "heads" / "main.lock").write_text("")
+
+    (vault_dir / "10-areas").mkdir()
+    (vault_dir / "10-areas" / "note.md").write_text("# Note\n")
+
+    exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas)))
+
+    assert exit_code == 0
+    assert not (git_dir / "index.lock").exists()
+    assert not (git_dir / "config.lock").exists()
+    assert not (git_dir / "HEAD.lock").exists()
+    assert not (git_dir / "refs" / "heads" / "main.lock").exists()
+    assert commit_count(seeded_origin) == 2
+
+
+def test_commit_failure_is_caught_and_logged_rather_than_propagating(
+    tmp_path: Path,
+    seeded_origin: Path,
+    make_bare_repo: Callable[[], Path],
+    vault_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stranded `HEAD.lock` or `refs/heads/<branch>.lock` -- the same SIGKILL-mid-write failure
+    mode `index.lock` is cleared for -- used to have no exception handling around the commit call
+    at all: `create_commit`'s `GitCommandError` propagated straight out of `run()` as a bare,
+    uncaught traceback instead of a logged, attributable event. The commit path must catch it, log
+    it, still let a prior run's stuck-unpushed commit's push catch up, and fail the run cleanly."""
+    nas = make_bare_repo()
+    git_dir = tmp_path / "git-dir"
+    (vault_dir / "10-areas").mkdir()
+    (vault_dir / "10-areas" / "note.md").write_text("# Note\n")
+
+    def _raise_locked(*_args: object, **_kwargs: object) -> str:
+        result = subprocess.CompletedProcess(
+            args=["git", "commit"],
+            returncode=128,
+            stdout="",
+            stderr="fatal: Unable to create '/git/vault.git/refs/heads/main.lock': File exists.",
+        )
+        raise GitCommandError(["commit"], result)
+
+    monkeypatch.setattr(commit_command, "create_commit", _raise_locked)
+
+    exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas)))
+
+    assert exit_code == 1
+    assert commit_count(seeded_origin) == 1  # only the pre-existing seed commit; nothing landed
+
+
 def test_emptied_vault_refuses_to_commit_a_mass_deletion(
     tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
 ) -> None:

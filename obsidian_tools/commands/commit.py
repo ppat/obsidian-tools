@@ -92,7 +92,18 @@ def run(config: CommitConfig) -> int:
     cycle_time = datetime.now(UTC)
     committed = False
     if has_staged_changes(runner):
-        create_commit(runner, cycle_time=cycle_time)
+        try:
+            create_commit(runner, cycle_time=cycle_time)
+        except GitCommandError:
+            # Unlike staging, this call was previously unguarded: a stranded HEAD.lock or
+            # refs/heads/<branch>.lock (the same SIGKILL-mid-write failure mode index.lock is
+            # cleared for, see vault_git/provisioning.py's _clear_stale_locks) would otherwise
+            # surface as a bare, uncaught traceback rather than a logged, attributable event.
+            logger.exception(
+                "commit failed; the git-dir may be locked or otherwise wedged", extra={"event": "commit_failed"}
+            )
+            push_all(runner, branch=config.branch)  # still let a prior run's stuck commit catch up
+            return 1
         committed = True
     else:
         logger.info("nothing to commit this cycle", extra={"event": "nothing_to_commit"})
