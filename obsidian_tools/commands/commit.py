@@ -54,13 +54,20 @@ def run(config: CommitConfig) -> int:
     try:
         ensure_obsidian_baseline(runner, work_tree)
         stage_all(runner)
-    except _STAGING_FAILURES:
+    except _STAGING_FAILURES as exc:
         # Staging touches the read-only NFS work tree; `stage_all`/`ensure_obsidian_baseline`
-        # already retried transient failures, so reaching here means the read never recovered.
+        # already retried transient failures, so reaching here means something never recovered.
+        # A stale `index.lock` and a persistent read failure point a human at completely different
+        # fixes, so tell them apart here rather than blaming NFS for both (provisioning already
+        # clears a stale lock before this point — see vault_git/provisioning.py — so seeing one
+        # here means something recreated it after that, not the ordinary case this misattributed).
         # Roll back any partially-staged index state (git add can stage some paths before failing
         # on another) so the next run starts clean rather than committing a partial tree, then
         # still give a previous run's stuck-unpushed commit a chance to catch up before failing.
-        logger.exception("staging failed, likely a persistent vault read error", extra={"event": "stage_failed"})
+        if is_index_lock_error(exc):
+            logger.exception("staging failed: the git-dir is locked", extra={"event": "stage_failed_locked"})
+        else:
+            logger.exception("staging failed, likely a persistent vault read error", extra={"event": "stage_failed"})
         _reset_index_to_head(runner)
         push_all(runner, branch=config.branch)
         return 1
@@ -85,3 +92,9 @@ def run(config: CommitConfig) -> int:
 
 def _reset_index_to_head(runner: GitRunner) -> None:
     runner.run(["reset", "--mixed", "--quiet"], check=False)
+
+
+def is_index_lock_error(exc: BaseException) -> bool:
+    """True if the underlying git failure was a stale `index.lock`, not a vault read problem."""
+    git_error = exc if isinstance(exc, GitCommandError) else exc.__cause__
+    return isinstance(git_error, GitCommandError) and "index.lock" in (git_error.result.stderr or "")

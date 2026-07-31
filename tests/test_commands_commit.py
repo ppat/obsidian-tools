@@ -7,6 +7,7 @@ failure on one remote must not block the other while still failing the run overa
 from __future__ import annotations
 
 import stat
+import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
@@ -15,7 +16,10 @@ from conftest import commit_count
 
 import obsidian_tools.retry as retry_module
 from obsidian_tools.commands import commit as commit_command
+from obsidian_tools.commands.commit import is_index_lock_error
 from obsidian_tools.config import CommitConfig
+from obsidian_tools.retry import RetryExhaustedError
+from obsidian_tools.vault_git.runner import GitCommandError
 
 
 def _config(git_dir: Path, vault_dir: Path, *, origin_url: str, nas_url: str) -> CommitConfig:
@@ -124,6 +128,50 @@ def test_transient_read_failure_recovers_and_still_commits(
 
     assert exit_code == 0
     assert commit_count(seeded_origin) == 2
+
+
+def test_stale_index_lock_from_a_killed_run_is_cleared_and_the_next_run_recovers(
+    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+) -> None:
+    """A run that gets SIGKILLed mid `add`/`commit`/`reset` leaves `$GIT_DIR/index.lock` behind
+    (see obsidian_tools/vault_git/provisioning.py). With `concurrencyPolicy: Forbid` and a
+    single-writer RWO cache PVC, that lock can only be a corpse — the next run must clear it and
+    proceed rather than wedging forever on "Unable to create '.../index.lock': File exists"."""
+    nas = make_bare_repo()
+    git_dir = tmp_path / "git-dir"
+    git_dir.mkdir(parents=True)
+    (git_dir / "index.lock").write_text("")  # simulates a run killed mid write, before cleaning up
+
+    (vault_dir / "10-areas").mkdir()
+    (vault_dir / "10-areas" / "note.md").write_text("# Note\n")
+
+    exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas)))
+
+    assert exit_code == 0
+    assert not (git_dir / "index.lock").exists()
+    assert commit_count(seeded_origin) == 2
+
+
+def _git_command_error(stderr: str) -> GitCommandError:
+    result = subprocess.CompletedProcess(args=["git", "add"], returncode=128, stdout="", stderr=stderr)
+    return GitCommandError(["add", "-A"], result)
+
+
+def test_is_index_lock_error_tells_a_lock_apart_from_an_ordinary_read_failure() -> None:
+    """A stale `index.lock` and a persistent NFS read failure must not be logged as the same thing
+    — they point a human at completely different fixes. Regression test for the `except` clause
+    that used to lump both under "likely a persistent vault read error"."""
+    lock_error = _git_command_error("fatal: Unable to create '/git/vault.git/index.lock': File exists.")
+    assert is_index_lock_error(lock_error) is True
+
+    read_error = _git_command_error('error: open("10-areas/note.md"): Permission denied')
+    assert is_index_lock_error(read_error) is False
+
+    # RetryExhaustedError chains the underlying GitCommandError as __cause__ (see obsidian_tools/retry.py) —
+    # the classification has to unwrap it, not just check the retry wrapper's own message.
+    wrapped_lock_error = RetryExhaustedError("git add -A failed after 5 attempts")
+    wrapped_lock_error.__cause__ = lock_error
+    assert is_index_lock_error(wrapped_lock_error) is True
 
 
 def test_push_failure_on_one_remote_still_attempts_the_other_and_run_exits_nonzero(

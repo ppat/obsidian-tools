@@ -25,6 +25,7 @@ carrying a previous run's state:
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from obsidian_tools.vault_git.baseline import ensure_ignore_rule
 from obsidian_tools.vault_git.runner import GitRunner
@@ -54,6 +55,7 @@ def provision_repository(
 ) -> None:
     """Bring `runner`'s git-dir to a valid, up-to-date-with-origin state. Safe to call every run."""
     runner.git_dir.mkdir(parents=True, exist_ok=True)
+    _clear_stale_index_lock(runner.git_dir)
     index_existed_before = runner.index_file_exists()
 
     # `git init --bare` rejects an explicit `--work-tree` outright ("not allowed without
@@ -89,6 +91,26 @@ def provision_repository(
         # compare the work tree against an empty or stale index rather than against HEAD, staging
         # every already-committed file as though it were new.
         runner.run(["read-tree", "HEAD"])
+
+
+def _clear_stale_index_lock(git_dir: Path) -> None:
+    """Remove a leftover `$GIT_DIR/index.lock` from a run that was killed mid-write.
+
+    Unconditional, with no age check or "was it really this process" guess: this CronJob runs
+    with `concurrencyPolicy: Forbid` against its own single-writer RWO cache PVC, so at most one
+    committer process ever holds this git-dir at a time — a lock file found here can only be a
+    corpse left by a previous run that didn't get to clean up after itself (this process is PID 1
+    in-container, and the platform delivers SIGKILL, not SIGTERM, once the termination grace
+    period elapses; see obsidian_tools/cli.py's SIGTERM handler for the other half of this). It
+    can never be a lock genuinely held by a concurrent writer, so there is nothing to guess about.
+    """
+    lock_path = git_dir / "index.lock"
+    if lock_path.exists():
+        logger.warning(
+            "clearing stale index.lock left by a previous run",
+            extra={"event": "stale_index_lock_cleared", "path": str(lock_path)},
+        )
+        lock_path.unlink()
 
 
 def _ensure_remote(runner: GitRunner, name: str, url: str) -> None:
