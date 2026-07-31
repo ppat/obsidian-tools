@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/ppat/obsidian-tools/compare/v0.2.0...v0.2.1) (2026-07-31)
+
+
+### 🚀 Enhancements + Bug Fixes
+
+* **committer:** extract six decisions into pure functions ([#27](https://github.com/ppat/obsidian-tools/issues/27)) ([5fda02b](https://github.com/ppat/obsidian-tools/commit/5fda02b8da17c77bda429aab240515d4cad14aaf))
+
 ## [0.2.0](https://github.com/ppat/obsidian-tools/compare/v0.1.0...v0.2.0) (2026-07-31)
 
 
