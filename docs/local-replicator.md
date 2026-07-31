@@ -134,11 +134,16 @@ changes); it is still real, running code, not something you can skip installing.
    run. A first cycle publishes the whole vault unconditionally (there is no prior baseline to
    compare against yet — `docs/DESIGN.md` §4 Plane B, "Losing the Mac clone loses the baseline"
    describes the same re-baselining behaviour for a lost cache), so expect it to take longer than
-   steady-state cycles. For the drainer, look for `"event": "drain_complete"`; `"drained"` will
-   often be non-zero even with no human edits at all, since the device-side detector submits every
-   `.obsidian/` change it sees unfiltered (`docs/DESIGN.md` §1.5 R2) and Obsidian's own plugins
-   churn state there continuously — that noise is discarded here by design, not a sign of anything
-   wrong.
+   steady-state cycles. For the drainer, look for `"event": "drain_complete"`; in steady state with no
+   human edits, `"drained"` should be **zero or close to it**.
+
+   A persistently non-zero count *is* worth investigating rather than shrugging at. `.obsidian/`
+   churn — plugin caches, index state — does not reach the spool, despite the device-side detector
+   being deliberately unfiltered (`docs/DESIGN.md` §1.5 R2): the vault repository carries a tracked
+   `.gitignore` listing `.obsidian/`, and the cycle stages with `git add -A`, which consults ignore
+   rules for untracked paths. So only the handful of `.obsidian/` files the bootstrap commit
+   actually tracked can ever show as drift, and only when genuinely changed — which is exactly the
+   signal wanted, a human having altered a setting on a device.
 
 ## Uninstall
 
