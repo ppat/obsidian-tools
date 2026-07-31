@@ -1,10 +1,17 @@
 """Tests for obsidian_tools/vault_git/baseline.py.
 
-The core property under test: `.gitignore` cannot make the `.obsidian/` freeze happen — only
-`git update-index --skip-worktree`, reapplied every run, does. These tests exist specifically to
-catch a regression back to `.gitignore`-only behaviour, which would pass every other test in this
-suite while silently failing the one thing that matters (see the module's own docstring and
-ppat/obsidian-tools#3, "empirically, not reasoned out in advance").
+Two core properties under test:
+
+- `.gitignore` cannot make the `.obsidian/` freeze happen — only `git update-index
+  --skip-worktree`, reapplied every run, does. These tests exist specifically to catch a
+  regression back to `.gitignore`-only behaviour, which would pass every other test in this suite
+  while silently failing the one thing that matters (see the module's own docstring and
+  ppat/obsidian-tools#3, "empirically, not reasoned out in advance").
+- The baseline capture is an allowlist, never a denylist: a plugin's `data.json` (settings/state,
+  potentially secret-bearing — the Local REST API plugin's bearer token lives at exactly this kind
+  of path) must never be captured, no matter what the plugin is named. `test_plugin_data_json_is_never_captured`
+  is the regression test for the vulnerability caught before it ever ran (ppat/obsidian-tools#3):
+  it fails against the old denylist-shaped implementation.
 """
 
 from __future__ import annotations
@@ -57,6 +64,34 @@ def test_pathspec_excludes_workspace_state_files(
     assert ".obsidian/app.json" in staged
     assert ".obsidian/workspace.json" not in staged
     assert ".obsidian/workspaces.json" not in staged
+
+
+def test_plugin_data_json_is_never_captured(
+    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+) -> None:
+    """The regression test for the vulnerability caught before it ever ran (ppat/obsidian-tools#3):
+    a denylist-shaped baseline (force-add `.obsidian/` minus the two workspace files) would commit
+    a plugin's `data.json` — the file the Local REST API plugin stores its bearer token in — to
+    permanent history on both remotes. Fails against that old implementation; passes only because
+    the baseline is an allowlist of plugin *code* filenames that `data.json` is never on."""
+    nas = make_bare_repo()
+    git_dir = tmp_path / "git-dir"
+    _write_obsidian_dir(vault_dir)
+    plugin_dir = vault_dir / ".obsidian" / "plugins" / "obsidian-local-rest-api"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "manifest.json").write_text('{"id": "obsidian-local-rest-api"}\n')
+    (plugin_dir / "main.js").write_text("// plugin code\n")
+    (plugin_dir / "data.json").write_text('{"apiKey": "super-secret-bearer-token"}\n')
+
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    ensure_obsidian_baseline(runner, vault_dir)
+
+    staged = runner.run(["diff", "--cached", "--name-only"]).stdout.splitlines()
+    assert ".obsidian/plugins/obsidian-local-rest-api/manifest.json" in staged
+    assert ".obsidian/plugins/obsidian-local-rest-api/main.js" in staged
+    assert ".obsidian/plugins/obsidian-local-rest-api/data.json" not in staged
+    for path in staged:
+        assert not path.endswith("data.json"), f"plugin state file {path} must never be baselined"
 
 
 def test_baseline_taken_once_then_frozen_even_after_a_later_edit(
