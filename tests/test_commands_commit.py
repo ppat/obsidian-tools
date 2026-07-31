@@ -6,6 +6,7 @@ failure on one remote must not block the other while still failing the run overa
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import stat
@@ -107,6 +108,52 @@ def test_persistent_read_failure_exits_nonzero_without_partial_commit(
     assert exit_code == 1
     assert commit_count(seeded_origin) == before  # no partial commit reached either remote
     assert commit_count(git_dir) == before  # and none sits stranded locally either
+
+
+def test_persistent_read_failure_is_logged_as_a_vault_problem_not_a_lock(
+    tmp_path: Path,
+    seeded_origin: Path,
+    make_bare_repo: Callable[[], Path],
+    vault_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Wire test for `classify_git_error` (`vault_git/git_errors.py`) actually reaching the log line
+    `run()` emits — not just the classifier in isolation (already table-tested in
+    `test_vault_git_errors.py`) and not just `is_index_lock_error` distinguishing True/False
+    (`test_is_index_lock_error_tells_a_lock_apart_from_an_ordinary_read_failure` below). Before this
+    was wired up, this exact scenario -- a real, unreadable vault file, reached through the real
+    retry-then-fail path -- was logged as "staging failed, likely a persistent vault read error",
+    which is the one case here where that message happens to be right; the bug this test (together
+    with the two immediately below, for the git-dir-volume cases) guards is the *other* three kinds
+    all being folded into that same sentence regardless of which subsystem actually failed."""
+    monkeypatch.setattr(retry_module, "DEFAULT_RETRIES", 2)
+    monkeypatch.setattr(retry_module, "DEFAULT_BASE_DELAY_SECONDS", 0.01)
+
+    nas = make_bare_repo()
+    git_dir = tmp_path / "git-dir"
+
+    (vault_dir / "10-areas").mkdir()
+    unreadable = vault_dir / "10-areas" / "unreadable.md"
+    unreadable.write_text("# Unreadable\n")
+    unreadable.chmod(0)  # a real, persistent read failure — not mocked; this uid owns but can't read it
+
+    try:
+        with caplog.at_level(logging.ERROR):
+            exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas)))
+    finally:
+        unreadable.chmod(stat.S_IRUSR | stat.S_IWUSR)  # restore so tmp_path cleanup can remove it
+
+    assert exit_code == 1
+    events = [getattr(record, "event", None) for record in caplog.records]
+    assert "stage_failed_vault_read_failure" in events
+    assert "stage_failed_locked" not in events
+    assert "stage_failed" not in events  # the old, undifferentiated event name must not reappear
+
+    [record] = [r for r in caplog.records if getattr(r, "event", None) == "stage_failed_vault_read_failure"]
+    message = record.getMessage().lower()
+    assert message.startswith("staging failed: a vault file could not be read")
+    assert "the git-dir is locked" not in message  # must not be conflated with a stale lock
 
 
 def test_transient_read_failure_recovers_and_still_commits(
@@ -292,6 +339,73 @@ def test_is_index_lock_error_does_not_misattribute_a_full_or_read_only_git_dir()
 
     read_only_error = _git_command_error("fatal: Unable to create '/git/vault.git/index.lock': Permission denied")
     assert is_index_lock_error(read_only_error) is False
+
+
+@pytest.mark.parametrize(
+    ("stderr", "expected_event"),
+    [
+        pytest.param(
+            "fatal: Unable to create '/git/vault.git/index.lock': No space left on device",
+            "stage_failed_no_space",
+            id="full-git-dir-volume",
+        ),
+        pytest.param(
+            "fatal: Unable to create '/git/vault.git/index.lock': Permission denied",
+            "stage_failed_permission_denied",
+            id="read-only-git-dir-volume",
+        ),
+    ],
+)
+def test_a_full_or_read_only_git_dir_volume_is_logged_distinctly_from_a_vault_read_failure(
+    tmp_path: Path,
+    seeded_origin: Path,
+    make_bare_repo: Callable[[], Path],
+    vault_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    stderr: str,
+    expected_event: str,
+) -> None:
+    """Wire test, the git-dir-volume half of the classifier `run()` must act on -- the companion
+    case to `test_persistent_read_failure_is_logged_as_a_vault_problem_not_a_lock`'s real vault
+    read failure. A full or read-only git-dir cache PVC is a different failure domain from the
+    vault's NFS mount (a different volume, mounted read-write); misdiagnosing it as "a persistent
+    vault read error" has already sent an operator chasing NFS twice for what was actually the
+    git-dir volume (see `vault_git/git_errors.py`'s module docstring). Neither failure is
+    practical to reproduce with real I/O in a test this uid doesn't own the mount for -- unlike the
+    vault-read case above, which is real chmod(0) against a real file -- so this drives `run()`'s
+    real exception-handling and logging path by raising a `GitCommandError` built from
+    `classify_git_error`'s own captured-from-real-git stderr text (the same strings
+    `test_vault_git_errors.py` uses) at the seam a fake disk can't reach: `stage_all` itself.
+    Matches this file's existing precedent for testing this path
+    (`test_commit_failure_is_caught_and_logged_rather_than_propagating` monkeypatches
+    `create_commit` the same way, for the analogous HEAD.lock/refs-lock case)."""
+    nas = make_bare_repo()
+    git_dir = tmp_path / "git-dir"
+    (vault_dir / "10-areas").mkdir()
+    (vault_dir / "10-areas" / "note.md").write_text("# Note\n")
+
+    git_error = _git_command_error(stderr)
+
+    def _raise_git_dir_volume_error(*_args: object, **_kwargs: object) -> None:
+        raise git_error
+
+    monkeypatch.setattr(commit_command, "stage_all", _raise_git_dir_volume_error)
+
+    with caplog.at_level(logging.ERROR):
+        exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas)))
+
+    assert exit_code == 1
+    events = [getattr(record, "event", None) for record in caplog.records]
+    assert expected_event in events
+    assert "stage_failed" not in events  # the old, undifferentiated event name must not reappear
+
+    [record] = [r for r in caplog.records if getattr(r, "event", None) == expected_event]
+    message = record.getMessage().lower()
+    assert message.startswith("staging failed: the git-dir cache volume")
+    # Regression guard: this exact sentence is what misattributed a git-dir-volume failure to the
+    # vault's NFS mount twice before the classifier was wired up (vault_git/git_errors.py).
+    assert "persistent vault read error" not in message
 
 
 def test_push_failure_on_one_remote_still_attempts_the_other_and_run_exits_nonzero(
