@@ -37,6 +37,14 @@ reaching that same GUI (P8) at all — connection steps, and the hazards hit the
 it was actually used. It carries no authority over `DESIGN.md` either, and nothing in the
 table above defers to it.
 
+[`local-replicator.md`](./local-replicator.md) is the third document in this operational
+tier: install/uninstall instructions and operator prerequisites for `local-replicator`, the
+one component in the whole design that runs outside the cluster (a launchd job on the
+operator's Mac, not a Flux-managed workload). Unlike `settings-lock.md`, it isn't a one-time
+procedure executed once and then history — installing, uninstalling and resetting the
+device `.obsidian/` baseline are all things an operator does again, on demand. It carries no
+authority over `DESIGN.md` either.
+
 ## What FINDINGS-v1 corrects
 
 `FINDINGS-v1-source-review.md` § "Corrections to canon" lists, with severity, every claim in CANON-1/CANON-2 it

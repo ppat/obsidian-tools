@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Template, not a usable plist as-is: the __PLACEHOLDER__ tokens below must be substituted with
+  operator- and machine-specific values before this is installed. launchd plists are read as
+  literal XML by launchd itself — there is no shell, so `$HOME` or `~` are never expanded here the
+  way they would be in a shell script. See ../../docs/local-replicator.md for the install
+  procedure that fills these in.
+
+  A LaunchAgent, not a LaunchDaemon: this job needs the logged-in user's iCloud Drive mount, which
+  only exists inside a user session, not in the system-level context LaunchDaemons run in.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.ppat.obsidian-tools.local-replicator</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__OBSIDIAN_TOOLS_BIN__</string>
+    <string>replicate</string>
+  </array>
+
+  <!--
+    A rolling interval, not StartCalendarInterval: this job runs on a laptop that sleeps
+    unpredictably, not a server. StartInterval's contract is "run roughly every N seconds the
+    machine is awake, and catch up promptly on wake if a run was missed" — it degrades gracefully
+    around sleep without needing to reason about which specific wall-clock times might be missed.
+    A fixed calendar time (e.g. "every day at 09:00") would just as often land while the lid is
+    closed, silently skipping a day's sync until the next scheduled tick — a needless single point
+    of failure StartInterval doesn't have. 900 seconds (15 minutes) balances device freshness
+    against not hammering iCloud/git/rsync on every trivial change; there is no correctness
+    requirement pinning this to a specific number, and the whole cycle is idempotent and safe to
+    run more or less often.
+  -->
+  <key>StartInterval</key>
+  <integer>900</integer>
+
+  <!-- Run once immediately when the job is loaded, rather than waiting a full interval for the
+       first cycle — useful on install and on every login. -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- This is a run-to-completion cycle, like a cron job, not a resident daemon: it must not be
+       relaunched the instant it exits. StartInterval alone already provides the schedule. -->
+  <key>KeepAlive</key>
+  <false/>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- iCloud Drive/Obsidian/<Vault Name> — see docs/local-replicator.md "Prerequisites" for how
+         to find this path on the operator's own Mac; it is never the same two directories twice
+         and must not be guessed at or defaulted in code. -->
+    <key>ICLOUD_VAULT_DIR</key>
+    <string>__ICLOUD_VAULT_DIR__</string>
+
+    <!-- The same bare repository the git committer pushes to, reached here through a read-only
+         deploy key (never the committer's read-write one) — see docs/local-replicator.md. -->
+    <key>GIT_REMOTE_ORIGIN_URL</key>
+    <string>__GIT_REMOTE_ORIGIN_URL__</string>
+
+    <key>GIT_SSH_KEY_PATH</key>
+    <string>__HOME_DIR__/.ssh/obsidian_vault_readonly</string>
+
+    <key>GIT_SSH_KNOWN_HOSTS_PATH</key>
+    <string>__HOME_DIR__/.ssh/known_hosts</string>
+
+    <!-- The single parked clone (docs/DESIGN.md §2 item 10) — stays checked out at LAST_CHECKOUT
+         between cycles. Safe to delete by hand if it's ever suspected of being in a bad state;
+         the next cycle re-baselines from scratch (docs/DESIGN.md §4 Plane B, "Losing the Mac
+         clone loses the baseline"). -->
+    <key>OBSIDIAN_CACHE_CLONE_DIR</key>
+    <string>__HOME_DIR__/.cache/obsidian-vault</string>
+
+    <!-- launchd does not run inside a login shell, so PATH is minimal by default; without this,
+         `uv`/`pipx`-installed console scripts under ~/.local/bin are invisible even though
+         ProgramArguments above already names the binary by its full path (some tool invocations
+         this process shells out to — git, rsync — are resolved via PATH, not by absolute path). -->
+    <key>PATH</key>
+    <string>__HOME_DIR__/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <!-- Structured (JSON-per-line) logs go to stdout already (obsidian_tools/logging_config.py);
+       captured here since launchd has no other scrape point for a job like this. -->
+  <key>StandardOutPath</key>
+  <string>__HOME_DIR__/Library/Logs/obsidian-tools/local-replicator.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME_DIR__/Library/Logs/obsidian-tools/local-replicator.err.log</string>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>
