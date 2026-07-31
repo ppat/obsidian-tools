@@ -57,13 +57,11 @@ logger = logging.getLogger(__name__)
 
 OBSIDIAN_DIR = ".obsidian"
 
-# Obsidian's own documentation names these two files specifically as per-instance workspace state
-# that updates on every session and must never be shared across devices. Never on either allowlist
-# below, so this denylist check is now redundant everywhere it's still used (below, in the capture
-# branch's own staged_paths loop) — kept for now; dropped once nothing references it.
-WORKSPACE_STATE_FILES = (".obsidian/workspace.json", ".obsidian/workspaces.json")
-
 # What a device baseline actually needs: shared application config, never per-plugin state.
+# Obsidian's own documentation names `workspace.json`/`workspaces.json` as per-instance state that
+# updates every session — they are excluded from this baseline by never appearing on either list
+# below, not by a denylist entry naming them specifically (see the module docstring for why that
+# distinction is the whole point).
 _BASELINE_TOP_LEVEL_FILES = (
     "app.json",
     "appearance.json",
@@ -82,12 +80,15 @@ _PLUGIN_CODE_FILES = ("manifest.json", "main.js", "styles.css")
 _IGNORE_RULE_CONTENTS = """\
 # Managed by obsidian-tools' git committer (obsidian_tools/vault_git/baseline.py) — do not edit.
 #
-# The vault volume is mounted read-only, so a tracked .gitignore cannot live in the work tree;
-# this git-dir-local exclude file is the only place this rule can live. It stops `git add -A`
-# from ever tracking a NEW path under .obsidian/ (anything outside the baseline allowlist below,
-# forever). It does NOT freeze a path the baseline commit already captured — git only consults
-# ignore rules for untracked paths — so it does not substitute for the `update-index
-# --skip-worktree` bits this module also sets; the two mechanisms cover disjoint sets of files.
+# ppat/obsidian-vault's own tracked .gitignore already lists .obsidian/ wholesale, but this
+# component cannot depend on that alone: the vault volume is mounted read-only, so if that tracked
+# file were ever missing, renamed, or edited to drop the line, this committer has no way to create
+# or repair one in the work tree, and no way to notice. This git-dir-local exclude file is the copy
+# of the rule this component actually controls. It stops `git add -A` from ever tracking a NEW path
+# under .obsidian/ (anything outside the baseline allowlist below, forever). It does NOT freeze a
+# path the baseline commit already captured — git only consults ignore rules for untracked paths —
+# so it does not substitute for the `update-index --skip-worktree` bits this module also sets; the
+# two mechanisms cover disjoint sets of files.
 .obsidian/
 """
 
@@ -163,8 +164,7 @@ def ensure_obsidian_baseline(runner: GitRunner, work_tree: Path) -> bool:
     runner.run(["add", "--force", "--", *baseline_paths], retry=True)
     staged_paths = runner.run(["diff", "--cached", "--name-only", "--", f"{OBSIDIAN_DIR}/"]).stdout.splitlines()
     for path in staged_paths:
-        if path not in WORKSPACE_STATE_FILES:
-            runner.run(["update-index", "--skip-worktree", "--", path])
+        runner.run(["update-index", "--skip-worktree", "--", path])
 
     logger.info(
         "captured .obsidian/ baseline",
