@@ -70,7 +70,17 @@ _BASELINE_TOP_LEVEL_FILES = (
     "hotkeys.json",
     "types.json",
 )
+# Constrained to *.css (plus a theme's own manifest.json, below) — never the bare directory. A bare
+# `snippets/`/`themes/` prefix admits every file of any name at any depth, sight unseen, which is
+# the same allowlist-as-denylist mistake the plugin data.json exclusion below exists to prevent,
+# one level down: a probe against an earlier revision of this module staged
+# `.obsidian/themes/Minimal/data.json`, `.obsidian/themes/deep/nested/inner/data.json` and
+# `.obsidian/snippets/sub/dir/creds.json` (ppat/obsidian-tools#3). Themes are third-party code
+# installed through the ungated GUI path (docs/DESIGN.md §1.3 P8), so "nothing secret would ever
+# land under there" is not a claim this baseline gets to make.
 _BASELINE_DIRS = ("snippets", "themes")
+_BASELINE_CSS_GLOB = "*.css"
+_THEME_MANIFEST_FILENAME = "manifest.json"
 
 # A community plugin's own settings/state conventionally lives in `data.json` inside its plugin
 # directory — the REST API plugin's bearer token included. Only a plugin's *code* is ever
@@ -107,6 +117,16 @@ def _baseline_paths(work_tree: Path) -> list[str]:
     `git add --force --`: every entry is a real, existing pathspec, never one that would make the
     add fail with "did not match any files" because a given device baseline happens not to need it
     (e.g. no snippets yet, or a plugin that ships without a stylesheet).
+
+    Matches under `_BASELINE_DIRS` are constrained to `*.css` (plus a theme's own `manifest.json`)
+    at any depth, never the bare directory — see the module-level comment above `_BASELINE_DIRS`.
+    Symlinks are excluded outright, not merely trusted to be content-blind: git only ever stores a
+    symlink's *target string* as the blob, never the target's content, so nothing under the target
+    leaks through git itself — but that target string re-resolves against whatever filesystem later
+    checks the clone out, the Mac clone's iCloud copy included. A
+    `.obsidian/snippets/x.css -> /etc/passwd`-shaped symlink would publish a live pointer at a path
+    outside the vault entirely onto every replica, which is a risk with no legitimate baseline use
+    case to weigh against it.
     """
     obsidian_dir = work_tree / OBSIDIAN_DIR
     paths: list[str] = []
@@ -117,11 +137,16 @@ def _baseline_paths(work_tree: Path) -> list[str]:
 
     for dirname in _BASELINE_DIRS:
         directory = obsidian_dir / dirname
-        if directory.is_dir():
+        if not directory.is_dir():
+            continue
+        globs = [_BASELINE_CSS_GLOB]
+        if dirname == "themes":
+            globs.append(_THEME_MANIFEST_FILENAME)
+        for glob in globs:
             paths.extend(
                 str(file_path.relative_to(work_tree))
-                for file_path in sorted(directory.rglob("*"))
-                if file_path.is_file()
+                for file_path in sorted(directory.rglob(glob))
+                if file_path.is_file() and not file_path.is_symlink()
             )
 
     plugins_dir = obsidian_dir / "plugins"

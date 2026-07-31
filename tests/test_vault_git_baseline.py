@@ -263,3 +263,77 @@ def test_baseline_survives_quotepath_hostile_filenames(
     (vault_dir / ".obsidian" / "snippets" / filename).write_text("body { color: red; }\n")
     stage_all(runner_2)
     assert not has_staged_changes(runner_2)
+
+
+def _write_theme(obsidian_dir: Path, name: str) -> None:
+    theme_dir = obsidian_dir / "themes" / name
+    theme_dir.mkdir(parents=True)
+    (theme_dir / "theme.css").write_text("/* theme */\n")
+    (theme_dir / "manifest.json").write_text(f'{{"name": "{name}"}}\n')
+
+
+def test_themes_and_snippets_are_constrained_to_css_and_theme_manifest(
+    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+) -> None:
+    """A bare `snippets/`/`themes/` directory prefix admits every file of any name at any depth --
+    the same allowlist-as-denylist mistake the plugin `data.json` exclusion exists to prevent, one
+    level down (ppat/obsidian-tools#3). Regression test for a probe that staged
+    `.obsidian/themes/Minimal/data.json`, `.obsidian/themes/deep/nested/inner/data.json` and
+    `.obsidian/snippets/sub/dir/creds.json` against the old bare-directory implementation. Themes
+    are third-party code installed through the ungated GUI path (docs/DESIGN.md Sec 1.3 P8), so
+    "nothing secret would ever land there" is not a claim this baseline gets to make."""
+    nas = make_bare_repo()
+    git_dir = tmp_path / "git-dir"
+    _write_obsidian_dir(vault_dir)
+    obsidian = vault_dir / ".obsidian"
+
+    (obsidian / "snippets").mkdir()
+    (obsidian / "snippets" / "custom.css").write_text("body {}\n")
+    (obsidian / "snippets" / "sub" / "dir").mkdir(parents=True)
+    (obsidian / "snippets" / "sub" / "dir" / "creds.json").write_text('{"token": "leak"}\n')
+
+    _write_theme(obsidian, "Minimal")
+    (obsidian / "themes" / "Minimal" / "data.json").write_text('{"secret": "leak"}\n')
+    (obsidian / "themes" / "deep" / "nested" / "inner").mkdir(parents=True)
+    (obsidian / "themes" / "deep" / "nested" / "inner" / "data.json").write_text('{"secret": "leak"}\n')
+
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    ensure_obsidian_baseline(runner, vault_dir)
+
+    staged = runner.run(["diff", "--cached", "--name-only"]).stdout.splitlines()
+
+    assert ".obsidian/snippets/custom.css" in staged
+    assert ".obsidian/themes/Minimal/theme.css" in staged
+    assert ".obsidian/themes/Minimal/manifest.json" in staged
+    assert ".obsidian/snippets/sub/dir/creds.json" not in staged
+    assert ".obsidian/themes/Minimal/data.json" not in staged
+    assert ".obsidian/themes/deep/nested/inner/data.json" not in staged
+    for path in staged:
+        assert not path.endswith("data.json"), f"plugin/theme state file {path} must never be baselined"
+
+
+def test_symlinks_under_themes_and_snippets_are_never_captured(
+    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+) -> None:
+    """A symlink under `snippets/` or `themes/` stores only its target *path* as a git blob -- the
+    target's content is never leaked through git itself -- but that target string re-resolves
+    against whatever filesystem later checks the clone out, the Mac clone's iCloud copy included.
+    `snippets/escape.css -> /etc/passwd` would publish a live pointer outside the vault entirely
+    onto every replica, so symlinks are excluded from the baseline outright."""
+    nas = make_bare_repo()
+    git_dir = tmp_path / "git-dir"
+    _write_obsidian_dir(vault_dir)
+    obsidian = vault_dir / ".obsidian"
+    (obsidian / "snippets").mkdir()
+    (obsidian / "snippets" / "escape.css").symlink_to("/etc/passwd")
+    _write_theme(obsidian, "Minimal")
+    (obsidian / "themes" / "Minimal" / "manifest.json").unlink()
+    (obsidian / "themes" / "Minimal" / "manifest.json").symlink_to("/etc/hostname")
+
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    ensure_obsidian_baseline(runner, vault_dir)
+
+    staged = runner.run(["diff", "--cached", "--name-only"]).stdout.splitlines()
+    assert ".obsidian/snippets/escape.css" not in staged
+    assert ".obsidian/themes/Minimal/manifest.json" not in staged
+    assert ".obsidian/themes/Minimal/theme.css" in staged  # the ordinary, non-symlink file is unaffected

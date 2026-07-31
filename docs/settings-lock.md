@@ -341,6 +341,15 @@ every current and future secret-bearing file to stay safe; the next plugin that 
 credential there would reintroduce the leak silently. Capture only what a device baseline
 actually needs — shared application config, and a plugin's *code*, never its *state*:
 
+**The same mistake recurs one level down if `snippets/`/`themes/` are named bare.** An
+earlier version of this command did exactly that, and a bare directory prefix inside an
+allowlist admits every file of any name at any depth underneath it, sight unseen — themes
+are third-party code installed through the ungated GUI path, so "nothing secret would ever
+land there" is not a claim this checklist gets to make. A probe against that version staged
+`.obsidian/themes/Minimal/data.json`, `.obsidian/themes/deep/nested/inner/data.json` and
+`.obsidian/snippets/sub/dir/creds.json`. Narrowed to file globs below, which costs a device
+baseline nothing: `*.css` under both, plus a theme's own `manifest.json`.
+
 ```sh
 git add --force -- \
   .obsidian/app.json \
@@ -349,8 +358,9 @@ git add --force -- \
   .obsidian/community-plugins.json \
   .obsidian/hotkeys.json \
   .obsidian/types.json \
-  .obsidian/snippets/ \
-  .obsidian/themes/ \
+  .obsidian/snippets/*.css \
+  .obsidian/themes/*/*.css \
+  .obsidian/themes/*/manifest.json \
   .obsidian/plugins/*/manifest.json \
   .obsidian/plugins/*/main.js \
   .obsidian/plugins/*/styles.css
