@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import os
 import signal
+import subprocess
+import sys
 
 import pytest
 
@@ -35,22 +36,41 @@ def test_main_returns_config_error_exit_code_when_required_env_missing(monkeypat
 
 
 def test_installed_sigterm_handler_raises_graceful_shutdown() -> None:
-    """CPython only installs a default handler for SIGINT; without an explicit one, SIGTERM keeps
-    the platform default, which the kernel does not deliver at all to a PID-1 process (signal(7))
-    — exactly the shape this container runs in when the manifest supplies the subcommand directly
-    as container args. Installing this handler is what makes SIGTERM delivery work in the first
-    place, independent of what owns PID 1; this test proves the handler itself is wired to raise,
-    not the PID-1-specific kernel behaviour (which a non-PID-1 test process can't reproduce)."""
-    previous = signal.getsignal(signal.SIGTERM)
-    try:
-        cli.install_signal_handlers()
-        with pytest.raises(GracefulShutdown):
-            os.kill(os.getpid(), signal.SIGTERM)
-    finally:
-        signal.signal(signal.SIGTERM, previous)
+    """CPython only installs its own handler for SIGINT; every other signal, SIGTERM included,
+    keeps the interpreter's default disposition, and the OS default action for SIGTERM is
+    immediate termination — no exception, no unwind. Installing this handler is what makes CPython
+    raise `GracefulShutdown` instead.
+
+    Runs in a subprocess, deliberately: sending SIGTERM straight to the pytest process would kill
+    the *runner* outright if the handler were ever missing (default disposition is unconditional
+    termination), producing a bare exit 143 with no `FAILED` line rather than a legible test
+    failure — this was the previous shape of this test. Isolating the signal to a child process
+    means a regression here shows up as an ordinary, readable assertion failure instead of taking
+    the whole test run down with it."""
+    script = (
+        "import os, signal\n"
+        "from obsidian_tools import cli\n"
+        "cli.install_signal_handlers()\n"
+        "os.kill(os.getpid(), signal.SIGTERM)\n"
+    )
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=10)
+
+    # A working handler turns the signal into an uncaught GracefulShutdown in the child, which
+    # Python reports as a traceback on stderr and a non-signal exit. Without the handler, the
+    # child dies directly by the signal (a negative returncode, per subprocess's convention) with
+    # nothing on stderr at all — this assertion is what makes that difference legible.
+    assert "GracefulShutdown" in result.stderr, (
+        f"expected a GracefulShutdown traceback from the child process; "
+        f"got returncode={result.returncode!r} stderr={result.stderr!r}"
+    )
 
 
 def test_main_stops_gracefully_and_returns_143_on_sigterm(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`main()` installs a real, process-wide SIGTERM handler as a side effect
+    (`install_signal_handlers`) — must be restored afterward, or a later test in the same pytest
+    process (or an actual SIGTERM delivered to the test runner itself, e.g. on CI cancellation)
+    inherits a handler this test installed for an unrelated reason."""
+
     def _raise_shutdown(_config: object) -> int:
         raise GracefulShutdown("received signal 15")
 
@@ -58,4 +78,8 @@ def test_main_stops_gracefully_and_returns_143_on_sigterm(monkeypatch: pytest.Mo
     monkeypatch.setenv("GIT_REMOTE_ORIGIN_URL", "git@github.com:ppat/obsidian-vault.git")
     monkeypatch.setenv("GIT_REMOTE_NAS_URL", "git@nas:vault.git")
 
-    assert main(["commit"]) == 143
+    previous = signal.getsignal(signal.SIGTERM)
+    try:
+        assert main(["commit"]) == 143
+    finally:
+        signal.signal(signal.SIGTERM, previous)

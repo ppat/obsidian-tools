@@ -119,6 +119,18 @@ def run(config: CommitConfig) -> int:
 
 
 def is_index_lock_error(exc: BaseException) -> bool:
-    """True if the underlying git failure was a stale `index.lock`, not a vault read problem."""
+    """True only for the specific "the lock file is already there" failure — git's own message when
+    it can't create an `index.lock` because one already exists.
+
+    Matching the lock path alone is not enough: a full or read-only git-dir PVC fails with
+    `Unable to create '.../index.lock': No space left on device` or `... Permission denied` —
+    `index.lock` appears in that message too, since it's the path git was trying to create, but the
+    actual problem is the volume, not a stale lock, and misattributing it points a human at
+    completely the wrong fix. `File exists` is what actually distinguishes "a lock is already
+    there" from every other reason creating that path could fail.
+    """
     git_error = exc if isinstance(exc, GitCommandError) else exc.__cause__
-    return isinstance(git_error, GitCommandError) and "index.lock" in (git_error.result.stderr or "")
+    if not isinstance(git_error, GitCommandError):
+        return False
+    stderr = git_error.result.stderr or ""
+    return "index.lock" in stderr and "File exists" in stderr

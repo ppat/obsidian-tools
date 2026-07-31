@@ -22,17 +22,25 @@ from obsidian_tools.logging_config import configure_logging
 logger = logging.getLogger(__name__)
 
 
-# The CronJob pod's terminationGracePeriod stop is a SIGTERM; a graceful stop needs a handler
-# installed for it. CPython's own default only installs one for SIGINT, so without this, SIGTERM
-# keeps the platform default disposition — and when this process is PID 1 in-container (the
-# manifest supplies the subcommand directly as container args, replacing whatever would otherwise
-# own PID 1), the kernel does not deliver a default-disposition signal to PID 1 at all (signal(7)):
-# SIGTERM is silently discarded and every stop escalates straight to SIGKILL after the grace
-# period, which is exactly how a run gets killed mid `git add`/`commit`/`reset` and leaves a stale
-# `index.lock` behind (see vault_git/provisioning.py's `_clear_stale_index_lock`, the recovery net
-# for whatever this handler doesn't manage to unwind before the kernel kills it outright).
-# Installing *any* handler restores normal delivery even for PID 1, independent of the container's
-# entrypoint — this is a genuine fix on its own, not merely preparation for one made elsewhere.
+# The CronJob pod's terminationGracePeriod stop is a SIGTERM, and a graceful stop needs a handler
+# installed for it — but not for the reason an earlier version of this comment gave. This process
+# is NOT PID 1: the Dockerfile's ENTRYPOINT is `tini`, and the manifest supplies this subcommand
+# only as container `args`, which Docker/Kubernetes map onto CMD (appended after ENTRYPOINT)
+# precisely so `tini` keeps PID 1 and this process runs underneath it as an ordinary child — `args`
+# does not replace ENTRYPOINT, an earlier version of this comment had that backwards. `tini`
+# forwards SIGTERM to this process normally; the PID-1 signal-delivery quirk in signal(7) (the
+# kernel not delivering a default-disposition signal to PID 1 at all) never applies here, because
+# this process is never PID 1.
+#
+# The handler is needed anyway, for an unrelated reason: CPython only installs its own handler for
+# SIGINT (raising KeyboardInterrupt); every other signal, SIGTERM included, keeps the interpreter's
+# default disposition, and the OS default action for SIGTERM is immediate termination — no
+# exception, no unwind, no `finally`. Without a handler here, a SIGTERM delivered mid
+# `git add`/`commit`/`reset` kills the process at that exact instant, which is exactly how a stale
+# `*.lock` file gets left behind (see vault_git/provisioning.py's `_clear_stale_locks`, the
+# recovery net for whatever this handler doesn't manage to unwind in time). Installing a handler
+# makes CPython raise `GracefulShutdown` instead of taking SIGTERM's default action, giving a run
+# the chance to unwind and log before exiting.
 class GracefulShutdown(RuntimeError):
     """Raised from the SIGTERM handler so a run can unwind and log instead of dying silently."""
 

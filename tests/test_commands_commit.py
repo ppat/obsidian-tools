@@ -281,6 +281,18 @@ def test_is_index_lock_error_tells_a_lock_apart_from_an_ordinary_read_failure() 
     assert is_index_lock_error(wrapped_lock_error) is True
 
 
+def test_is_index_lock_error_does_not_misattribute_a_full_or_read_only_git_dir() -> None:
+    """A full or read-only git-dir PVC fails with `index.lock` in the message too -- it's the path
+    git was trying to create -- but with `No space left on device` or `Permission denied` instead
+    of `File exists`. Matching the lock path alone points a human at "the git-dir is locked" when
+    the actual problem is the volume; `File exists` is what actually distinguishes the two."""
+    disk_full_error = _git_command_error("fatal: Unable to create '/git/vault.git/index.lock': No space left on device")
+    assert is_index_lock_error(disk_full_error) is False
+
+    read_only_error = _git_command_error("fatal: Unable to create '/git/vault.git/index.lock': Permission denied")
+    assert is_index_lock_error(read_only_error) is False
+
+
 def test_push_failure_on_one_remote_still_attempts_the_other_and_run_exits_nonzero(
     tmp_path: Path, seeded_origin: Path, vault_dir: Path
 ) -> None:
