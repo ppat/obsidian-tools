@@ -54,8 +54,14 @@ class CommitConfig:
             # the mount root.
             vault_dir=get_env("OBSIDIAN_VAULT_DIR", "/vault/brain"),
             branch=get_env("GIT_COMMIT_BRANCH", "main"),
-            author_name=get_env("GIT_AUTHOR_NAME", "brain-committer"),
-            author_email=get_env("GIT_AUTHOR_EMAIL", "brain-committer@noreply.invalid"),
+            # Not GIT_AUTHOR_NAME/GIT_AUTHOR_EMAIL: those are git's own reserved environment
+            # variables (see git(1) ENVIRONMENT VARIABLES) and git reads them directly, ahead of
+            # `user.name`/`user.email` config, for the *author* identity only — an operator setting
+            # them for git's own sake would silently reconfigure this tool too, and since nothing
+            # here sets GIT_COMMITTER_NAME/EMAIL to match, the commit's author and committer would
+            # then disagree. GIT_COMMIT_ prefixed, matching GIT_COMMIT_BRANCH above.
+            author_name=get_env("GIT_COMMIT_AUTHOR_NAME", "brain-committer"),
+            author_email=get_env("GIT_COMMIT_AUTHOR_EMAIL", "brain-committer@noreply.invalid"),
             origin_url=require_env("GIT_REMOTE_ORIGIN_URL"),
             nas_url=require_env("GIT_REMOTE_NAS_URL"),
             ssh_key_path=get_env("GIT_SSH_KEY_PATH", "/etc/obsidian-tools/git-ssh/id_ed25519"),
