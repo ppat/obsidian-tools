@@ -20,6 +20,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 
+from obsidian_tools.vault_git.deletion_assessment import DeletionVerdict, assess_deletion
 from obsidian_tools.vault_git.runner import GitCommandError, GitRunner, NameStatusEntry
 
 logger = logging.getLogger(__name__)
@@ -59,9 +60,13 @@ def check_for_mass_deletion(runner: GitRunner, *, max_deletion_fraction: float =
     rather than like a human deleted a note — this component's whole job is durability, and
     `docs/DESIGN.md`'s "fail loud, destroy nothing" posture applies nowhere more than here.
 
-    Two independent tripwires, either sufficient on its own:
-    - staged deletions exceed `max_deletion_fraction` of what HEAD had tracked, or
-    - HEAD tracked markdown notes and the staged tree now has none at all.
+    The verdict itself — which of the two tripwires (deletion fraction, zero markdown) fired, if
+    either — is `assess_deletion` (`vault_git/deletion_assessment.py`), pure over the before/after
+    path lists. This function's job is gathering those two lists and turning a non-`ALLOWED` verdict
+    into `MassDeletionError`. `max_deletion_fraction >= 1.0` and an empty `HEAD` both short-circuit
+    here, before either path list is even fetched — the former is redundant with `assess_deletion`'s
+    own handling of it (kept there too, so that boundary is directly pure-testable), the latter
+    because `assess_deletion` has nothing to evaluate without a tracked-before list to begin with.
 
     **The after-state is derived entirely from git's own staged tree (`git write-tree`), never by
     walking the work tree.** An earlier revision counted `work_tree.rglob("*.md")` directly, on the
@@ -94,22 +99,20 @@ def check_for_mass_deletion(runner: GitRunner, *, max_deletion_fraction: float =
 
     tracked_after = runner.list_tree_paths(runner.write_staged_tree())
 
-    deleted_count = len(set(tracked_before) - set(tracked_after))
-    deletion_fraction = deleted_count / len(tracked_before)
+    assessment = assess_deletion(
+        tracked_before=tracked_before, tracked_after=tracked_after, max_deletion_fraction=max_deletion_fraction
+    )
 
-    markdown_before = sum(1 for path in tracked_before if path.endswith(".md"))
-    markdown_now = sum(1 for path in tracked_after if path.endswith(".md"))
-
-    if deletion_fraction > max_deletion_fraction:
+    if assessment.verdict is DeletionVerdict.FRACTION_EXCEEDED:
         raise MassDeletionError(
-            f"staged commit deletes {deleted_count}/{len(tracked_before)} tracked paths "
-            f"({deletion_fraction:.0%}), over the {max_deletion_fraction:.0%} threshold. If this is "
+            f"staged commit deletes {assessment.deleted_count}/{assessment.tracked_count} tracked paths "
+            f"({assessment.deletion_fraction:.0%}), over the {max_deletion_fraction:.0%} threshold. If this is "
             "a deliberate archive purge, set GIT_COMMIT_MAX_DELETION_FRACTION>=1.0 and rerun to "
             "disable this guard for that run."
         )
-    if markdown_before > 0 and markdown_now == 0:
+    if assessment.verdict is DeletionVerdict.MARKDOWN_WIPED:
         raise MassDeletionError(
-            f"HEAD tracked {markdown_before} markdown files; the staged tree now has none. If this "
+            f"HEAD tracked {assessment.markdown_before} markdown files; the staged tree now has none. If this "
             "is a deliberate archive purge, set GIT_COMMIT_MAX_DELETION_FRACTION>=1.0 and rerun to "
             "disable this guard for that run."
         )
