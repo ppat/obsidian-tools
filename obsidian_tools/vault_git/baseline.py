@@ -33,17 +33,13 @@ those are untracked, and untracked paths are exactly what ignore rules (not skip
 Both mechanisms are required, and each covers the files the other cannot: ignore rules for what git
 has never tracked, skip-worktree for what it already has.
 
-**The capture itself is an allowlist, never a denylist.** An earlier version of this module forced
-`.obsidian/` wholesale minus the two known workspace-state files, which would have committed
-`.obsidian/plugins/obsidian-local-rest-api/data.json` — the file holding the vault's Local REST API
-bearer token (docs/DESIGN.md §2 item 5) — into permanent history on both remotes, pulled to the Mac
-clone, and published into iCloud and onto the phone (caught by review before it ever ran; see
-ppat/obsidian-tools#3). `data.json` is the conventional filename for *every* Obsidian plugin's
-settings, not just this one, so a denylist would have to enumerate every current and future
-secret-bearing file to stay safe — the next plugin that stores a credential there reintroduces the
-same leak silently. An allowlist of what a device baseline actually needs doesn't have that failure
-mode: a new plugin's `data.json` is excluded by never appearing on the list, not by someone
-remembering to add it to an exclusion.
+**The capture itself is an allowlist, never a denylist — see `baseline_selector.py`.** That module
+holds the actual list of what gets captured (and why) plus `select_baseline_paths`, the pure
+function every safety rule is checked in exactly once. This module is the thin shell around it: walk
+`.obsidian/` into `PathInfo` candidates, hand them to the selector, and turn what comes back into
+git calls. It intentionally does no allowlist-shaped reasoning of its own — see `baseline_selector.py`'s
+module docstring for why three prior patches each fixed the rule in one loop and missed another, and
+why that means the walk-and-decide logic must never be fused back together.
 """
 
 from __future__ import annotations
@@ -51,41 +47,12 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from obsidian_tools.vault_git.baseline_selector import PathInfo, select_baseline_paths
 from obsidian_tools.vault_git.runner import GitRunner
 
 logger = logging.getLogger(__name__)
 
 OBSIDIAN_DIR = ".obsidian"
-
-# What a device baseline actually needs: shared application config, never per-plugin state.
-# Obsidian's own documentation names `workspace.json`/`workspaces.json` as per-instance state that
-# updates every session — they are excluded from this baseline by never appearing on either list
-# below, not by a denylist entry naming them specifically (see the module docstring for why that
-# distinction is the whole point).
-_BASELINE_TOP_LEVEL_FILES = (
-    "app.json",
-    "appearance.json",
-    "core-plugins.json",
-    "community-plugins.json",
-    "hotkeys.json",
-    "types.json",
-)
-# Constrained to *.css (plus a theme's own manifest.json, below) — never the bare directory. A bare
-# `snippets/`/`themes/` prefix admits every file of any name at any depth, sight unseen, which is
-# the same allowlist-as-denylist mistake the plugin data.json exclusion below exists to prevent,
-# one level down: a probe against an earlier revision of this module staged
-# `.obsidian/themes/Minimal/data.json`, `.obsidian/themes/deep/nested/inner/data.json` and
-# `.obsidian/snippets/sub/dir/creds.json` (ppat/obsidian-tools#3). Themes are third-party code
-# installed through the ungated GUI path (docs/DESIGN.md §1.3 P8), so "nothing secret would ever
-# land under there" is not a claim this baseline gets to make.
-_BASELINE_DIRS = ("snippets", "themes")
-_BASELINE_CSS_GLOB = "*.css"
-_THEME_MANIFEST_FILENAME = "manifest.json"
-
-# A community plugin's own settings/state conventionally lives in `data.json` inside its plugin
-# directory — the REST API plugin's bearer token included. Only a plugin's *code* is ever
-# baselined; `data.json` is never on this list, for this plugin or any other, present or future.
-_PLUGIN_CODE_FILES = ("manifest.json", "main.js", "styles.css")
 
 _IGNORE_RULE_CONTENTS = """\
 # Managed by obsidian-tools' git committer (obsidian_tools/vault_git/baseline.py) — do not edit.
@@ -110,54 +77,64 @@ def ensure_ignore_rule(git_dir: Path) -> None:
     exclude_path.write_text(_IGNORE_RULE_CONTENTS)
 
 
+def _iter_obsidian_candidates(directory: Path, prefix: str = "") -> list[PathInfo]:
+    """Walk `.obsidian/` once into `PathInfo` candidates, relative to `.obsidian/` itself.
+
+    Mirrors `os.walk(..., followlinks=False)`: never descends into a symlinked directory, so no
+    candidate for anything beneath one is ever produced in the first place. That is the actual
+    mechanism that keeps a symlinked plugin directory (the standard local plugin-development layout,
+    `.obsidian/plugins/my-plugin -> ~/dev/my-plugin`) from ever reaching `git add` as a pathspec
+    "beyond a symbolic link" — see `test_symlinked_plugin_directory_does_not_wedge_the_committer`.
+    `select_baseline_paths` also rejects any candidate with `is_symlink` set, as a second,
+    independent check — a mistake here should not be the only thing standing between a symlink and
+    permanent history.
+
+    A directory this process can't read (a transient NFS glitch, matching the tolerance
+    `check_for_mass_deletion` already documents for the same volume) is skipped rather than raising:
+    the next scheduled run tries again, same as every other "not there yet" case this module treats
+    as routine rather than fatal.
+    """
+    candidates: list[PathInfo] = []
+    try:
+        entries = sorted(directory.iterdir())
+    except OSError:
+        return candidates
+
+    for entry in entries:
+        relative_path = f"{prefix}{entry.name}"
+        try:
+            is_symlink = entry.is_symlink()
+            is_dir = entry.is_dir()
+            is_file = entry.is_file()
+        except OSError:
+            continue
+
+        if is_dir and not is_symlink:
+            candidates.extend(_iter_obsidian_candidates(entry, f"{relative_path}/"))
+            continue
+
+        candidates.append(PathInfo(relative_path=relative_path, is_file=is_file, is_symlink=is_symlink))
+
+    return candidates
+
+
 def _baseline_paths(work_tree: Path) -> list[str]:
-    """Enumerate the allowlisted `.obsidian/` paths actually present, relative to `work_tree`.
+    """Enumerate the allowlisted `.obsidian/` paths actually present, `.obsidian/`-prefixed and
+    relative to `work_tree` — the walk-and-decide split described in the module docstring.
 
-    Only paths that exist are returned, so the resulting list is safe to pass straight to
-    `git add --force --`: every entry is a real, existing pathspec, never one that would make the
-    add fail with "did not match any files" because a given device baseline happens not to need it
-    (e.g. no snippets yet, or a plugin that ships without a stylesheet).
-
-    Matches under `_BASELINE_DIRS` are constrained to `*.css` (plus a theme's own `manifest.json`)
-    at any depth, never the bare directory — see the module-level comment above `_BASELINE_DIRS`.
-    Symlinks are excluded outright, not merely trusted to be content-blind: git only ever stores a
-    symlink's *target string* as the blob, never the target's content, so nothing under the target
-    leaks through git itself — but that target string re-resolves against whatever filesystem later
-    checks the clone out, the Mac clone's iCloud copy included. A
-    `.obsidian/snippets/x.css -> /etc/passwd`-shaped symlink would publish a live pointer at a path
-    outside the vault entirely onto every replica, which is a risk with no legitimate baseline use
-    case to weigh against it.
+    Every returned path existed at enumeration time, so it was a valid pathspec then — but this
+    process does not hold any lock on the (read-only, NFS-backed) work tree between here and the
+    `git add --force --` call that actually consumes these as pathspecs, so a path can still vanish
+    in that window. That's a real, if narrow, TOCTOU gap — not something this list can rule out by
+    construction — and it self-heals on the next run either way, since `git add -A`/`stage_all`
+    reconciles the whole index against the current work tree regardless of what a prior cycle saw.
+    Each pathspec also carries the `:(literal)` pathspec magic prefix (applied where the paths are
+    actually passed to git, not here) specifically so a filename containing a glob metacharacter
+    (`*`, `[`, `?`) is matched as itself rather than re-interpreted as a pattern.
     """
     obsidian_dir = work_tree / OBSIDIAN_DIR
-    paths: list[str] = []
-
-    for name in _BASELINE_TOP_LEVEL_FILES:
-        if (obsidian_dir / name).is_file():
-            paths.append(f"{OBSIDIAN_DIR}/{name}")
-
-    for dirname in _BASELINE_DIRS:
-        directory = obsidian_dir / dirname
-        if not directory.is_dir():
-            continue
-        globs = [_BASELINE_CSS_GLOB]
-        if dirname == "themes":
-            globs.append(_THEME_MANIFEST_FILENAME)
-        for glob in globs:
-            paths.extend(
-                str(file_path.relative_to(work_tree))
-                for file_path in sorted(directory.rglob(glob))
-                if file_path.is_file() and not file_path.is_symlink()
-            )
-
-    plugins_dir = obsidian_dir / "plugins"
-    if plugins_dir.is_dir():
-        for plugin_dir in sorted(p for p in plugins_dir.iterdir() if p.is_dir()):
-            for filename in _PLUGIN_CODE_FILES:
-                file_path = plugin_dir / filename
-                if file_path.is_file():
-                    paths.append(str(file_path.relative_to(work_tree)))
-
-    return paths
+    candidates = _iter_obsidian_candidates(obsidian_dir)
+    return [f"{OBSIDIAN_DIR}/{path}" for path in select_baseline_paths(candidates)]
 
 
 def ensure_obsidian_baseline(runner: GitRunner, work_tree: Path) -> bool:
@@ -186,7 +163,12 @@ def ensure_obsidian_baseline(runner: GitRunner, work_tree: Path) -> bool:
         )
         return False
 
-    runner.run(["add", "--force", "--", *baseline_paths], retry=True)
+    # `:(literal)` pathspec magic: these paths came from a real directory listing, not a human, but
+    # a filename containing a glob metacharacter (`*`, `[a-z]`, `?`) would otherwise be
+    # re-interpreted by git as a pattern rather than matched as itself — `:(literal)` pins each
+    # pathspec to exactly the path it names.
+    literal_pathspecs = [f":(literal){path}" for path in baseline_paths]
+    runner.run(["add", "--force", "--", *literal_pathspecs], retry=True)
     staged_paths = runner.staged_paths(f"{OBSIDIAN_DIR}/")
     for path in staged_paths:
         runner.run(["update-index", "--skip-worktree", "--", path])

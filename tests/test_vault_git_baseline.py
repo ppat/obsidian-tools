@@ -12,6 +12,14 @@ Two core properties under test:
   of path) must never be captured, no matter what the plugin is named. `test_plugin_data_json_is_never_captured`
   is the regression test for the vulnerability caught before it ever ran (ppat/obsidian-tools#3):
   it fails against the old denylist-shaped implementation.
+
+The volume of "which paths does the allowlist match" adversarial cases lives in
+`test_vault_git_baseline_selector.py` now, against the pure `select_baseline_paths` directly — no
+real filesystem or git repo needed for those. What stays here is what only a real filesystem and a
+real git repository can prove: that the walker in this module actually produces the candidates the
+selector needs, that a symlinked *directory* doesn't reach `git add` as a pathspec "beyond a
+symbolic link" (`ppat/obsidian-tools#22`), and that nothing ever lands in the index as a symlink
+blob (mode `120000`) end to end.
 """
 
 from __future__ import annotations
@@ -337,3 +345,135 @@ def test_symlinks_under_themes_and_snippets_are_never_captured(
     assert ".obsidian/snippets/escape.css" not in staged
     assert ".obsidian/themes/Minimal/manifest.json" not in staged
     assert ".obsidian/themes/Minimal/theme.css" in staged  # the ordinary, non-symlink file is unaffected
+
+
+def test_symlinked_plugin_directory_does_not_wedge_the_committer(
+    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+) -> None:
+    """BROKEN, reproduced (`ppat/obsidian-tools#22`): `.obsidian/plugins/my-plugin -> ~/dev/my-plugin`
+    is the standard local plugin-development layout. The plugins loop used to build a pathspec
+    straight through the symlinked directory (`file_path.is_file()` alone, no `is_symlink` check
+    anywhere in that loop, unlike the themes/snippets loops), and `git add --force` on a pathspec
+    that walks through a symlink fails outright: `fatal: pathspec '...' is beyond a symbolic link`.
+    `ensure_obsidian_baseline` propagated that as an uncaught `GitCommandError` -- and because the
+    baseline branch is only skipped once `HEAD` already carries `.obsidian/`, which then never
+    happens, every future run hit the same failure: no vault content ever committed again, on every
+    cycle, forever, logged as \"staging failed, likely a persistent vault read error\"."""
+    nas = make_bare_repo()
+    git_dir = tmp_path / "git-dir"
+    _write_obsidian_dir(vault_dir)
+    external_plugin = tmp_path / "dev" / "my-plugin"
+    external_plugin.mkdir(parents=True)
+    (external_plugin / "manifest.json").write_text('{"id": "my-plugin"}\n')
+    (external_plugin / "main.js").write_text("// plugin code\n")
+    plugins_dir = vault_dir / ".obsidian" / "plugins"
+    plugins_dir.mkdir()
+    (plugins_dir / "my-plugin").symlink_to(external_plugin, target_is_directory=True)
+    # An ordinary, real plugin alongside the symlinked one -- proving the symlinked directory is
+    # skipped specifically, not that the whole plugins branch silently stopped working.
+    real_plugin = plugins_dir / "obsidian-local-rest-api"
+    real_plugin.mkdir()
+    (real_plugin / "manifest.json").write_text('{"id": "obsidian-local-rest-api"}\n')
+
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    took_baseline = ensure_obsidian_baseline(runner, vault_dir)  # must not raise GitCommandError
+
+    assert took_baseline
+    staged = runner.run(["diff", "--cached", "--name-only"]).stdout.splitlines()
+    assert not any(path.startswith(".obsidian/plugins/my-plugin/") for path in staged)
+    assert ".obsidian/plugins/obsidian-local-rest-api/manifest.json" in staged
+
+
+def _staged_mode(runner: GitRunner, path: str) -> str:
+    """The index mode git currently has staged for `path` (`100644` ordinary, `120000` symlink)."""
+    raw = runner.run(["diff", "--cached", "--raw", "--", path]).stdout
+    assert raw, f"{path} is not staged at all"
+    # `:<old-mode> <new-mode> <old-sha> <new-sha> <status>\t<path>` -- see `git-diff-index(1)`.
+    return raw.split()[1]
+
+
+def test_symlinked_leaf_files_are_never_staged_as_symlink_blobs(
+    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+) -> None:
+    """BROKEN (latent, security-shaped), reproduced (`ppat/obsidian-tools#22`): a symlink git stages
+    is committed as a mode `120000` blob whose *contents* are the target path string, published
+    verbatim to both remotes, the Mac clone, iCloud and the phone. Measured against the pre-fix
+    plugins loop: `manifest.json -> /etc/passwd` staged clean, mode `120000`, blob contents
+    `/etc/passwd`. Exercises the top-level and plugins branches --
+    `test_symlinks_under_themes_and_snippets_are_never_captured` already covers themes/snippets --
+    so all three prior "which branch has the symlink check" variants are covered by an actual test,
+    not by inspection of which loop looks right."""
+    nas = make_bare_repo()
+    git_dir = tmp_path / "git-dir"
+    _write_obsidian_dir(vault_dir)
+    obsidian = vault_dir / ".obsidian"
+    (obsidian / "app.json").unlink()
+    (obsidian / "app.json").symlink_to("/etc/hostname")
+    plugin_dir = obsidian / "plugins" / "obsidian-local-rest-api"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "manifest.json").symlink_to("/etc/passwd")
+    (plugin_dir / "main.js").write_text("// plugin code\n")  # ordinary sibling, unaffected
+
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    ensure_obsidian_baseline(runner, vault_dir)
+
+    staged = runner.run(["diff", "--cached", "--name-only"]).stdout.splitlines()
+    assert ".obsidian/app.json" not in staged
+    assert ".obsidian/plugins/obsidian-local-rest-api/manifest.json" not in staged
+    assert ".obsidian/plugins/obsidian-local-rest-api/main.js" in staged
+    assert _staged_mode(runner, ".obsidian/plugins/obsidian-local-rest-api/main.js") == "100644"
+
+
+def test_theme_manifest_deeper_than_its_own_directory_is_not_captured(
+    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+) -> None:
+    """LOW (`#3`/`docs/settings-lock.md`'s own hand-run checklist command names this depth
+    explicitly: `.obsidian/themes/*/manifest.json`, never a recursive search). An earlier revision's
+    `directory.rglob("manifest.json")` let a manifest at any depth through -- one narrowing looser
+    than the checklist it's meant to automate."""
+    nas = make_bare_repo()
+    git_dir = tmp_path / "git-dir"
+    _write_obsidian_dir(vault_dir)
+    obsidian = vault_dir / ".obsidian"
+    _write_theme(obsidian, "Minimal")
+    nested = obsidian / "themes" / "Minimal" / "nested"
+    nested.mkdir()
+    (nested / "manifest.json").write_text('{"name": "not a theme manifest"}\n')
+
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    ensure_obsidian_baseline(runner, vault_dir)
+
+    staged = runner.run(["diff", "--cached", "--name-only"]).stdout.splitlines()
+    assert ".obsidian/themes/Minimal/manifest.json" in staged  # depth 1: still captured
+    assert ".obsidian/themes/Minimal/nested/manifest.json" not in staged  # depth 2: excluded
+
+
+def test_glob_metacharacter_filename_does_not_sweep_in_a_differently_named_symlink(
+    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+) -> None:
+    """LOW (`#22`): `_baseline_paths`'s docstring used to claim every returned path is safe to hand
+    straight to `git add --force --`. That's true of *existence* (mostly -- see the TOCTOU note in
+    that docstring now), but was never true of *interpretation*: without pathspec magic, a filename
+    containing `[...]` is a glob pattern to git, not a literal name. Measured against the pre-fix
+    call: with both `custom[1].css` (the real, allowlisted snippet) and a *differently-named*
+    `custom1.css -> /etc/passwd` symlink present, `git add --force -- .obsidian/snippets/custom[1].css`
+    staged **both** -- the exact literal file, and the symlink, via `[1]` fnmatching the single
+    character `1`. That's the selector's `is_symlink` exclusion bypassed entirely: the symlink was
+    never in `baseline_paths` (the selector rejected it), but git's own glob interpretation of the
+    *other* pathspec swept it in anyway. `:(literal)` closes this by pinning each pathspec to
+    exactly the path it names, no fnmatch involved."""
+    nas = make_bare_repo()
+    git_dir = tmp_path / "git-dir"
+    _write_obsidian_dir(vault_dir)
+    snippets = vault_dir / ".obsidian" / "snippets"
+    snippets.mkdir()
+    (snippets / "custom[1].css").write_text("body {}\n")
+    (snippets / "custom1.css").symlink_to("/etc/passwd")  # never selected; must never be staged either
+
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    ensure_obsidian_baseline(runner, vault_dir)
+
+    staged = set(runner.run(["diff", "--cached", "--name-only"]).stdout.splitlines())
+    assert ".obsidian/snippets/custom[1].css" in staged  # the real, literal, allowlisted file
+    assert ".obsidian/snippets/custom1.css" not in staged  # swept in by fnmatch pre-fix
+    assert _staged_mode(runner, ".obsidian/snippets/custom[1].css") == "100644"
