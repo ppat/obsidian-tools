@@ -66,7 +66,16 @@ _IGNORE_RULE_CONTENTS = """\
 # path the baseline commit already captured — git only consults ignore rules for untracked paths —
 # so it does not substitute for the `update-index --skip-worktree` bits this module also sets; the
 # two mechanisms cover disjoint sets of files.
-.obsidian/
+#
+# No trailing slash, deliberately: a trailing slash only matches a directory, so it is inert against
+# `.obsidian` if the directory is ever replaced by a symlink after a baseline already exists (git
+# treats a symlink as a file, not a directory, however it names an actual directory) — `git add -A`
+# would then stage the symlink itself as a new mode-120000 entry, publishing its target path as a
+# blob (ppat/obsidian-tools#22). Dropping the slash matches the name `.obsidian` regardless of what
+# kind of entry it currently is, so it excludes the ordinary directory case exactly as before *and*
+# a symlink standing in for it — verified both ways (`test_ignore_rule_still_excludes_the_directory`,
+# `test_ignore_rule_excludes_a_symlink_replacing_the_directory`).
+.obsidian
 """
 
 
@@ -93,27 +102,38 @@ def _iter_obsidian_candidates(directory: Path, prefix: str = "") -> list[PathInf
     `check_for_mass_deletion` already documents for the same volume) is skipped rather than raising:
     the next scheduled run tries again, same as every other "not there yet" case this module treats
     as routine rather than fatal.
+
+    Deliberately an explicit stack, not recursion: the pre-refactor `rglob` this module replaced was
+    iterative, and a recursive descent here raises `RecursionError` at a depth (~992 levels, well
+    under `PATH_MAX`) neither this function's own `OSError` handling nor the caller's
+    `_STAGING_FAILURES` tuple catches — `RecursionError` is not an `OSError`, and it is neither a
+    `GitCommandError` nor a `RetryExhaustedError` — so it used to surface as an uncaught traceback
+    with the same permanent-wedge shape as the symlinked-root case above (ppat/obsidian-tools#22).
     """
     candidates: list[PathInfo] = []
-    try:
-        entries = sorted(directory.iterdir())
-    except OSError:
-        return candidates
+    stack: list[tuple[Path, str]] = [(directory, prefix)]
 
-    for entry in entries:
-        relative_path = f"{prefix}{entry.name}"
+    while stack:
+        current_directory, current_prefix = stack.pop()
         try:
-            is_symlink = entry.is_symlink()
-            is_dir = entry.is_dir()
-            is_file = entry.is_file()
+            entries = sorted(current_directory.iterdir())
         except OSError:
             continue
 
-        if is_dir and not is_symlink:
-            candidates.extend(_iter_obsidian_candidates(entry, f"{relative_path}/"))
-            continue
+        for entry in entries:
+            relative_path = f"{current_prefix}{entry.name}"
+            try:
+                is_symlink = entry.is_symlink()
+                is_dir = entry.is_dir()
+                is_file = entry.is_file()
+            except OSError:
+                continue
 
-        candidates.append(PathInfo(relative_path=relative_path, is_file=is_file, is_symlink=is_symlink))
+            if is_dir and not is_symlink:
+                stack.append((entry, f"{relative_path}/"))
+                continue
+
+            candidates.append(PathInfo(relative_path=relative_path, is_file=is_file, is_symlink=is_symlink))
 
     return candidates
 
@@ -144,7 +164,27 @@ def ensure_obsidian_baseline(runner: GitRunner, work_tree: Path) -> bool:
             runner.run(["update-index", "--skip-worktree", "--", path])
         return False
 
-    if not (work_tree / OBSIDIAN_DIR).is_dir():
+    obsidian_path = work_tree / OBSIDIAN_DIR
+    if obsidian_path.is_symlink():
+        # Checked before `is_dir()` below, and separately from it, because `is_dir()` follows
+        # symlinks and would otherwise read a symlinked `.obsidian` as "present" — this is the one
+        # place the *root* itself is guarded. Every candidate downstream (the walker, the selector)
+        # describes an entry *inside* `.obsidian/`; nothing ever produces a `PathInfo` for the root,
+        # so neither the walker's non-descent into symlinked directories nor the selector's own
+        # `is_symlink` rule ever gets a chance to apply to it. Without this check, `_baseline_paths`
+        # would build pathspecs like `.obsidian/app.json` that walk *through* the symlink, and
+        # `git add --force` fails outright on those (`fatal: pathspec '...' is beyond a symbolic
+        # link`) — which then wedges every future run permanently, since the baseline is only ever
+        # skipped once HEAD already carries `.obsidian/`, which this failure prevents from ever
+        # happening (ppat/obsidian-tools#22).
+        logger.info(
+            "obsidian baseline not taken yet, and .obsidian/ is a symlink rather than a real directory; "
+            "skipping this cycle",
+            extra={"event": "baseline_skip_symlinked_obsidian_dir"},
+        )
+        return False
+
+    if not obsidian_path.is_dir():
         # Nothing to baseline yet — e.g. the committer's very first run, before headless Obsidian
         # has created .obsidian/ on the volume at all. Not an error: the next run tries again.
         logger.info(

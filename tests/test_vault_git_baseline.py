@@ -24,6 +24,7 @@ blob (mode `120000`) end to end.
 
 from __future__ import annotations
 
+import logging
 import shutil
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -384,6 +385,126 @@ def test_symlinked_plugin_directory_does_not_wedge_the_committer(
     assert ".obsidian/plugins/obsidian-local-rest-api/manifest.json" in staged
 
 
+def test_symlinked_obsidian_root_does_not_wedge_the_committer(
+    tmp_path: Path,
+    seeded_origin: Path,
+    make_bare_repo: Callable[[], Path],
+    vault_dir: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """BROKEN, reproduced (`ppat/obsidian-tools#22`): nothing ever produces a `PathInfo` for
+    `.obsidian/` *itself* -- only for entries *inside* it -- so neither the walker's non-descent
+    into a symlinked directory nor the selector's `is_symlink` rule ever applies to the root. The
+    only check on the root used to be `(work_tree / OBSIDIAN_DIR).is_dir()`, and `is_dir()` follows
+    symlinks, so a symlinked `.obsidian` root read as "present": `_baseline_paths` built a pathspec
+    like `.obsidian/app.json` that walks *through* the symlink, `git add --force` failed with
+    `fatal: pathspec '...' is beyond a symbolic link`, the retry wrapping that call exhausted, and
+    the uncaught `RetryExhaustedError` wedged every future run -- the baseline branch is only ever
+    skipped once `HEAD` already carries `.obsidian/`, which this failure prevents from ever
+    happening -- so no vault content was ever committed again, on any cycle, logged as "staging
+    failed, likely a persistent vault read error". Reproduced over three consecutive cycles below,
+    with new content arriving each time, matching the reported "every cycle, forever" shape."""
+    nas = make_bare_repo()
+    git_dir = tmp_path / "git-dir"
+    external_target = tmp_path / "not-really-obsidian"
+    external_target.mkdir()
+    (external_target / "app.json").write_text('{"legacyEditor": false}\n')
+    (vault_dir / ".obsidian").symlink_to(external_target, target_is_directory=True)
+
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    with caplog.at_level(logging.INFO):
+        took_baseline = ensure_obsidian_baseline(runner, vault_dir)  # must not raise
+
+    assert took_baseline is False
+    events = [getattr(record, "event", None) for record in caplog.records]
+    assert "baseline_skip_symlinked_obsidian_dir" in events
+    # Distinct from the absent-.obsidian event -- an operator diagnosing this needs to be able to
+    # tell "nothing there yet" apart from "there's something there, but it's the wrong shape".
+    assert "baseline_skip_no_obsidian_dir" not in events
+
+    # Vault content still gets committed even though the (permanently unbaselined) symlink sits
+    # there -- new content, since vault_dir's seeded 00-index.md already matches what provisioning
+    # just pulled from origin and so wouldn't stage anything on its own.
+    (vault_dir / "new-note-0.md").write_text("# cycle 0\n")
+    stage_all(runner)
+    assert has_staged_changes(runner)
+    create_commit(runner, cycle_time=datetime.now(UTC))
+    committed_tree = set(runner.list_tree_paths("HEAD"))
+    assert "new-note-0.md" in committed_tree
+    assert not any(path.startswith(".obsidian") for path in committed_tree)
+
+    # And the wedge doesn't reappear on a later cycle -- the reported failure mode was permanent,
+    # so proving it clears once isn't enough.
+    for cycle in range(1, 3):
+        (vault_dir / f"new-note-{cycle}.md").write_text(f"# cycle {cycle}\n")
+        runner_n = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+        took_baseline_n = ensure_obsidian_baseline(runner_n, vault_dir)  # must not raise
+        assert took_baseline_n is False
+        stage_all(runner_n)
+        assert has_staged_changes(runner_n)
+        create_commit(runner_n, cycle_time=datetime.now(UTC))
+
+
+def test_ignore_rule_still_excludes_the_directory(
+    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+) -> None:
+    """Guard for the obvious way to break `test_ignore_rule_excludes_a_symlink_replacing_the_directory`
+    below: dropping the exclude rule's trailing slash to cover the symlink case must not stop it from
+    covering the ordinary, much more common directory case -- an untouched `.obsidian/` directory
+    (nothing on the baseline allowlist yet) must never itself appear as a staged path."""
+    nas = make_bare_repo()
+    git_dir = tmp_path / "git-dir"
+    (vault_dir / ".obsidian").mkdir()
+    (vault_dir / ".obsidian" / "workspace.json").write_text('{"instance": "a"}\n')  # never allowlisted
+
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    ensure_obsidian_baseline(runner, vault_dir)
+    stage_all(runner)
+
+    staged = runner.run(["diff", "--cached", "--name-only"]).stdout.splitlines()
+    assert not any(path == ".obsidian" or path.startswith(".obsidian/") for path in staged)
+
+
+def test_ignore_rule_excludes_a_symlink_replacing_the_directory(
+    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+) -> None:
+    """Corollary to the symlinked-root wedge (`ppat/obsidian-tools#22`): the git-dir exclude rule was
+    `.obsidian/` -- trailing slash, directory-only in gitignore semantics -- so it was inert against
+    a symlink of the same name. Measured against the pre-fix rule: baseline taken while `.obsidian`
+    was a real directory; `.obsidian` later replaced by a symlink; `ensure_obsidian_baseline` takes
+    the reapply branch (`HEAD` already carries `.obsidian/`) and does not raise; `stage_all`'s
+    `git add -A` then staged `.obsidian` itself as a mode `120000` blob whose contents are the
+    external target path -- published to both remotes, the Mac clone, iCloud and the phone -- and
+    dropped the baselined `.obsidian/app.json` from the index in the same diff."""
+    nas = make_bare_repo()
+    git_dir = tmp_path / "git-dir"
+    _write_obsidian_dir(vault_dir)
+
+    # Cycle 1: baseline captured normally, while .obsidian is a real directory.
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    took_baseline = ensure_obsidian_baseline(runner, vault_dir)
+    stage_all(runner)
+    assert took_baseline
+    create_commit(runner, cycle_time=datetime.now(UTC))
+
+    # An operator (or a device) later replaces .obsidian with a symlink -- e.g. pointing it at a
+    # shared config directory outside the vault.
+    shutil.rmtree(vault_dir / ".obsidian")
+    external_target = tmp_path / "elsewhere"
+    external_target.mkdir()
+    (vault_dir / ".obsidian").symlink_to(external_target, target_is_directory=True)
+
+    runner_2 = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    took_baseline_again = ensure_obsidian_baseline(runner_2, vault_dir)  # reapply branch; must not raise
+    assert took_baseline_again is False
+    stage_all(runner_2)
+
+    assert not has_staged_changes(runner_2), (
+        "the .obsidian symlink was staged (as a mode 120000 blob) instead of being excluded, and/or "
+        "the baselined .obsidian/app.json was dropped from the index"
+    )
+
+
 def _staged_mode(runner: GitRunner, path: str) -> str:
     """The index mode git currently has staged for `path` (`100644` ordinary, `120000` symlink)."""
     raw = runner.run(["diff", "--cached", "--raw", "--", path]).stdout
@@ -477,3 +598,46 @@ def test_glob_metacharacter_filename_does_not_sweep_in_a_differently_named_symli
     assert ".obsidian/snippets/custom[1].css" in staged  # the real, literal, allowlisted file
     assert ".obsidian/snippets/custom1.css" not in staged  # swept in by fnmatch pre-fix
     assert _staged_mode(runner, ".obsidian/snippets/custom[1].css") == "100644"
+
+
+def test_walker_handles_deeply_nested_snippet_directories(
+    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+) -> None:
+    """The walker (`baseline._iter_obsidian_candidates`) used to be recursive -- one Python call per
+    directory level -- and bisection against an isolated reproduction found it raises
+    `RecursionError` at ~992 levels (fine at 991), well under filesystem `PATH_MAX`. Neither this
+    module's own `OSError` handling nor `commands/commit.py`'s `_STAGING_FAILURES` tuple catches
+    `RecursionError` (it is not an `OSError`, and it is neither `GitCommandError` nor
+    `RetryExhaustedError`), so it used to surface as an uncaught traceback with the same
+    permanent-wedge shape as the symlinked-root case (`ppat/obsidian-tools#22`); no designed vault
+    layout nests anywhere near that deep.
+
+    This test is deliberately modest-depth (50 levels), not pinned to the bisected ~992 threshold:
+    where exactly Python's own recursion limit bites depends on how much of the call stack is
+    already spent by the test runner (pytest/coverage/hypothesis frames), which makes an
+    exact-threshold test environment-fragile rather than a stable regression guard, and creating
+    ~1000 real nested directories per test run buys little beyond what code review already gives:
+    the rewritten `_iter_obsidian_candidates` has no recursive self-call left in it at all (an
+    explicit stack instead), which is what actually rules out `RecursionError` at any depth, not a
+    specific number. What this test proves is that the rewrite still walks and selects correctly
+    through a multi-level directory chain deeper than every other test in this suite uses -- a
+    smoke test for the rewrite's correctness, not a repro of the crash itself. (Verified separately,
+    by literal revert-and-run against the pre-fix recursive implementation at depths beyond the
+    interpreter's recursion limit, that the crash this module's docstring describes is real and that
+    the rewrite no longer reproduces it -- see the PR description.)"""
+    nas = make_bare_repo()
+    git_dir = tmp_path / "git-dir"
+    _write_obsidian_dir(vault_dir)
+    depth = 50
+    nested = vault_dir / ".obsidian" / "snippets"
+    for level in range(depth):
+        nested = nested / f"d{level}"
+    nested.mkdir(parents=True)
+    (nested / "deep.css").write_text("body {}\n")
+
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    ensure_obsidian_baseline(runner, vault_dir)  # must not raise RecursionError
+
+    staged = runner.run(["diff", "--cached", "--name-only"]).stdout.splitlines()
+    expected = ".obsidian/snippets/" + "/".join(f"d{level}" for level in range(depth)) + "/deep.css"
+    assert expected in staged
