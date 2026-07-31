@@ -5,9 +5,12 @@ platform this repository's code implements — read [`docs/DESIGN.md`](./docs/DE
 record. This document is the narrower view: what belongs in *this* repository specifically, and why its pieces
 relate to each other the way they do.
 
-**Status: no application code exists yet.** This describes the target architecture that the components listed
-in [`README.md`](./README.md) will implement, one ticket at a time — see the epic
-[`ppat/homelab-ops-kubernetes-apps#3439`](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3439).
+**Status: the `commit` subcommand (the in-cluster git committer) is implemented.** Everything else this
+document describes — `promotion-processor`, `batch-processor`, the drift-reconciliation channel, the
+frontmatter validator, and `local-replicator` (the Mac-side `replicate` subcommand) — is still a future
+ticket, landing one at a time; see the epic
+[`ppat/homelab-ops-kubernetes-apps#3439`](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3439)
+for sequencing.
 
 ## The write model, in one paragraph
 
@@ -21,52 +24,62 @@ and repair, outside every gate).
 
 ## Why this repository is one thing, not several
 
-Every component listed in `README.md` — the vault worker, the git committer, the batch processor, the
-drift-reconciliation channel, the frontmatter validator, and the Mac-side replication script — is a distinct
-*process* with a distinct deployment target (some run in-cluster, one runs on the user's Mac), but none of them
-is independent of the others' contracts: they share the same MCP client path, the same frontmatter schema, and
+Every component listed in `README.md` — lint, the git committer, `promotion-processor`, `batch-processor`, the
+drift-reconciliation channel, the frontmatter validator, and the Mac-side replication script
+(`local-replicator`) — is a distinct *process* with a distinct deployment target (some run in-cluster, one runs
+on the user's Mac), but none of them is independent of the others' contracts: they share the same MCP client path, the same frontmatter schema, and
 the same notion of what a "valid" vault write looks like. Splitting them into separate repositories would mean
 duplicating that contract, or versioning it separately from the code that depends on it, for no benefit — none
 of these components is reusable outside this project. One repository, one Python package, versioned as a whole.
 
 ## What each component does, and what it must never do
 
+**A prior revision of this document had a single "vault worker" with three scheduled entrypoints
+(`ingest/promote`, `lint`, `publish`). That component no longer exists.** `ingest/promote` became
+`promotion-processor`, event-driven off the promotion stream rather than waiting for a nightly tick;
+`publish` — the NAS mirror — was deleted outright once the git committer started pushing to the NAS
+directly as a second remote, so there is no separate scheduled job populating it any more. Only `lint`
+kept running as a scheduled entrypoint, on its own, under its own name.
+
 | Component | Job | Must never |
 | --- | --- | --- |
-| Vault worker | Ingest/promote, lint, and publish, as scheduled entrypoints | Write vault content directly — writes go through the MCP ingestor handle only |
-| Git committer | Turn the vault volume into git history | Create, edit, or delete vault content — it mounts content read-only and `.git/` write-only |
-| Batch processor | Apply queued git patches through the same MCP path as ordinary writes | Apply a patch directly to the filesystem, or treat batch as a separate write mode |
+| Lint | Walk the whole vault on a schedule: orphans, dangling links, schema conformance, auto-fixes | Write vault content directly — writes go through the MCP ingestor handle only |
+| Git committer (`commit` subcommand) | Turn the vault volume into git history, and push it to both remotes — GitHub and the NAS — directly | Create, edit, or delete vault content — it mounts content read-only and `.git/` write-only |
+| `promotion-processor` | Real-time ingest/promote out of `00-inbox/`, driven by the promotion stream | Write vault content directly — writes go through the MCP ingestor handle only |
+| `batch-processor` | Apply queued git patches through the same MCP path as ordinary writes | Apply a patch directly to the filesystem, or treat batch as a separate write mode |
 | Drift-reconciliation channel | Dispatch a captured device-side edit back into the funnel as an ordinary agent write | Overwrite a device replica in place, or treat a device edit as anything other than an ingest event |
 | Frontmatter validator | Enforce the JSON-Schema contract at the promotion gate | Silently drop or "fix" a note that fails validation — quarantine it, never delete it |
-| Replication script (Mac) | Keep the iCloud-synced Obsidian vault current from the cluster's authoritative copy, one-way | Push a device-side edit back onto the authoritative volume — that's the drift channel's job, not this script's |
+| `local-replicator` (Mac, `replicate` subcommand) | Keep the iCloud-synced Obsidian vault current from the cluster's authoritative copy, one-way | Push a device-side edit back onto the authoritative volume — that's the drift channel's job, not this script's |
 
 ## The volume mount contract
 
 Exactly three processes ever mount the vault volume, each on a deliberately disjoint or read-only slice — see
 `docs/DESIGN.md` §1.3 (path P4) and §2 (items 1, 4, 5) for the full reasoning: headless Obsidian, read-write on
-content; the **vault worker**, read-only on content; and the **git committer**, read-only on content and
-write-only on `.git/`. Nothing else mounts it — this is the same "single writer" invariant from
+content; **lint**, read-only on content; and the **git committer**, read-only on content and write-only on
+`.git/`. Nothing else mounts it — this is the same "single writer" invariant from
 ["The write model, in one paragraph"](#the-write-model-in-one-paragraph) restated as a mount policy, not a
 separate rule.
 
-- The vault worker's read-only content mount exists specifically for its **lint entrypoint**: lint needs
-  whole-vault visibility, and routing that many reads through the MCP gateway into headless Obsidian's
-  single-threaded event loop would contend with the same path a bulk import already saturates for hours at a
-  time (`docs/DESIGN.md` §2 item 4, §3 "The throughput cost, and the escape hatch"). Reading is not writing, so
-  this mount doesn't touch the single-writer invariant — the worker still **writes exclusively through the MCP
-  gateway**, never to the filesystem, exactly like every other writer.
-- The **batch processor** takes no volume mount at all — its input is the patch queue, not the filesystem, and
-  every write it makes travels through the same MCP path as ordinary ingest, under the ingestor handle
-  (`docs/DESIGN.md` §1.3 path P1′, §2 item 9, §3 "The batch lane"). Giving it a mount would make it a fourth
-  mounter and break the invariant above; don't add one.
+- Lint's read-only content mount exists because it needs whole-vault visibility, and routing that many reads
+  through the MCP gateway into headless Obsidian's single-threaded event loop would contend with the same path
+  a bulk import already saturates for hours at a time (`docs/DESIGN.md` §2 item 4, §3 "The throughput cost, and
+  the escape hatch"). Reading is not writing, so this mount doesn't touch the single-writer invariant — lint
+  still **writes exclusively through the MCP gateway**, never to the filesystem, exactly like every other
+  writer.
+- **`promotion-processor` and `batch-processor` take no volume mount at all** — their input is the inbox (via
+  MCP) and the patch queue, respectively, not the filesystem, and every write either of them makes travels
+  through the same MCP path as ordinary ingest, under the ingestor handle (`docs/DESIGN.md` §1.3 path P1′, §2
+  items 3 and 9, §3 "The batch lane"). Giving either a mount would make it a fourth mounter and break the
+  invariant above; don't add one.
 
 ## Architecture
 
 ```mermaid
 flowchart TB
     subgraph writers["Writers (this repo's clients of the one door)"]
-        VaultWorker["vault worker\ningest / promote / lint / publish"]
-        Processor["batch processor"]
+        Lint["lint\n(scheduled)"]
+        Promotion["promotion-processor\n(event-driven)"]
+        Batch["batch-processor"]
         DriftChannel["drift-reconciliation channel"]
     end
 
@@ -74,27 +87,30 @@ flowchart TB
         Validator["frontmatter validator\nJSON Schema"]
     end
 
-    Queue["patch queue"] --> Processor
+    PatchQueue["patch queue"] --> Batch
+    PromotionStream["promotion stream"] --> Promotion
     Capture["durable capture store\n(device drift)"] --> DriftChannel
 
-    VaultWorker -->|"MCP, ingestor handle"| MCP["scoped MCP server"]
-    Processor -->|"MCP, ingestor handle"| MCP
+    Lint -->|"MCP, ingestor handle"| MCP["scoped MCP server"]
+    Promotion -->|"MCP, ingestor handle"| MCP
+    Batch -->|"MCP, ingestor handle"| MCP
     DriftChannel -->|"MCP, agent handle, scoped to inbox"| MCP
 
-    VaultWorker -.->|"reads content, read-only, for lint"| Volume
-    VaultWorker --> Validator
+    Lint -.->|"reads content, read-only"| Volume
+    Promotion --> Validator
 
     MCP --> Obsidian["headless Obsidian\n(the only filesystem writer)"]
     Obsidian --> Volume[("vault volume, authoritative")]
 
     subgraph committer_box["Outside the write path entirely"]
-        Committer["git committer"]
+        Committer["git committer\n(commit subcommand)"]
     end
     Committer -->|"reads content, read-only"| Volume
     Committer -->|"writes .git/ only"| Volume
-    Committer --> BareRepo["bare git repo"]
+    Committer --> GitHubRepo["bare git repo\n(GitHub)"]
+    Committer --> NasRepo["bare git repo\n(NAS)"]
 
-    BareRepo -->|"pull, on the Mac"| Replication["replication script\n(Mac, not in-cluster)"]
+    GitHubRepo -->|"pull, on the Mac"| Replication["local-replicator\n(Mac, not in-cluster)"]
     Replication -->|"rsync working tree, no .git"| ICloud["iCloud vault\n(Mac + iOS)"]
 ```
 
