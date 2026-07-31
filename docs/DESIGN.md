@@ -354,7 +354,7 @@ Git wins on **(b)**: the vault already needs git for history `[C1]`, so replicat
 
 1. **Before pulling**, compare the iCloud tree against a second local checkout pinned at the `LAST_CHECKOUT` tag — byte-identical to what was last placed there. `rsync -n -ai` between the two enumerates *which paths* drifted — it's a dry run, so it produces an enumeration, not file contents.
 2. For every path the enumeration flags, **copy that file's actual contents into a durable capture store on the cluster side** — not the Mac, which is the machine whose loss already forfeits the baseline (§4, below) — before anything is allowed to overwrite it. This is the step that keeps the *text*, not just the fact that something changed.
-3. The **drift-reconciliation channel** reads from that durable store — not from memory of step 1's enumeration — and, once server-side classification (§1.5 R2) has decided the edit is presumed intentional, dispatches into the funnel for reconciliation.
+3. The **drift-reconciliation channel** reads from that durable store — not from memory of step 1's enumeration — passes each captured edit through server-side classification (§1.5 R2) as a pipeline stage, and dispatches whatever survives into the funnel for reconciliation. The dispatcher itself makes no judgement. `.obsidian/` is dropped here, server-side, rather than filtered on the device.
 4. `git pull` the clone.
 5. Move the `LAST_CHECKOUT` tag — it advances on pull, not on publish.
 6. **Only once step 2's capture has confirmed success for every drifted path**, rsync the bare file tree (no `.git`) into the iCloud vault directory. If any capture failed, that cycle's overwrite is skipped rather than risking the loss of an uncaptured edit; the next cycle retries.
