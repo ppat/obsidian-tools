@@ -28,6 +28,7 @@ import logging
 from pathlib import Path
 
 from obsidian_tools.vault_git.baseline import ensure_ignore_rule
+from obsidian_tools.vault_git.branch_sync import SyncAction, classify_branch_sync
 from obsidian_tools.vault_git.runner import GitRunner
 
 logger = logging.getLogger(__name__)
@@ -145,8 +146,9 @@ def _ensure_remote(runner: GitRunner, name: str, url: str) -> None:
 
 
 def _sync_branch_from_origin(runner: GitRunner, branch: str) -> bool:
-    """Fetch `origin` and fast-forward the local branch to match. Returns True if the local ref
-    was created or advanced. Never rewinds a local ref that is ahead of origin."""
+    """Fetch `origin`, classify the local branch's relationship to it (`branch_sync.py` — pure,
+    given the three SHAs below), and act on that classification. Returns True if the local ref was
+    created or advanced. Never rewinds a local ref that is ahead of origin."""
     runner.run(["fetch", "origin"])  # a GitHub fetch failure is a real provisioning failure, not
     # an NFS read — not wrapped in retry; the run fails loud and the next scheduled run tries again.
 
@@ -154,28 +156,36 @@ def _sync_branch_from_origin(runner: GitRunner, branch: str) -> bool:
     local_ref = f"refs/heads/{branch}"
 
     remote_sha = runner.rev_parse_or_none(remote_ref)
-    if remote_sha is None:
-        return False  # origin has no history for this branch yet; the first commit roots it
-
     local_sha = runner.rev_parse_or_none(local_ref)
-    if local_sha is None:
+    # Meaningless (and not computed) unless both refs already exist — `classify_branch_sync` never
+    # consults it in any other case.
+    merge_base = None
+    if local_sha is not None and remote_sha is not None:
+        merge_base = runner.merge_base_or_none(local_sha, remote_sha)
+
+    action = classify_branch_sync(local_sha=local_sha, remote_sha=remote_sha, merge_base=merge_base)
+
+    if action in (SyncAction.NO_REMOTE_HISTORY, SyncAction.UP_TO_DATE, SyncAction.LOCAL_AHEAD):
+        # NO_REMOTE_HISTORY: origin has no history for this branch yet; the first commit roots it.
+        # LOCAL_AHEAD: a previous run committed but its push failed. Leave it — the push step
+        # retries against both remotes on every run regardless of whether this cycle produced a new
+        # commit, so a stuck local-only commit catches up on its own.
+        return False
+
+    if action is SyncAction.ROOT_LOCAL_FROM_REMOTE:
+        assert remote_sha is not None  # guaranteed by classify_branch_sync's NO_REMOTE_HISTORY check
         runner.run(["update-ref", local_ref, remote_sha])
         logger.info("branch created from origin", extra={"event": "branch_synced", "branch": branch, "sha": remote_sha})
         return True
-    if local_sha == remote_sha:
-        return False
-    if runner.is_ancestor(local_sha, remote_sha):
+
+    if action is SyncAction.FAST_FORWARD:
+        assert remote_sha is not None  # guaranteed by classify_branch_sync's NO_REMOTE_HISTORY check
         runner.run(["update-ref", local_ref, remote_sha])
         logger.info(
             "branch fast-forwarded from origin",
             extra={"event": "branch_synced", "branch": branch, "from": local_sha, "to": remote_sha},
         )
         return True
-    if runner.is_ancestor(remote_sha, local_sha):
-        # Local is ahead of origin: a previous run committed but its push failed. Leave it — the
-        # push step retries against both remotes on every run regardless of whether this cycle
-        # produced a new commit, so a stuck local-only commit catches up on its own.
-        return False
 
     raise GitDivergenceError(
         f"local {branch} ({local_sha}) and origin/{branch} ({remote_sha}) have diverged; "

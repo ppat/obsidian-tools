@@ -133,6 +133,14 @@ class GitRunner:
         result = self.run(["merge-base", "--is-ancestor", ancestor, descendant], check=False)
         return result.returncode == 0
 
+    def merge_base_or_none(self, a: str, b: str) -> str | None:
+        """The best common ancestor of `a` and `b`, or `None` if they share no history at all
+        (`git merge-base` exits 1 with empty stdout in that case)."""
+        result = self.run(["merge-base", a, b], check=False)
+        if result.returncode != 0:
+            return None
+        return result.stdout.strip()
+
     def path_exists_at(self, ref: str, path: str) -> bool:
         result = self.run(["cat-file", "-e", f"{ref}:{path}"], check=False)
         return result.returncode == 0
