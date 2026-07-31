@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/ppat/obsidian-tools/compare/v0.1.0...v0.2.0) (2026-07-31)
+
+
+### ✨ Features
+
+* **committer:** add CLI entry point and the commit subcommand ([#22](https://github.com/ppat/obsidian-tools/issues/22)) ([d6887cf](https://github.com/ppat/obsidian-tools/commit/d6887cf1d24f1b09aeb8eb1282f78bb12a2062af))
+
 ## [0.1.0](https://github.com/ppat/obsidian-tools/compare/v0.0.2...v0.1.0) (2026-07-31)
 
 
