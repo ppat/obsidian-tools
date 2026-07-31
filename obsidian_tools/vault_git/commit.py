@@ -17,12 +17,27 @@ scheduled run.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from datetime import datetime
 
 from obsidian_tools.vault_git.commit_message import format_commit_message
 from obsidian_tools.vault_git.deletion_assessment import DeletionVerdict, assess_deletion
+from obsidian_tools.vault_git.push_outcome import PushResult
 from obsidian_tools.vault_git.runner import GitCommandError, GitRunner
+
+# Re-exported: every existing call site in this codebase imports PushResult from here, and
+# `vault_git/push_outcome.py` (the pure module holding it plus the exit-status decision `push_all`'s
+# caller makes from a list of these — see commands/commit.py) is where it's actually defined.
+__all__ = [
+    "DEFAULT_MAX_DELETION_FRACTION",
+    "MassDeletionError",
+    "PushResult",
+    "build_commit_message",
+    "check_for_mass_deletion",
+    "create_commit",
+    "has_staged_changes",
+    "push_all",
+    "stage_all",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -131,13 +146,6 @@ def create_commit(runner: GitRunner, *, cycle_time: datetime) -> str:
         raise RuntimeError("commit succeeded but HEAD does not resolve")
     logger.info("committed vault changes", extra={"event": "commit_created", "commit": sha})
     return sha
-
-
-@dataclass(frozen=True, slots=True)
-class PushResult:
-    remote: str
-    ok: bool
-    error: str | None = None
 
 
 def push_all(runner: GitRunner, *, branch: str, remotes: tuple[str, ...] = ("origin", "nas")) -> list[PushResult]:

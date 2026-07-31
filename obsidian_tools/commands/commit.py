@@ -24,6 +24,7 @@ from obsidian_tools.vault_git.commit import (
 )
 from obsidian_tools.vault_git.git_errors import ErrorKind, classify_git_error
 from obsidian_tools.vault_git.provisioning import GitDivergenceError, provision_repository
+from obsidian_tools.vault_git.push_outcome import summarize_push_results
 from obsidian_tools.vault_git.runner import GitCommandError, GitRunner
 from obsidian_tools.vault_git.ssh import build_ssh_command
 
@@ -110,13 +111,13 @@ def run(config: CommitConfig) -> int:
         logger.info("nothing to commit this cycle", extra={"event": "nothing_to_commit"})
 
     push_results = push_all(runner, branch=config.branch)
-    any_push_failed = any(not result.ok for result in push_results)
+    outcome = summarize_push_results(push_results)
 
     logger.info(
         "commit cycle complete",
-        extra={"event": "cycle_complete", "committed": committed, "push_failed": any_push_failed},
+        extra={"event": "cycle_complete", "committed": committed, "push_failed": outcome.any_failed},
     )
-    return 1 if any_push_failed else 0
+    return 1 if outcome.any_failed else 0
 
 
 def is_index_lock_error(exc: BaseException) -> bool:
