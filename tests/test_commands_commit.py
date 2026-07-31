@@ -6,6 +6,7 @@ failure on one remote must not block the other while still failing the run overa
 
 from __future__ import annotations
 
+import os
 import shutil
 import stat
 import subprocess
@@ -306,3 +307,30 @@ def test_push_failure_on_one_remote_still_attempts_the_other_and_run_exits_nonze
 
     assert exit_code == 1
     assert commit_count(seeded_origin) == 2  # origin still received the commit despite nas failing
+
+
+def test_non_utf8_filename_does_not_wedge_the_committer(
+    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+) -> None:
+    """LATENT (`#22`): `b"caf\\xe9.md"` is a legal filename on a POSIX filesystem but not valid
+    UTF-8. `GitRunner.run` used to decode subprocess output with plain `text=True` (strict UTF-8),
+    so `git ls-tree -z`/`git diff --cached --name-status -z` -- called from
+    `check_for_mass_deletion`'s `list_tree_paths` and (on a later cycle) `build_commit_message` --
+    raised a bare `UnicodeDecodeError`. That's neither `GitCommandError` nor `MassDeletionError`, so
+    nothing in commands/commit.py's exception handling ever caught it: an uncaught traceback,
+    recurring identically every cycle since the file persists on the volume -- the same
+    permanent-wedge shape as the symlinked-plugin-directory bug, just triggered by content instead
+    of by structure."""
+    nas = make_bare_repo()
+    git_dir = tmp_path / "git-dir"
+    (vault_dir / "10-areas").mkdir()
+    (vault_dir / "10-areas" / "note.md").write_text("# Note\n")
+    non_utf8_path = os.fsencode(str(vault_dir / "10-areas")) + b"/caf\xe9.md"
+    fd = os.open(non_utf8_path, os.O_CREAT | os.O_WRONLY, 0o644)
+    os.write(fd, "# Café\n".encode())
+    os.close(fd)
+
+    exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas)))
+
+    assert exit_code == 0
+    assert commit_count(seeded_origin) == 2

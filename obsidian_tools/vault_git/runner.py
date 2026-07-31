@@ -89,7 +89,21 @@ class GitRunner:
             env = {**os.environ, "GIT_SSH_COMMAND": self._ssh_command}
 
         def _invoke() -> subprocess.CompletedProcess[str]:
-            result = subprocess.run(command, capture_output=True, text=True, env=env, check=False)
+            # `encoding="utf-8", errors="surrogateescape"` rather than the plain `text=True` this
+            # used to be: a filename that is not valid UTF-8 (`b"caf\xe9.md"`, legal on the volume)
+            # is staged fine by `git add -A` — the failure was always in *decoding it back*, in
+            # every call site downstream that lists paths (`ls-tree`, `diff --name-status`,
+            # `diff --name-only`). Strict decoding raised a bare `UnicodeDecodeError` there — not a
+            # `GitCommandError`, so nothing in commands/commit.py's exception handling ever caught
+            # it, and the same file wedges every later run identically since nothing removes it.
+            # `surrogateescape` (PEP 383) round-trips an undecodable byte through a lone surrogate
+            # codepoint losslessly; passing that same string back into a later argv (e.g.
+            # `update-index --skip-worktree --`) re-encodes it via the identical mechanism, since
+            # subprocess already encodes str argv elements with `os.fsencode` (also surrogateescape
+            # on POSIX) independent of this method's stdout/stderr decoding.
+            result = subprocess.run(
+                command, capture_output=True, encoding="utf-8", errors="surrogateescape", env=env, check=False
+            )
             if check and result.returncode != 0:
                 raise GitCommandError(args, result)
             return result
