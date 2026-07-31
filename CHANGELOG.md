@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.0](https://github.com/ppat/obsidian-tools/compare/v0.0.2...v0.1.0) (2026-07-31)
+
+
+### ✨ Features
+
+* redesign the write path around a work queue with three streams ([#20](https://github.com/ppat/obsidian-tools/issues/20)) ([903be90](https://github.com/ppat/obsidian-tools/commit/903be90a1e28d00593cbdd0b5107f5d2a3b1de81))
+
+
+### 🚀 Enhancements + Bug Fixes
+
+* correct seven consistency defects from the write-path redesign review ([#21](https://github.com/ppat/obsidian-tools/issues/21)) ([1db8559](https://github.com/ppat/obsidian-tools/commit/1db85595b57d1052b841b00f31c6b42f5506d0b7))
+* reconcile DESIGN.md with Phase 0/1 implementation reality ([#18](https://github.com/ppat/obsidian-tools/issues/18)) ([4d1b121](https://github.com/ppat/obsidian-tools/commit/4d1b121e47e809a790fd3da9ac6b08d0ba2690d1))
+
 ## [0.0.2](https://github.com/ppat/obsidian-tools/compare/v0.0.1...v0.0.2) (2026-07-30)
 
 
