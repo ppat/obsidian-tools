@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from obsidian_tools.config import CommitConfig, ConfigError
+from obsidian_tools.config import CommitConfig, ConfigError, ReplicateConfig
 from obsidian_tools.vault_git.commit import DEFAULT_MAX_DELETION_FRACTION
 
 
@@ -103,3 +103,33 @@ def test_from_env_requires_origin_url(monkeypatch: pytest.MonkeyPatch) -> None:
 
     with pytest.raises(ConfigError, match="GIT_REMOTE_ORIGIN_URL"):
         CommitConfig.from_env()
+
+
+def test_replicate_config_applies_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OBSIDIAN_CACHE_CLONE_DIR", raising=False)
+    monkeypatch.delenv("GIT_COMMIT_BRANCH", raising=False)
+    icloud_path = "/Users/operator/Library/Mobile Documents/com~apple~CloudDocs/Obsidian/BRAIN"
+    monkeypatch.setenv("ICLOUD_VAULT_DIR", icloud_path)
+    monkeypatch.setenv("GIT_REMOTE_ORIGIN_URL", "git@github.com:ppat/obsidian-vault.git")
+
+    config = ReplicateConfig.from_env()
+
+    assert config.cache_clone_dir.endswith("/.cache/obsidian-vault")
+    assert config.branch == "main"
+    assert config.icloud_vault_dir.endswith("/Obsidian/BRAIN")
+
+
+def test_replicate_config_requires_icloud_vault_dir(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ICLOUD_VAULT_DIR", raising=False)
+    monkeypatch.setenv("GIT_REMOTE_ORIGIN_URL", "git@github.com:ppat/obsidian-vault.git")
+
+    with pytest.raises(ConfigError, match="ICLOUD_VAULT_DIR"):
+        ReplicateConfig.from_env()
+
+
+def test_replicate_config_requires_origin_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ICLOUD_VAULT_DIR", "/Users/operator/iCloud/Obsidian/BRAIN")
+    monkeypatch.delenv("GIT_REMOTE_ORIGIN_URL", raising=False)
+
+    with pytest.raises(ConfigError, match="GIT_REMOTE_ORIGIN_URL"):
+        ReplicateConfig.from_env()

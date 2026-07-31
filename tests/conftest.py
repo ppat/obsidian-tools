@@ -87,3 +87,12 @@ def vault_dir(tmp_path: Path) -> Path:
     vault.mkdir()
     (vault / "00-index.md").write_text("# Home\n")
     return vault
+
+
+@pytest.fixture
+def icloud_dir(tmp_path: Path) -> Path:
+    """Stands in for the device-facing `iCloud Drive/Obsidian/<Vault Name>` directory that
+    local-replicator publishes into — see obsidian_tools/local_replicator/."""
+    icloud = tmp_path / "icloud-vault"
+    icloud.mkdir()
+    return icloud

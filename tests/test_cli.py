@@ -35,6 +35,24 @@ def test_main_returns_config_error_exit_code_when_required_env_missing(monkeypat
     assert main(["commit"]) == 2
 
 
+def test_replicate_subcommand_is_registered() -> None:
+    parser = build_parser()
+
+    args = parser.parse_args(["replicate"])
+
+    assert args.subcommand == "replicate"
+    assert callable(args.handler)
+
+
+def test_main_returns_config_error_exit_code_for_replicate_when_required_env_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ICLOUD_VAULT_DIR", raising=False)
+    monkeypatch.delenv("GIT_REMOTE_ORIGIN_URL", raising=False)
+
+    assert main(["replicate"]) == 2
+
+
 def test_installed_sigterm_handler_raises_graceful_shutdown() -> None:
     """CPython only installs its own handler for SIGINT; every other signal, SIGTERM included,
     keeps the interpreter's default disposition, and the OS default action for SIGTERM is

@@ -110,3 +110,44 @@ class CommitConfig:
             # docstring for why that's the right shape for an operator escape hatch here.
             max_deletion_fraction=get_env_float("GIT_COMMIT_MAX_DELETION_FRACTION", DEFAULT_MAX_DELETION_FRACTION),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class ReplicateConfig:
+    """Configuration for the `replicate` subcommand (`local-replicator`), read once from the
+    environment. Runs on the operator's Mac, not in-cluster — see
+    obsidian_tools/commands/replicate.py and docs/DESIGN.md §2 item 10 / §4 Plane B.
+
+    No default for `icloud_vault_dir`: unlike every path in `CommitConfig`, this one names a
+    per-operator vault name (`iCloud Drive/Obsidian/<Vault Name>`) that this codebase has no
+    business guessing at.
+    """
+
+    cache_clone_dir: str
+    icloud_vault_dir: str
+    branch: str
+    origin_url: str
+    ssh_key_path: str
+    ssh_known_hosts_path: str
+
+    @classmethod
+    def from_env(cls) -> ReplicateConfig:
+        return cls(
+            # The single parked clone (docs/DESIGN.md §2 item 10): stays checked out at
+            # LAST_CHECKOUT between cycles, so it doubles as both the pull-forward target and the
+            # drift-comparison baseline. Not `/git/vault.git` (CommitConfig's bare, detached
+            # git-dir) — this one is an ordinary, checked-out working tree, because rsync's publish
+            # step reads its files directly.
+            cache_clone_dir=get_env("OBSIDIAN_CACHE_CLONE_DIR", os.path.expanduser("~/.cache/obsidian-vault")),
+            icloud_vault_dir=require_env("ICLOUD_VAULT_DIR"),
+            branch=get_env("GIT_COMMIT_BRANCH", "main"),
+            # Same variable name as CommitConfig — the same origin repository, read here through a
+            # separate read-only deploy key rather than the committer's read-write one, but the two
+            # configs never share a process, so reusing the name costs nothing.
+            origin_url=require_env("GIT_REMOTE_ORIGIN_URL"),
+            # Mac-appropriate defaults, distinct from CommitConfig's in-cluster mount paths — this
+            # process reads its own SSH key from wherever the operator installed it, not from a
+            # Kubernetes Secret volume.
+            ssh_key_path=get_env("GIT_SSH_KEY_PATH", os.path.expanduser("~/.ssh/obsidian_vault_readonly")),
+            ssh_known_hosts_path=get_env("GIT_SSH_KNOWN_HOSTS_PATH", os.path.expanduser("~/.ssh/known_hosts")),
+        )
