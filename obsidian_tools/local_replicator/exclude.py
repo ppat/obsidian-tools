@@ -32,7 +32,7 @@ SHARED_EXCLUDE_LIST: tuple[str, ...] = (
 
 def rsync_exclude_args(*extra: str) -> list[str]:
     """Build `--exclude` arguments covering git metadata, the shared list, and any per-cycle extras
-    (e.g. a path whose capture failed this cycle, or `.obsidian/` once already seeded)."""
+    (currently just `.obsidian/`, once already seeded — see device_baseline.py)."""
     args: list[str] = []
     for pattern in (GIT_METADATA_EXCLUDE, *SHARED_EXCLUDE_LIST, *extra):
         args += ["--exclude", pattern]

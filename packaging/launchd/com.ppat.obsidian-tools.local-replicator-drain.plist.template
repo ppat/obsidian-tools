@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Template, not a usable plist as-is: the __PLACEHOLDER__ tokens below must be substituted with
+  operator- and machine-specific values before this is installed. See
+  ../../docs/local-replicator.md for the install procedure that fills these in.
+
+  The drainer, decoupled from local-replicator's own replication cycle by design
+  (docs/DESIGN.md §2 item 10, §4 Plane B: "A separate drainer, decoupled from this cycle's own
+  numbering, sends the spool onward") — a separate LaunchAgent, not a second invocation folded into
+  com.ppat.obsidian-tools.local-replicator.plist, because the two are independent concerns: this
+  job only ever reads the spool directory and needs neither ICLOUD_VAULT_DIR nor a git remote.
+
+  In Phase 2 there is nowhere for a drained entry to go — the work queue's drift stream and
+  drift-processor don't exist yet (ppat/obsidian-tools#4, Phase 5) — so this job's only job right
+  now is to keep the spool directory from growing without bound; every drained entry is discarded.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.ppat.obsidian-tools.local-replicator-drain</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__OBSIDIAN_TOOLS_BIN__</string>
+    <string>drain</string>
+  </array>
+
+  <!-- Same rolling-interval reasoning as the replication cycle's own plist (see
+       com.ppat.obsidian-tools.local-replicator.plist.template) — this job runs on a laptop that
+       sleeps unpredictably. Not required to run on the same cadence as replicate; 900 seconds
+       matches it for simplicity, since a Phase 2 discard-only drain has no freshness requirement
+       of its own to tune against. -->
+  <key>StartInterval</key>
+  <integer>900</integer>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <false/>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- Must match LOCAL_REPLICATOR_SPOOL_DIR in
+         com.ppat.obsidian-tools.local-replicator.plist.template — the two jobs share one spool
+         directory, one writing, this one draining. -->
+    <key>LOCAL_REPLICATOR_SPOOL_DIR</key>
+    <string>__HOME_DIR__/Library/Application Support/obsidian-tools/local-replicator/spool</string>
+
+    <key>PATH</key>
+    <string>__HOME_DIR__/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>__HOME_DIR__/Library/Logs/obsidian-tools/local-replicator-drain.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME_DIR__/Library/Logs/obsidian-tools/local-replicator-drain.err.log</string>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>

@@ -22,14 +22,14 @@ message pointing back here.
    "Optimize Mac Storage" (the exact path varies slightly by macOS version; search Settings for
    "Optimize Mac Storage" if it isn't where expected). With it **on**, iCloud evicts file content
    it judges cold and leaves a dataless `.icloud` placeholder stub in its place — a real file, on
-   disk, that is not the file. This process's capture step performs a real read of whatever
-   currently sits at a drifted path (`obsidian_tools/local_replicator/capture.py`) — a read
-   against a dataless stub can hang rather than fail cleanly, which the retry/backoff machinery
-   this codebase uses elsewhere for the in-cluster NFS mount does not paper over here, because a
-   hang is not the same failure shape as an error. This is also one of the design's own three
-   deliberately unresearched residual questions (`docs/DESIGN.md` §4 Plane B): whether "Optimize
-   Mac Storage" off is *sufficient* on its own has never been confirmed by anything but running it
-   — treat this prerequisite as necessary, not as a guarantee.
+   disk, that is not the file. This process's overlay step (`obsidian_tools/local_replicator/rsync_ops.py`)
+   and the `git diff` that follows it both read whatever currently sits at every path in the iCloud
+   vault directory — a read against a dataless stub can hang rather than fail cleanly, which the
+   retry/backoff machinery this codebase uses elsewhere for the in-cluster NFS mount does not paper
+   over here, because a hang is not the same failure shape as an error. This is also one of the
+   design's own three deliberately unresearched residual questions (`docs/DESIGN.md` §4 Plane B):
+   whether "Optimize Mac Storage" off is *sufficient* on its own has never been confirmed by
+   anything but running it — treat this prerequisite as necessary, not as a guarantee.
 
 2. **Locate the iCloud vault path.** The vault both Obsidian apps actually open lives at
    `iCloud Drive/Obsidian/<Vault Name>`, which resolves on disk to:
@@ -68,28 +68,42 @@ message pointing back here.
 
 ## Install
 
+This installs **two** LaunchAgents: the replication cycle itself (`replicate`), and a separate one
+for the spool drainer (`drain`) — deliberately decoupled from the cycle's own schedule
+(`docs/DESIGN.md` §2 item 10, §4 Plane B). In Phase 2 the drainer only prevents the spool directory
+from growing without bound (it discards what it drains — `ppat/obsidian-tools#4` is where that
+changes); it is still real, running code, not something you can skip installing.
+
 1. Confirm every item in "Prerequisites" above.
 
-2. Copy the plist template out of this repository and fill in the placeholders. There is no
-   installer script — the substitution is four values, and a copy-then-edit is harder to get
-   subtly wrong than a script silently defaulting one of them:
+2. Copy both plist templates out of this repository and fill in the placeholders. There is no
+   installer script — the substitution is a handful of values per file, and a copy-then-edit is
+   harder to get subtly wrong than a script silently defaulting one of them:
 
    ```sh
    mkdir -p ~/Library/LaunchAgents
    cp packaging/launchd/com.ppat.obsidian-tools.local-replicator.plist.template \
      ~/Library/LaunchAgents/com.ppat.obsidian-tools.local-replicator.plist
+   cp packaging/launchd/com.ppat.obsidian-tools.local-replicator-drain.plist.template \
+     ~/Library/LaunchAgents/com.ppat.obsidian-tools.local-replicator-drain.plist
    ```
 
-   Open the copy in an editor and replace every `__PLACEHOLDER__` token:
+   Open both copies in an editor and replace every `__PLACEHOLDER__` token:
 
-   | Token | Replace with |
-   | --- | --- |
-   | `__HOME_DIR__` | Absolute path to your home directory (`echo $HOME`) — plists cannot expand `$HOME` or `~` themselves; every occurrence must be the literal path. |
-   | `__OBSIDIAN_TOOLS_BIN__` | Absolute path from `command -v obsidian-tools` (Prerequisites, item 4). |
-   | `__ICLOUD_VAULT_DIR__` | The full path from Prerequisites item 2, e.g. `/Users/<you>/Library/Mobile Documents/com~apple~CloudDocs/Obsidian/BRAIN`. |
-   | `__GIT_REMOTE_ORIGIN_URL__` | The vault's git SSH remote, e.g. `git@github.com:ppat/obsidian-vault.git`. |
+   | Token | Replace with | Which file(s) |
+   | --- | --- | --- |
+   | `__HOME_DIR__` | Absolute path to your home directory (`echo $HOME`) — plists cannot expand `$HOME` or `~` themselves; every occurrence must be the literal path. | both |
+   | `__OBSIDIAN_TOOLS_BIN__` | Absolute path from `command -v obsidian-tools` (Prerequisites, item 4). | both |
+   | `__ICLOUD_VAULT_DIR__` | The full path from Prerequisites item 2, e.g. `/Users/<you>/Library/Mobile Documents/com~apple~CloudDocs/Obsidian/BRAIN`. | `local-replicator.plist` only |
+   | `__GIT_REMOTE_ORIGIN_URL__` | The vault's git SSH remote, e.g. `git@github.com:ppat/obsidian-vault.git`. | `local-replicator.plist` only |
 
-3. Create the log directory the plist writes to (launchd does not create parent directories for
+   `LOCAL_REPLICATOR_SPOOL_DIR` has a sensible default
+   (`~/Library/Application Support/obsidian-tools/local-replicator/spool`) and is set explicitly to
+   the same value in both files rather than left to each process's own default — the two jobs share
+   one spool directory by construction, and an operator who ever needs to relocate it only has to
+   get it right in one place if both files already agree.
+
+3. Create the log directory both plists write to (launchd does not create parent directories for
    `StandardOutPath`/`StandardErrorPath` — a missing directory silently drops every log line
    rather than erroring):
 
@@ -97,37 +111,45 @@ message pointing back here.
    mkdir -p ~/Library/Logs/obsidian-tools
    ```
 
-4. Load it:
+4. Load both:
 
    ```sh
    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.ppat.obsidian-tools.local-replicator.plist
+   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.ppat.obsidian-tools.local-replicator-drain.plist
    ```
 
-   `RunAtLoad` is set, so this also triggers an immediate first cycle rather than waiting a full
-   `StartInterval`.
+   `RunAtLoad` is set on both, so this also triggers an immediate first run of each rather than
+   waiting a full `StartInterval`.
 
-5. Confirm it's running and check the first cycle's log:
+5. Confirm they're running and check the first run's logs:
 
    ```sh
    launchctl print gui/$(id -u)/com.ppat.obsidian-tools.local-replicator
-   tail -f ~/Library/Logs/obsidian-tools/local-replicator.log
+   launchctl print gui/$(id -u)/com.ppat.obsidian-tools.local-replicator-drain
+   tail -f ~/Library/Logs/obsidian-tools/local-replicator.log ~/Library/Logs/obsidian-tools/local-replicator-drain.log
    ```
 
-   Each line is a JSON object (`obsidian_tools/logging_config.py`); look for
-   `"event": "cycle_complete"` and confirm `"checkout"` is non-null after the first successful
+   Each line is a JSON object (`obsidian_tools/logging_config.py`). For the replication cycle, look
+   for `"event": "cycle_complete"` and confirm `"checkout"` is non-null after the first successful
    run. A first cycle publishes the whole vault unconditionally (there is no prior baseline to
    compare against yet — `docs/DESIGN.md` §4 Plane B, "Losing the Mac clone loses the baseline"
    describes the same re-baselining behaviour for a lost cache), so expect it to take longer than
-   steady-state cycles.
+   steady-state cycles. For the drainer, look for `"event": "drain_complete"`; `"drained"` will
+   often be non-zero even with no human edits at all, since the device-side detector submits every
+   `.obsidian/` change it sees unfiltered (`docs/DESIGN.md` §1.5 R2) and Obsidian's own plugins
+   churn state there continuously — that noise is discarded here by design, not a sign of anything
+   wrong.
 
 ## Uninstall
 
 ```sh
 launchctl bootout gui/$(id -u)/com.ppat.obsidian-tools.local-replicator
+launchctl bootout gui/$(id -u)/com.ppat.obsidian-tools.local-replicator-drain
 rm ~/Library/LaunchAgents/com.ppat.obsidian-tools.local-replicator.plist
+rm ~/Library/LaunchAgents/com.ppat.obsidian-tools.local-replicator-drain.plist
 ```
 
-This stops the schedule only. It does not touch:
+This stops both schedules only. It does not touch:
 
 - **The iCloud vault directory itself** (`ICLOUD_VAULT_DIR`) — it is the actual vault the Obsidian
   apps open; nothing about uninstalling the sync job should delete vault content.
@@ -135,6 +157,11 @@ This stops the schedule only. It does not touch:
   disposable replication artifact, not vault content, but left alone on uninstall on the same
   principle: removal is a separate, explicit decision (`rm -rf ~/.cache/obsidian-vault`), not a
   side effect of stopping the schedule.
+- **The spool directory** (`LOCAL_REPLICATOR_SPOOL_DIR`, default
+  `~/Library/Application Support/obsidian-tools/local-replicator/spool`) — with the drainer no
+  longer running, anything left there is simply undrained, not lost; remove it by hand
+  (`rm -rf ~/Library/Application\ Support/obsidian-tools/local-replicator/spool`) only once you're
+  sure nothing in it still needs draining.
 - **The read-only deploy key** — revoke it separately from the GitHub repository's Deploy keys
   settings if it's no longer needed, and delete the local key files
   (`~/.ssh/obsidian_vault_readonly*`) by hand.

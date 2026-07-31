@@ -129,6 +129,7 @@ class ReplicateConfig:
     origin_url: str
     ssh_key_path: str
     ssh_known_hosts_path: str
+    spool_dir: str
 
     @classmethod
     def from_env(cls) -> ReplicateConfig:
@@ -150,4 +151,41 @@ class ReplicateConfig:
             # Kubernetes Secret volume.
             ssh_key_path=get_env("GIT_SSH_KEY_PATH", os.path.expanduser("~/.ssh/obsidian_vault_readonly")),
             ssh_known_hosts_path=get_env("GIT_SSH_KNOWN_HOSTS_PATH", os.path.expanduser("~/.ssh/known_hosts")),
+            # Local, durable storage for drift patches, spooled before publish overwrites the
+            # device copy that produced them (docs/DESIGN.md §2 item 10 step 4). Application
+            # Support, not Caches — unlike the parked clone (disposable, rebuildable from origin),
+            # an undrained spool entry may be the only record of a human's edit until the drainer
+            # sends it onward, so it must not be treated as something the OS is free to purge.
+            # Shared with `DrainConfig`'s own default below by construction, not by importing one
+            # from the other — the two configs never share a process (see that dataclass's
+            # docstring for why draining is deliberately its own subcommand and its own config).
+            spool_dir=get_env(
+                "LOCAL_REPLICATOR_SPOOL_DIR",
+                os.path.expanduser("~/Library/Application Support/obsidian-tools/local-replicator/spool"),
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class DrainConfig:
+    """Configuration for the `drain` subcommand — the spool drainer (docs/DESIGN.md §2 item 10, §7
+    Phase 2), read once from the environment. Runs on the operator's Mac, alongside `replicate` but
+    on its own schedule — see obsidian_tools/commands/drain.py.
+
+    Deliberately its own dataclass, not a slice of `ReplicateConfig`: the drainer is decoupled from
+    the replication cycle by design (docs/DESIGN.md §4 Plane B, "A separate drainer... decoupled
+    from this cycle's own numbering, sends the spool onward"), and giving it `ReplicateConfig`'s
+    full environment would make it require `ICLOUD_VAULT_DIR`/`GIT_REMOTE_ORIGIN_URL` it has no use
+    for at all — it never touches iCloud or git.
+    """
+
+    spool_dir: str
+
+    @classmethod
+    def from_env(cls) -> DrainConfig:
+        return cls(
+            spool_dir=get_env(
+                "LOCAL_REPLICATOR_SPOOL_DIR",
+                os.path.expanduser("~/Library/Application Support/obsidian-tools/local-replicator/spool"),
+            )
         )

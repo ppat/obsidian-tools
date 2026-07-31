@@ -78,6 +78,15 @@
          this process shells out to — git, rsync — are resolved via PATH, not by absolute path). -->
     <key>PATH</key>
     <string>__HOME_DIR__/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+
+    <!-- Where drift patches are spooled before publish (docs/DESIGN.md §2 item 10 step 4) — has a
+         sensible default (obsidian_tools/config.py's ReplicateConfig), set explicitly here anyway
+         so it's visible beside the other paths this job touches, matching OBSIDIAN_CACHE_CLONE_DIR
+         above. Drained (Phase 2: discarded) by the separate
+         com.ppat.obsidian-tools.local-replicator-drain job — see local-replicator-drain.plist.template
+         and docs/local-replicator.md. -->
+    <key>LOCAL_REPLICATOR_SPOOL_DIR</key>
+    <string>__HOME_DIR__/Library/Application Support/obsidian-tools/local-replicator/spool</string>
   </dict>
 
   <!-- Structured (JSON-per-line) logs go to stdout already (obsidian_tools/logging_config.py);

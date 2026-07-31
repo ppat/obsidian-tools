@@ -1,115 +1,82 @@
-"""The two rsync invocations the replication cycle needs: a dry-run comparison, and the real publish.
+"""The two rsync invocations the replication cycle needs: overlay the device tree onto the parked
+baseline, and publish the baseline back out (docs/DESIGN.md §2 item 10 steps 2 and 6, §4 Plane B).
 
-Both read from the parked cache clone's checked-out working tree; neither ever writes to it. See
-`cycle.py` for how these two calls are sequenced against the git pull and the capture step.
+Git is the drift engine now (see `obsidian_tools.local_replicator.drift`) -- these two calls are
+pure tree mutation, no longer a comparison. This module used to also provide an `rsync -n -ai`
+dry-run enumeration; that mechanism is gone. The third reading of this cycle collapsed "which paths
+changed, and what do they now contain" into a single `git diff` over a checked-out baseline
+(docs/DESIGN.md §4 Plane B, "Why the gate moved, not disappeared"; "One mechanism instead of two")
+-- reintroducing an rsync-side enumeration here would resurrect exactly the two-mechanisms-for-one-job
+shape that reading replaced.
 """
 
 from __future__ import annotations
 
-import logging
 import subprocess
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
 
 from obsidian_tools.local_replicator.exclude import rsync_exclude_args
-
-logger = logging.getLogger(__name__)
-
-# The itemized-output path field always starts at this column, for both an ordinary itemize line
-# (an 11-character code, then one separator space) and a "*deleting " line (the literal marker
-# padded to the same 11-character column width) — confirmed directly against rsync 3.2.7's actual
-# output, not assumed from the man page's prose description.
-_ITEMIZE_PATH_COLUMN = 12
-_DELETING_PREFIX = "*deleting"
-
-
-@dataclass(frozen=True, slots=True)
-class DriftedPath:
-    """One path rsync's dry run flagged as different between the parked baseline and iCloud.
-
-    `kind` names what a real (non-dry-run) rsync would mechanically do about it — `copy` (the
-    baseline has it, iCloud doesn't yet, or has different content) or `delete` (iCloud has it,
-    the baseline doesn't). It is not a claim about human intent (e.g. `copy` does not mean
-    "new upstream content" — since the comparison runs against the *pre-pull* baseline, a `copy`
-    entry for a path the baseline already had almost always means a human deleted it from iCloud;
-    see `cycle.py`). Capture logic does not branch on this field — it simply checks whether the
-    path currently exists in iCloud — this is carried for observability only.
-    """
-
-    path: str
-    kind: Literal["copy", "delete"]
 
 
 class RsyncError(RuntimeError):
     """An rsync invocation exited non-zero."""
 
 
-def _run_rsync(args: list[str]) -> subprocess.CompletedProcess[str]:
+def _run_rsync(args: list[str]) -> None:
     result = subprocess.run(["rsync", *args], capture_output=True, text=True, check=False)
     if result.returncode != 0:
         raise RsyncError(f"rsync {' '.join(args)} exited {result.returncode}: {result.stderr.strip()}")
-    return result
 
 
-def compare_dry_run(baseline: Path, icloud_vault_dir: Path) -> list[DriftedPath]:
-    """Enumerate paths that differ between `baseline` (the parked clone, checked out at
-    LAST_CHECKOUT — see cycle.py) and `icloud_vault_dir`, without changing either.
+# `--checksum`, on both calls below: rsync's default "quick check" skips transferring a file whose
+# size *and* mtime already match the destination, without ever looking at content. `baseline_work_tree`
+# is a git working tree -- `git checkout` stamps every file it writes with the checkout's own mtime,
+# unrelated to the content's actual history -- so a same-second overlay or publish racing a file of
+# coincidentally identical size is enough to trigger a false "unchanged, skip it" (found directly,
+# by a same-length device edit landing in the same second as a checkout, in this module's own test
+# suite -- not a theoretical risk). `--checksum` forces a real content comparison instead. The vault
+# is markdown-only and stays small by design (docs/DESIGN.md §4 Plane B, "Payload"), so the extra
+# read-and-hash cost this adds is not a concern worth trading correctness against here.
+_CHECKSUM_FLAG = "--checksum"
 
-    `-a --delete --dry-run` mirrors the real publish call exactly (same flags, same direction) so
-    the enumeration reports precisely what that call would do — including files present only in
-    iCloud, which only show up when `--delete` is part of the dry run too (docs/DESIGN.md §4 Plane
-    B: "rsync -n -ai between the two enumerates which paths drifted").
+
+def overlay(icloud_vault_dir: Path, baseline_work_tree: Path) -> None:
+    """Overlay `icloud_vault_dir` onto `baseline_work_tree` in place (step 2): rsync in, with
+    `--delete`, excluding `.git/` and the shared noise list.
+
+    `--delete` is what makes a phone-side deletion visible to the `git diff` that follows at all --
+    without it, a note removed on the device leaves the checkout's copy in place, and the deletion
+    never registers as drift. Excluding `.git/` is what keeps that same `--delete` from deleting the
+    checkout's own repository, since the iCloud side never has one of its own to compare against
+    and would otherwise look, to a plain `--delete`, like `.git/` had been removed on the device
+    (docs/DESIGN.md §4 Plane B, "Constraints"; ppat/obsidian-tools#3, "Implementation traps").
     """
-    args = [
-        "-a",
-        "--itemize-changes",
-        "--delete",
-        "--dry-run",
-        *rsync_exclude_args(),
-        f"{baseline}/",
-        f"{icloud_vault_dir}/",
-    ]
-    result = _run_rsync(args)
-    return _parse_itemize_output(result.stdout)
-
-
-def publish(baseline: Path, icloud_vault_dir: Path, *, extra_excludes: list[str]) -> None:
-    """Rsync `baseline`'s tree onto `icloud_vault_dir`, deleting extraneous destination files.
-
-    `--delete` always runs, but plain `--delete` (never `--delete-excluded`) does not touch an
-    excluded path — it is left exactly as it is on the destination side, neither overwritten nor
-    removed. `extra_excludes` is how `cycle.py` protects a path whose capture failed this cycle (or
-    all of `.obsidian/`, once already seeded): one mechanism, no separate conditional needed.
-    Pairing this with `--delete-excluded` would defeat that protection outright — it would delete
-    exactly the paths this function exists to leave alone.
-    """
-    args = ["-a", "--delete", *rsync_exclude_args(*extra_excludes), f"{baseline}/", f"{icloud_vault_dir}/"]
+    args = ["-a", _CHECKSUM_FLAG, "--delete", *rsync_exclude_args(), f"{icloud_vault_dir}/", f"{baseline_work_tree}/"]
     _run_rsync(args)
 
 
-def _parse_itemize_output(output: str) -> list[DriftedPath]:
-    drifted: list[DriftedPath] = []
-    for line in output.splitlines():
-        if not line:
-            continue
-        if line.startswith(_DELETING_PREFIX):
-            path = line[_ITEMIZE_PATH_COLUMN:]
-            if path.endswith("/"):
-                continue  # a directory becoming empty is structural, not a content drift
-            drifted.append(DriftedPath(path=path, kind="delete"))
-            continue
+def publish(baseline_work_tree: Path, icloud_vault_dir: Path, *, extra_excludes: list[str]) -> None:
+    """Rsync `baseline_work_tree` onto `icloud_vault_dir`, deleting extraneous destination files
+    (step 6).
 
-        code = line[:11]
-        if len(code) < 11 or line[11:12] != " ":
-            logger.warning(
-                "unrecognised rsync itemize line, ignoring",
-                extra={"event": "itemize_parse_skip", "line": line},
-            )
-            continue
-        file_type = code[1]
-        if file_type != "f":
-            continue  # directories/symlinks are structural; only regular files are vault content
-        path = line[_ITEMIZE_PATH_COLUMN:]
-        drifted.append(DriftedPath(path=path, kind="copy"))
-    return drifted
+    Unconditional once called -- no longer gated per path the way an earlier reading of this cycle
+    ran it, excluding only the paths whose capture had failed that cycle (docs/DESIGN.md §4 Plane
+    B, "Why the gate moved, not disappeared"). `cycle.py` now decides whether to call this function
+    *at all*, via `obsidian_tools.local_replicator.drift.decide_cycle_outcome`, rather than this
+    function deciding per path which parts of an otherwise-unconditional run to skip.
+
+    `extra_excludes` is `.obsidian/`'s own publish rule (device_baseline.py): excluded from this
+    sync once already seeded on the device, so a device's own configuration is never overwritten.
+    Plain `--delete` (never `--delete-excluded`) does not touch an excluded path -- verified
+    directly against a real rsync invocation, not assumed from the man page's prose (see
+    tests/test_local_replicator_rsync_ops.py).
+    """
+    args = [
+        "-a",
+        _CHECKSUM_FLAG,
+        "--delete",
+        *rsync_exclude_args(*extra_excludes),
+        f"{baseline_work_tree}/",
+        f"{icloud_vault_dir}/",
+    ]
+    _run_rsync(args)

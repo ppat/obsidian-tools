@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from obsidian_tools.config import CommitConfig, ConfigError, ReplicateConfig
+from obsidian_tools.config import CommitConfig, ConfigError, DrainConfig, ReplicateConfig
 from obsidian_tools.vault_git.commit import DEFAULT_MAX_DELETION_FRACTION
 
 
@@ -108,6 +108,7 @@ def test_from_env_requires_origin_url(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_replicate_config_applies_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("OBSIDIAN_CACHE_CLONE_DIR", raising=False)
     monkeypatch.delenv("GIT_COMMIT_BRANCH", raising=False)
+    monkeypatch.delenv("LOCAL_REPLICATOR_SPOOL_DIR", raising=False)
     icloud_path = "/Users/operator/Library/Mobile Documents/com~apple~CloudDocs/Obsidian/BRAIN"
     monkeypatch.setenv("ICLOUD_VAULT_DIR", icloud_path)
     monkeypatch.setenv("GIT_REMOTE_ORIGIN_URL", "git@github.com:ppat/obsidian-vault.git")
@@ -117,6 +118,7 @@ def test_replicate_config_applies_defaults(monkeypatch: pytest.MonkeyPatch) -> N
     assert config.cache_clone_dir.endswith("/.cache/obsidian-vault")
     assert config.branch == "main"
     assert config.icloud_vault_dir.endswith("/Obsidian/BRAIN")
+    assert config.spool_dir.endswith("/obsidian-tools/local-replicator/spool")
 
 
 def test_replicate_config_requires_icloud_vault_dir(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -133,3 +135,38 @@ def test_replicate_config_requires_origin_url(monkeypatch: pytest.MonkeyPatch) -
 
     with pytest.raises(ConfigError, match="GIT_REMOTE_ORIGIN_URL"):
         ReplicateConfig.from_env()
+
+
+def test_replicate_config_spool_dir_is_overridable_via_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ICLOUD_VAULT_DIR", "/Users/operator/iCloud/Obsidian/BRAIN")
+    monkeypatch.setenv("GIT_REMOTE_ORIGIN_URL", "git@github.com:ppat/obsidian-vault.git")
+    monkeypatch.setenv("LOCAL_REPLICATOR_SPOOL_DIR", "/custom/spool/path")
+
+    config = ReplicateConfig.from_env()
+
+    assert config.spool_dir == "/custom/spool/path"
+
+
+def test_drain_config_applies_default_spool_dir(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("LOCAL_REPLICATOR_SPOOL_DIR", raising=False)
+
+    config = DrainConfig.from_env()
+
+    assert config.spool_dir.endswith("/obsidian-tools/local-replicator/spool")
+
+
+def test_drain_config_shares_the_same_env_var_and_default_as_replicate_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The two configs are deliberately separate dataclasses (config.py's `DrainConfig` docstring)
+    but must still agree on where the spool lives without importing one from the other -- proven
+    here by asserting they produce the identical path from the identical environment."""
+    monkeypatch.delenv("LOCAL_REPLICATOR_SPOOL_DIR", raising=False)
+    monkeypatch.setenv("ICLOUD_VAULT_DIR", "/Users/operator/iCloud/Obsidian/BRAIN")
+    monkeypatch.setenv("GIT_REMOTE_ORIGIN_URL", "git@github.com:ppat/obsidian-vault.git")
+
+    assert ReplicateConfig.from_env().spool_dir == DrainConfig.from_env().spool_dir
+
+    monkeypatch.setenv("LOCAL_REPLICATOR_SPOOL_DIR", "/custom/shared/spool")
+
+    assert ReplicateConfig.from_env().spool_dir == DrainConfig.from_env().spool_dir == "/custom/shared/spool"

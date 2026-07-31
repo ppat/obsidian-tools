@@ -33,13 +33,14 @@ def run(config: ReplicateConfig) -> int:
         extra={
             "event": "cycle_complete",
             "drifted": len(result.drifted),
-            "captured": len(result.captured),
-            "capture_failed": len(result.capture_failed),
+            "spooled": len(result.spooled),
+            "spool_write_failed": result.spool_write_failed,
             "obsidian_seed_attempted": result.obsidian_seed_attempted,
             "tag_advanced": result.tag_advanced,
             "checkout": result.checkout,
         },
     )
-    # Capture failures are retried next cycle by design (docs/DESIGN.md §2 item 10) — not a run
-    # failure. A non-zero exit here is reserved for a cycle that couldn't complete at all.
+    # A spool write failure withholds this cycle's publish and tag advance, and is retried next
+    # cycle by design (docs/DESIGN.md §2 item 10) — not a run failure. A non-zero exit here is
+    # reserved for a cycle that couldn't complete at all.
     return 0

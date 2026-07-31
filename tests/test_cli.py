@@ -5,6 +5,7 @@ from __future__ import annotations
 import signal
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -51,6 +52,26 @@ def test_main_returns_config_error_exit_code_for_replicate_when_required_env_mis
     monkeypatch.delenv("GIT_REMOTE_ORIGIN_URL", raising=False)
 
     assert main(["replicate"]) == 2
+
+
+def test_drain_subcommand_is_registered() -> None:
+    parser = build_parser()
+
+    args = parser.parse_args(["drain"])
+
+    assert args.subcommand == "drain"
+    assert callable(args.handler)
+
+
+def test_main_runs_drain_with_no_required_env_at_all(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Unlike `replicate`, `drain` has no required environment variable at all -- `DrainConfig`
+    only ever reads `LOCAL_REPLICATOR_SPOOL_DIR`, which has a default (config.py's `DrainConfig`
+    docstring: deliberately decoupled from `ReplicateConfig`'s `ICLOUD_VAULT_DIR`/
+    `GIT_REMOTE_ORIGIN_URL`). Points the spool dir at a real temp directory so this exercises the
+    actual drain, not just argument parsing."""
+    monkeypatch.setenv("LOCAL_REPLICATOR_SPOOL_DIR", str(tmp_path))
+
+    assert main(["drain"]) == 0
 
 
 def test_installed_sigterm_handler_raises_graceful_shutdown() -> None:

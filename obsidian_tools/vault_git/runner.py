@@ -141,6 +141,22 @@ class GitRunner:
         result = self.run(["diff", "--cached", "--name-status", "-z"])
         return parse_name_status(result.stdout)
 
+    def staged_patch(self, *pathspecs: str) -> str:
+        """`git diff --cached` restricted to one or more pathspecs, as raw patch text.
+
+        Added for `obsidian_tools/local_replicator/`'s replication cycle (ppat/obsidian-tools#3):
+        its drift comparison stages the device overlay with `add -A` and then needs each staged
+        path's content as a patch, not just its name from `staged_name_status` -- this is that
+        primitive, kept generic here rather than grown as a one-off in the caller, since it is
+        exactly as git-plumbing-shaped as `staged_paths`/`staged_name_status` already are. Pass
+        both a rename's old and new path together so git's own diff machinery re-pairs them into
+        one rename patch instead of two unrelated add/delete hunks. A caller building a pathspec
+        from a real path should prefix it with `:(literal)` -- the same convention
+        `vault_git/baseline.py` already uses -- so a filename containing a pathspec metacharacter
+        (`*`, `[`, `?`) is matched as itself rather than reinterpreted as a pattern.
+        """
+        return self.run(["diff", "--cached", "--", *pathspecs]).stdout
+
     def write_staged_tree(self) -> str:
         """Write the tree object the current index would produce if committed right now, without
         actually committing (`git write-tree`). Reads only the index and the object store, never

@@ -10,9 +10,12 @@ needs (`checkout_forward`) that a bare repo never does, so this module is its ow
 committer-independent thing rather than importing the committer's private helpers.
 
 **Fetching and checking out forward are deliberately two separate functions, not one.** `cycle.py`
-always fetches, but only checks out once it has decided this cycle's publish can safely leave the
-parked clone advanced past `LAST_CHECKOUT` — see that module's docstring for why a partial-capture
-cycle must not leave the working tree half-advanced.
+always fetches and always checks out forward onto `main` (docs/DESIGN.md §2 item 10 step 5 runs
+unconditionally) — but whether the *publish* that follows actually reaches iCloud, and whether
+`LAST_CHECKOUT` advances, is gated separately, on the spool write, not on this step (see
+`obsidian_tools.local_replicator.drift.decide_cycle_outcome`). Idempotency across a partial cycle
+comes from the *next* cycle re-parking at `LAST_CHECKOUT` at its own step 1, not from this module
+reverting anything here.
 """
 
 from __future__ import annotations
