@@ -58,10 +58,22 @@ jobs:
       private_registry_build_cache: ${{ vars.CONTAINER_REGISTRY_CACHE_PATH }}/obsidian-tools
       source_git_ref: ${{ github.head_ref || github.ref }}
       timeout_minutes: 20
-      # No dockerhub_repository: unlike every other image in this fleet, this one is not published
-      # publicly — the vault's git remotes and SSH deploy key are wired through the same image,
-      # and there is no reason for it to exist on a public registry at all.
+      # Published on EVERY build, branch and PR included — deliberately, and unlike ppat/images,
+      # which keeps PR builds off Docker Hub by splitting into two workflows.
+      #
+      # The reason is reachability, not policy: the private registry is only reachable over
+      # Tailscale, which GitHub-hosted runners do not have, and the shared chainsaw-test workflow
+      # exposes no way to add it (six inputs, no secrets block) — wiring it in would mean changing
+      # a workflow the whole fleet depends on. Publishing branch builds here instead means the apps
+      # repo's chainsaw suite can pull `branch-<name>` and exercise this image *before* the PR
+      # that produced it lands, which is the point of building on PR branches at all.
+      #
+      # Accepted cost: branch tags accumulate on a public repository and are not garbage-collected.
+      # `latest` is unaffected — the shared workflow only sets it when a semver tag is present.
+      dockerhub_repository: ppatlabs/obsidian-tools
     secrets:
+      dockerhub_username: ${{ secrets.DOCKERHUB_USERNAME }}
+      dockerhub_token: ${{ secrets.DOCKERHUB_TOKEN }}
       private_registry_username: ${{ secrets.CONTAINER_REGISTRY_USERNAME }}
       private_registry_token: ${{ secrets.CONTAINER_REGISTRY_PASSWORD }}
       private_registry: ${{ secrets.CONTAINER_REGISTRY }}
