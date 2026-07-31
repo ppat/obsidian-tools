@@ -58,10 +58,9 @@ logger = logging.getLogger(__name__)
 OBSIDIAN_DIR = ".obsidian"
 
 # Obsidian's own documentation names these two files specifically as per-instance workspace state
-# that updates on every session and must never be shared across devices — exactly the files the
-# baseline's forced add must never (re)capture. Never on either allowlist below, so a denylist
-# check against them here is now redundant, not load-bearing — kept for now, unconditional
-# skip-worktree reapplication for tracked-but-hand-seeded workspace files is a separate fix.
+# that updates on every session and must never be shared across devices. Never on either allowlist
+# below, so this denylist check is now redundant everywhere it's still used (below, in the capture
+# branch's own staged_paths loop) — kept for now; dropped once nothing references it.
 WORKSPACE_STATE_FILES = (".obsidian/workspace.json", ".obsidian/workspaces.json")
 
 # What a device baseline actually needs: shared application config, never per-plugin state.
@@ -139,8 +138,7 @@ def ensure_obsidian_baseline(runner: GitRunner, work_tree: Path) -> bool:
     """Idempotent baseline step. Returns True if this call staged the (one-time) baseline capture."""
     if runner.rev_parse_or_none("HEAD") is not None and runner.path_exists_at("HEAD", OBSIDIAN_DIR):
         for path in runner.list_tree_paths("HEAD", OBSIDIAN_DIR):
-            if path not in WORKSPACE_STATE_FILES:
-                runner.run(["update-index", "--skip-worktree", "--", path])
+            runner.run(["update-index", "--skip-worktree", "--", path])
         return False
 
     if not (work_tree / OBSIDIAN_DIR).is_dir():

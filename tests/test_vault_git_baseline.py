@@ -21,7 +21,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from conftest import make_runner
+from conftest import make_runner, run_git
 
 from obsidian_tools.vault_git.baseline import ensure_obsidian_baseline
 from obsidian_tools.vault_git.commit import create_commit, has_staged_changes, push_all, stage_all
@@ -156,6 +156,50 @@ def test_baseline_survives_a_lost_git_dir_cache(
 
     assert took_baseline_again is False, "the baseline must not be recaptured just because the cache was rebuilt"
     assert not has_staged_changes(runner_2)
+
+
+def test_tracked_workspace_file_is_frozen_by_the_reapply_loop_too(
+    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+) -> None:
+    """`ensure_obsidian_baseline`'s own forced add never captures workspace.json/workspaces.json —
+    they're never on the allowlist. But if one is ever hand-seeded directly into history, bypassing
+    this module entirely (an operator committing it by hand — not reachable through this module's
+    own code path, but reachable the moment anyone does it), the *reapply* branch must still apply
+    skip-worktree to it unconditionally, with no exception for the workspace files: that filter is
+    correct in the capture branch (don't take them into the baseline) and backwards in the reapply
+    branch, where excluding them left a tracked workspace file frozen by neither mechanism."""
+    nas = make_bare_repo()
+    git_dir = tmp_path / "git-dir"
+
+    hand_seed_clone = tmp_path / "hand-seed-clone"
+    run_git("clone", "-q", str(seeded_origin), str(hand_seed_clone), cwd=tmp_path)
+    (hand_seed_clone / ".obsidian").mkdir()
+    (hand_seed_clone / ".obsidian" / "workspace.json").write_text('{"instance": "a"}\n')
+    run_git("add", "-A", cwd=hand_seed_clone)
+    run_git(
+        "-c",
+        "user.name=seed",
+        "-c",
+        "user.email=seed@example.invalid",
+        "commit",
+        "-q",
+        "-m",
+        "hand-seed workspace.json",
+        cwd=hand_seed_clone,
+    )
+    run_git("push", "-q", "origin", "main", cwd=hand_seed_clone)
+
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    (vault_dir / ".obsidian").mkdir()
+    (vault_dir / ".obsidian" / "workspace.json").write_text('{"instance": "a"}\n')
+    took_baseline = ensure_obsidian_baseline(runner, vault_dir)
+    assert took_baseline is False  # HEAD already carries .obsidian/, so this exercises the reapply branch
+
+    # A device (or a human at the cluster GUI) edits the tracked workspace file afterward.
+    (vault_dir / ".obsidian" / "workspace.json").write_text('{"instance": "b"}\n')
+    stage_all(runner)
+
+    assert not has_staged_changes(runner), "a tracked workspace.json must be frozen by the reapply loop too"
 
 
 def test_no_baseline_taken_when_obsidian_dir_absent(
