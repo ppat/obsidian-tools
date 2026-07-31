@@ -20,6 +20,13 @@ on:
   push:
     branches:
     - main
+    tags:
+    # release-please tags releases `vX.Y.Z` (see .release-please-manifest.json) — without this, no
+    # image is ever published for a released version, and the manifest's plan to track a release
+    # tag instead of `branch-main` can never happen (ppat/obsidian-tools#22 review). GitHub does
+    # not evaluate `paths` against a tag push (a tag is always a new ref with nothing to diff), so
+    # the `paths` filter below applies to branch pushes only and doesn't need its own copy here.
+    - 'v*'
     paths:
     - Dockerfile
     - .dockerignore
