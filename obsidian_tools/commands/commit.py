@@ -64,20 +64,21 @@ def run(config: CommitConfig) -> int:
         ensure_obsidian_baseline(runner, work_tree)
         stage_all(runner)
     except _STAGING_FAILURES as exc:
-        # Staging touches the read-only NFS work tree; `stage_all`/`ensure_obsidian_baseline`
-        # already retried transient failures, so reaching here means something never recovered.
-        # A stale `index.lock` and a persistent read failure point a human at completely different
-        # fixes, so tell them apart here rather than blaming NFS for both (provisioning already
-        # clears a stale lock before this point — see vault_git/provisioning.py — so seeing one
-        # here means something recreated it after that, not the ordinary case this misattributed).
+        # Staging touches the read-only NFS work tree, but the git-dir cache volume is a completely
+        # separate failure domain (a different PVC, mounted read-write) — a stale `index.lock`, a
+        # full git-dir volume, a read-only git-dir volume, and an actual unreadable vault file all
+        # surface here, and each points a human at a different subsystem to fix. Collapsing them
+        # into one message has already sent an operator chasing NFS/the vault mount twice for a
+        # git-dir volume problem (see vault_git/git_errors.py's module docstring), so every kind
+        # `classify_git_error` distinguishes gets its own, actionable log line here rather than
+        # folding back into a single generic one (provisioning already clears a stale lock before
+        # this point — see vault_git/provisioning.py — so seeing one here means something recreated
+        # it after that, not the ordinary case this misattributed).
         # No index reset here: the next run's stage_all() re-runs `git add -A` in full regardless
         # of what a prior partial stage left behind, since -A reconciles the whole index against
         # the current work tree rather than applying incrementally. Still give a previous run's
         # stuck-unpushed commit a chance to catch up before failing.
-        if is_index_lock_error(exc):
-            logger.exception("staging failed: the git-dir is locked", extra={"event": "stage_failed_locked"})
-        else:
-            logger.exception("staging failed, likely a persistent vault read error", extra={"event": "stage_failed"})
+        _log_staging_failure(exc)
         push_all(runner, branch=config.branch)
         return 1
 
@@ -120,18 +121,55 @@ def run(config: CommitConfig) -> int:
     return 1 if outcome.any_failed else 0
 
 
-def is_index_lock_error(exc: BaseException) -> bool:
-    """True only for the specific "the lock file is already there" failure — git's own message when
-    it can't create an `index.lock` because one already exists.
-
-    The actual classification (stale lock vs. no space vs. permission denied vs. a vault read
-    failure) lives in `classify_git_error` (`vault_git/git_errors.py`) — pure, over the stderr text
-    alone. This function's job is just gathering that text out of whatever exception `commit.py`'s
-    `_STAGING_FAILURES` handling caught: either a bare `GitCommandError`, or a `RetryExhaustedError`
-    chaining one as `__cause__` once `stage_all`'s retried `git add` has exhausted every attempt.
-    """
+def _staging_error_kind(exc: BaseException) -> ErrorKind:
+    """Classify whatever exception `commit.py`'s `_STAGING_FAILURES` handling caught: either a bare
+    `GitCommandError`, or a `RetryExhaustedError` chaining one as `__cause__` once `stage_all`'s
+    retried `git add` has exhausted every attempt. This function's job is just gathering the stderr
+    text out of that exception; the actual classification (stale lock vs. no space vs. permission
+    denied vs. a vault read failure) lives in `classify_git_error` (`vault_git/git_errors.py`) —
+    pure, over the stderr text alone."""
     git_error = exc if isinstance(exc, GitCommandError) else exc.__cause__
     if not isinstance(git_error, GitCommandError):
-        return False
+        return ErrorKind.UNKNOWN
     stderr = git_error.result.stderr or ""
-    return classify_git_error(stderr) is ErrorKind.STALE_LOCK
+    return classify_git_error(stderr)
+
+
+def is_index_lock_error(exc: BaseException) -> bool:
+    """True only for the specific "the lock file is already there" failure — git's own message when
+    it can't create an `index.lock` because one already exists."""
+    return _staging_error_kind(exc) is ErrorKind.STALE_LOCK
+
+
+# One actionable log line per `ErrorKind`, each naming the subsystem an operator should actually
+# look at rather than restating the error — see the `_STAGING_FAILURES` handling in `run()` above
+# for why these must stay distinct instead of collapsing back into one generic message.
+_STAGING_FAILURE_LOG: dict[ErrorKind, tuple[str, str]] = {
+    ErrorKind.STALE_LOCK: (
+        "staging failed: the git-dir is locked",
+        "stage_failed_locked",
+    ),
+    ErrorKind.NO_SPACE: (
+        "staging failed: the git-dir cache volume is full — check that PVC's free space, not the vault NFS mount",
+        "stage_failed_no_space",
+    ),
+    ErrorKind.PERMISSION_DENIED: (
+        "staging failed: the git-dir cache volume is read-only — check that PVC's mount/permissions, not the "
+        "vault NFS mount",
+        "stage_failed_permission_denied",
+    ),
+    ErrorKind.VAULT_READ_FAILURE: (
+        "staging failed: a vault file could not be read — check the NFS mount and share-manager, not the "
+        "git-dir cache volume",
+        "stage_failed_vault_read_failure",
+    ),
+    ErrorKind.UNKNOWN: (
+        "staging failed for an unrecognized reason; see the exception traceback for the underlying git stderr",
+        "stage_failed_unknown",
+    ),
+}
+
+
+def _log_staging_failure(exc: BaseException) -> None:
+    message, event = _STAGING_FAILURE_LOG[_staging_error_kind(exc)]
+    logger.exception(message, extra={"event": event})
