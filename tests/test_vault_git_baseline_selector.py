@@ -227,14 +227,16 @@ def _path_infos(draw: st.DrawFn) -> PathInfo:
 @given(st.lists(_path_infos(), max_size=25, unique_by=lambda info: info.relative_path))
 def test_selected_paths_are_never_symlinks_and_never_credential_shaped(candidates: list[PathInfo]) -> None:
     """The safety invariant, phrased independently of the allowlist implementation: no matter what
-    tree is generated, nothing selected is a symlink, and nothing selected has a basename shaped
-    like a credential or per-instance secret. Asserting a denylist-shaped property against an
-    allowlist-shaped implementation is two independent expressions of the same intent -- which is
-    what makes this worth having rather than a tautological restatement of `_is_allowlisted`."""
+    tree is generated, nothing selected is a symlink, nothing selected is a non-file (a directory),
+    and nothing selected has a basename shaped like a credential or per-instance secret. Asserting a
+    denylist-shaped property against an allowlist-shaped implementation is two independent
+    expressions of the same intent -- which is what makes this worth having rather than a
+    tautological restatement of `_is_allowlisted`."""
     by_path = {candidate.relative_path: candidate for candidate in candidates}
 
     for selected_path in select_baseline_paths(candidates):
         candidate = by_path[selected_path]
+        assert candidate.is_file, f"{selected_path} is not a regular file and must never be selected"
         assert not candidate.is_symlink, f"{selected_path} is a symlink and must never be selected"
         basename = selected_path.rsplit("/", 1)[-1]
         assert basename not in _CREDENTIAL_SHAPED_BASENAMES, (
