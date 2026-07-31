@@ -11,6 +11,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from obsidian_tools.vault_git.commit import DEFAULT_MAX_DELETION_FRACTION
+
 
 class ConfigError(RuntimeError):
     """A required piece of configuration is missing or invalid."""
@@ -27,6 +29,16 @@ def require_env(name: str) -> str:
     return value
 
 
+def get_env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise ConfigError(f"{name}={raw!r} is not a valid float") from exc
+
+
 @dataclass(frozen=True, slots=True)
 class CommitConfig:
     """Configuration for the `commit` subcommand, read once from the environment."""
@@ -40,6 +52,7 @@ class CommitConfig:
     nas_url: str
     ssh_key_path: str
     ssh_known_hosts_path: str
+    max_deletion_fraction: float
 
     @classmethod
     def from_env(cls) -> CommitConfig:
@@ -66,4 +79,9 @@ class CommitConfig:
             nas_url=require_env("GIT_REMOTE_NAS_URL"),
             ssh_key_path=get_env("GIT_SSH_KEY_PATH", "/etc/obsidian-tools/git-ssh/id_ed25519"),
             ssh_known_hosts_path=get_env("GIT_SSH_KNOWN_HOSTS_PATH", "/etc/obsidian-tools/git-ssh/known_hosts"),
+            # The mass-deletion guard's threshold (obsidian_tools/vault_git/commit.py) previously
+            # had no env var reaching it at all — a genuine archive purge had no way past it short
+            # of editing source. >=1.0 disables the guard entirely for a run; see that module's
+            # docstring for why that's the right shape for an operator escape hatch here.
+            max_deletion_fraction=get_env_float("GIT_COMMIT_MAX_DELETION_FRACTION", DEFAULT_MAX_DELETION_FRACTION),
         )

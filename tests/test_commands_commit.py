@@ -20,10 +20,18 @@ from obsidian_tools.commands import commit as commit_command
 from obsidian_tools.commands.commit import is_index_lock_error
 from obsidian_tools.config import CommitConfig
 from obsidian_tools.retry import RetryExhaustedError
+from obsidian_tools.vault_git.commit import DEFAULT_MAX_DELETION_FRACTION
 from obsidian_tools.vault_git.runner import GitCommandError
 
 
-def _config(git_dir: Path, vault_dir: Path, *, origin_url: str, nas_url: str) -> CommitConfig:
+def _config(
+    git_dir: Path,
+    vault_dir: Path,
+    *,
+    origin_url: str,
+    nas_url: str,
+    max_deletion_fraction: float = DEFAULT_MAX_DELETION_FRACTION,
+) -> CommitConfig:
     return CommitConfig(
         git_dir=str(git_dir),
         vault_dir=str(vault_dir),
@@ -36,6 +44,7 @@ def _config(git_dir: Path, vault_dir: Path, *, origin_url: str, nas_url: str) ->
         # are never opened; they only need to exist as strings for build_ssh_command to format.
         ssh_key_path="/dev/null",
         ssh_known_hosts_path="/dev/null",
+        max_deletion_fraction=max_deletion_fraction,
     )
 
 

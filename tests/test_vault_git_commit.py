@@ -173,6 +173,31 @@ def test_unreadable_directories_do_not_false_trip_the_zero_markdown_tripwire(
             (vault_dir / name).chmod(0o750)
 
 
+def test_max_deletion_fraction_at_or_above_one_disables_both_tripwires(
+    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+) -> None:
+    """The operator escape hatch for a genuine archive purge: `max_deletion_fraction` used to be a
+    parameter no call site passed and no env var exposed, so a real purge had no way past this
+    guard short of editing source. `>=1.0` must actually disable both tripwires, not just raise the
+    fraction cap partway -- a full purge trips the zero-markdown tripwire regardless of fraction."""
+    nas = make_bare_repo()
+    git_dir = tmp_path / "git-dir"
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    (vault_dir / "10-areas").mkdir()
+    for i in range(3):
+        (vault_dir / "10-areas" / f"note-{i}.md").write_text(f"# Note {i}\n")
+    stage_all(runner)
+    create_commit(runner, cycle_time=datetime.now(UTC))
+    # HEAD now tracks 00-index.md plus 3 notes: 4 markdown paths total.
+
+    (vault_dir / "00-index.md").unlink()
+    for note in (vault_dir / "10-areas").glob("*.md"):
+        note.unlink()
+    stage_all(runner)  # every tracked markdown note deleted -- would trip both tripwires
+
+    check_for_mass_deletion(runner, max_deletion_fraction=1.0)  # must not raise
+
+
 def test_check_for_mass_deletion_allows_an_ordinary_partial_deletion(
     tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
 ) -> None:

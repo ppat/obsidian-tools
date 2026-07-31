@@ -80,7 +80,7 @@ def run(config: CommitConfig) -> int:
         return 1
 
     try:
-        check_for_mass_deletion(runner)
+        check_for_mass_deletion(runner, max_deletion_fraction=config.max_deletion_fraction)
     except MassDeletionError:
         logger.exception(
             "refusing to commit: staged deletions look like data loss, not an edit",

@@ -32,8 +32,13 @@ _MAX_LISTED_PATHS = 50
 # (the widest ordinary write is a promotion relocation or an archive roll-up, not a rewrite of the
 # vault), so a fraction this high is a much better fit for "the volume came back blank" than for
 # "a human deleted some notes." Picked well below "the entire vault" so a deletion doesn't have to
-# be total to trip it.
-_MAX_DELETION_FRACTION = 0.5
+# be total to trip it. Overridable via GIT_COMMIT_MAX_DELETION_FRACTION (obsidian_tools.config) —
+# a genuine archive purge has no other way past this guard than editing source, and content is
+# never at risk here (git history holds it either way), only history production stops, so an
+# operator escape hatch is the right shape. Setting it to `1.0` or above disables both tripwires
+# below for that run: at that point every deletion up to and including the whole tree is already
+# accepted, which subsumes the zero-markdown tripwire too.
+DEFAULT_MAX_DELETION_FRACTION = 0.5
 
 
 class MassDeletionError(RuntimeError):
@@ -49,7 +54,7 @@ def has_staged_changes(runner: GitRunner) -> bool:
     return result.returncode != 0
 
 
-def check_for_mass_deletion(runner: GitRunner, *, max_deletion_fraction: float = _MAX_DELETION_FRACTION) -> None:
+def check_for_mass_deletion(runner: GitRunner, *, max_deletion_fraction: float = DEFAULT_MAX_DELETION_FRACTION) -> None:
     """Refuse (by raising) when the currently-staged change looks like the volume came back empty
     rather than like a human deleted a note — this component's whole job is durability, and
     `docs/DESIGN.md`'s "fail loud, destroy nothing" posture applies nowhere more than here.
@@ -73,6 +78,9 @@ def check_for_mass_deletion(runner: GitRunner, *, max_deletion_fraction: float =
     whose entire job is durability. `write-tree` reads only the index and the object store, so a
     permission glitch on a directory this run never touched can no longer manufacture that alarm.
     """
+    if max_deletion_fraction >= 1.0:
+        return
+
     head_sha = runner.rev_parse_or_none("HEAD")
     if head_sha is None:
         return  # no history yet to compare a deletion against
@@ -95,10 +103,16 @@ def check_for_mass_deletion(runner: GitRunner, *, max_deletion_fraction: float =
     if deletion_fraction > max_deletion_fraction:
         raise MassDeletionError(
             f"staged commit deletes {deleted_count}/{len(tracked_before)} tracked paths "
-            f"({deletion_fraction:.0%}), over the {max_deletion_fraction:.0%} threshold"
+            f"({deletion_fraction:.0%}), over the {max_deletion_fraction:.0%} threshold. If this is "
+            "a deliberate archive purge, set GIT_COMMIT_MAX_DELETION_FRACTION>=1.0 and rerun to "
+            "disable this guard for that run."
         )
     if markdown_before > 0 and markdown_now == 0:
-        raise MassDeletionError(f"HEAD tracked {markdown_before} markdown files; the staged tree now has none")
+        raise MassDeletionError(
+            f"HEAD tracked {markdown_before} markdown files; the staged tree now has none. If this "
+            "is a deliberate archive purge, set GIT_COMMIT_MAX_DELETION_FRACTION>=1.0 and rerun to "
+            "disable this guard for that run."
+        )
 
 
 def _format_name_status_entry(entry: NameStatusEntry) -> str:
