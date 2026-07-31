@@ -20,13 +20,11 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 
+from obsidian_tools.vault_git.commit_message import format_commit_message
 from obsidian_tools.vault_git.deletion_assessment import DeletionVerdict, assess_deletion
-from obsidian_tools.vault_git.runner import GitCommandError, GitRunner, NameStatusEntry
+from obsidian_tools.vault_git.runner import GitCommandError, GitRunner
 
 logger = logging.getLogger(__name__)
-
-_CHANGE_TYPE_LABELS = {"A": "added", "M": "modified", "D": "deleted", "R": "renamed", "C": "copied"}
-_MAX_LISTED_PATHS = 50
 
 # Above this fraction of HEAD's tracked paths staged as deletions in one cycle, refuse rather than
 # commit: nothing in the design produces a legitimate single-cycle change anywhere near this large
@@ -118,29 +116,11 @@ def check_for_mass_deletion(runner: GitRunner, *, max_deletion_fraction: float =
         )
 
 
-def _format_name_status_entry(entry: NameStatusEntry) -> str:
-    if entry.old_path is not None:
-        return f"{entry.status}\t{entry.old_path} -> {entry.path}"
-    return f"{entry.status}\t{entry.path}"
-
-
 def build_commit_message(runner: GitRunner, *, cycle_time: datetime) -> str:
+    """Gathers the staged change list; `format_commit_message` (`vault_git/commit_message.py`) —
+    pure over that list — decides what the message text actually says."""
     entries = runner.staged_name_status()
-
-    counts: dict[str, int] = {}
-    for entry in entries:
-        code = entry.status[:1]
-        counts[code] = counts.get(code, 0) + 1
-    summary = ", ".join(f"{counts[code]} {_CHANGE_TYPE_LABELS.get(code, code)}" for code in sorted(counts))
-    summary = summary or "no path changes"
-
-    header = f"vault sync {cycle_time.strftime('%Y-%m-%dT%H:%M:%SZ')}: {len(entries)} changed ({summary})"
-
-    body_lines = [_format_name_status_entry(entry) for entry in entries[:_MAX_LISTED_PATHS]]
-    if len(entries) > _MAX_LISTED_PATHS:
-        body_lines.append(f"... and {len(entries) - _MAX_LISTED_PATHS} more")
-
-    return header if not body_lines else f"{header}\n\n" + "\n".join(body_lines)
+    return format_commit_message(entries, cycle_time=cycle_time)
 
 
 def create_commit(runner: GitRunner, *, cycle_time: datetime) -> str:
