@@ -14,7 +14,14 @@ from pathlib import Path
 from obsidian_tools.config import CommitConfig
 from obsidian_tools.retry import RetryExhaustedError
 from obsidian_tools.vault_git.baseline import ensure_obsidian_baseline
-from obsidian_tools.vault_git.commit import create_commit, has_staged_changes, push_all, stage_all
+from obsidian_tools.vault_git.commit import (
+    MassDeletionError,
+    check_for_mass_deletion,
+    create_commit,
+    has_staged_changes,
+    push_all,
+    stage_all,
+)
 from obsidian_tools.vault_git.provisioning import GitDivergenceError, provision_repository
 from obsidian_tools.vault_git.runner import GitCommandError, GitRunner
 from obsidian_tools.vault_git.ssh import build_ssh_command
@@ -69,6 +76,16 @@ def run(config: CommitConfig) -> int:
         else:
             logger.exception("staging failed, likely a persistent vault read error", extra={"event": "stage_failed"})
         _reset_index_to_head(runner)
+        push_all(runner, branch=config.branch)
+        return 1
+
+    try:
+        check_for_mass_deletion(runner, work_tree)
+    except MassDeletionError:
+        logger.exception(
+            "refusing to commit: staged deletions look like data loss, not an edit",
+            extra={"event": "mass_deletion_refused"},
+        )
         push_all(runner, branch=config.branch)
         return 1
 

@@ -6,6 +6,7 @@ failure on one remote must not block the other while still failing the run overa
 
 from __future__ import annotations
 
+import shutil
 import stat
 import subprocess
 from collections.abc import Callable
@@ -150,6 +151,38 @@ def test_stale_index_lock_from_a_killed_run_is_cleared_and_the_next_run_recovers
     assert exit_code == 0
     assert not (git_dir / "index.lock").exists()
     assert commit_count(seeded_origin) == 2
+
+
+def test_emptied_vault_refuses_to_commit_a_mass_deletion(
+    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+) -> None:
+    """The volume coming back genuinely empty (a re-provisioned or blank-restored PVC, a mis-set
+    OBSIDIAN_VAULT_DIR, running before the volume is seeded) must not be committed and pushed as a
+    wholesale deletion of the vault's history — `docs/DESIGN.md`'s "fail loud, destroy nothing"
+    applies nowhere more than to the one component whose entire job is durability. Content stays
+    recoverable in git history either way; the point is that this run must not push the deletion."""
+    nas = make_bare_repo()
+    git_dir = tmp_path / "git-dir"
+    config = _config(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+
+    (vault_dir / "10-areas").mkdir()
+    for i in range(4):
+        (vault_dir / "10-areas" / f"note-{i}.md").write_text(f"# Note {i}\n")
+    assert commit_command.run(config) == 0
+    commits_before = commit_count(seeded_origin)
+
+    # The volume comes back blank -- nothing distinguishes this from "a human deleted one note".
+    for path in vault_dir.iterdir():
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+
+    exit_code = commit_command.run(config)
+
+    assert exit_code == 1
+    assert commit_count(seeded_origin) == commits_before  # the deletion was never pushed
+    assert commit_count(git_dir) == commits_before  # nor committed locally
 
 
 def _git_command_error(stderr: str) -> GitCommandError:

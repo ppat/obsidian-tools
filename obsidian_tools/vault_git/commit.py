@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
 from obsidian_tools.vault_git.runner import GitCommandError, GitRunner
 
@@ -26,6 +27,18 @@ logger = logging.getLogger(__name__)
 
 _CHANGE_TYPE_LABELS = {"A": "added", "M": "modified", "D": "deleted", "R": "renamed", "C": "copied"}
 _MAX_LISTED_PATHS = 50
+
+# Above this fraction of HEAD's tracked paths staged as deletions in one cycle, refuse rather than
+# commit: nothing in the design produces a legitimate single-cycle change anywhere near this large
+# (the widest ordinary write is a promotion relocation or an archive roll-up, not a rewrite of the
+# vault), so a fraction this high is a much better fit for "the volume came back blank" than for
+# "a human deleted some notes." Picked well below "the entire vault" so a deletion doesn't have to
+# be total to trip it.
+_MAX_DELETION_FRACTION = 0.5
+
+
+class MassDeletionError(RuntimeError):
+    """Staged deletions look like data loss (an empty/reset volume), not an ordinary edit."""
 
 
 def stage_all(runner: GitRunner) -> None:
@@ -35,6 +48,46 @@ def stage_all(runner: GitRunner) -> None:
 def has_staged_changes(runner: GitRunner) -> bool:
     result = runner.run(["diff", "--cached", "--quiet"], check=False)
     return result.returncode != 0
+
+
+def check_for_mass_deletion(
+    runner: GitRunner, work_tree: Path, *, max_deletion_fraction: float = _MAX_DELETION_FRACTION
+) -> None:
+    """Refuse (by raising) when the currently-staged change looks like the volume came back empty
+    rather than like a human deleted a note — this component's whole job is durability, and
+    `docs/DESIGN.md`'s "fail loud, destroy nothing" posture applies nowhere more than here.
+
+    Two independent tripwires, either sufficient on its own:
+    - staged deletions exceed `max_deletion_fraction` of what HEAD had tracked, or
+    - HEAD tracked markdown notes and the work tree now has none at all.
+
+    Only ever called after `stage_all` has already succeeded without raising, so an unreadable
+    directory (which fails staging outright and is handled well before this point) can never reach
+    here and never trips this check — the hazard this guards against is specific to a work tree
+    that is genuinely, readably empty.
+    """
+    head_sha = runner.rev_parse_or_none("HEAD")
+    if head_sha is None:
+        return  # no history yet to compare a deletion against
+
+    tracked_before = runner.run(["ls-tree", "-r", "--name-only", "HEAD"]).stdout.splitlines()
+    if not tracked_before:
+        return
+
+    status_lines = runner.run(["diff", "--cached", "--name-status"]).stdout.splitlines()
+    deleted_count = sum(1 for line in status_lines if line[:1] == "D")
+    deletion_fraction = deleted_count / len(tracked_before)
+
+    markdown_before = sum(1 for path in tracked_before if path.endswith(".md"))
+    markdown_now = sum(1 for _ in work_tree.rglob("*.md"))
+
+    if deletion_fraction > max_deletion_fraction:
+        raise MassDeletionError(
+            f"staged commit deletes {deleted_count}/{len(tracked_before)} tracked paths "
+            f"({deletion_fraction:.0%}), over the {max_deletion_fraction:.0%} threshold"
+        )
+    if markdown_before > 0 and markdown_now == 0:
+        raise MassDeletionError(f"HEAD tracked {markdown_before} markdown files; the work tree now has none")
 
 
 def build_commit_message(runner: GitRunner, *, cycle_time: datetime) -> str:

@@ -6,9 +6,17 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
 from conftest import commit_count, make_runner
 
-from obsidian_tools.vault_git.commit import create_commit, has_staged_changes, push_all, stage_all
+from obsidian_tools.vault_git.commit import (
+    MassDeletionError,
+    check_for_mass_deletion,
+    create_commit,
+    has_staged_changes,
+    push_all,
+    stage_all,
+)
 from obsidian_tools.vault_git.provisioning import provision_repository
 from obsidian_tools.vault_git.runner import GitRunner
 
@@ -58,6 +66,71 @@ def test_commit_message_names_the_cycle_and_change_counts(
     assert "1 added" in message
     # Not Conventional Commits: no `feat:`/`fix:`/`chore:` style prefix in this repo's history.
     assert not message.startswith(("feat", "fix", "chore", "docs", "refactor"))
+
+
+def test_check_for_mass_deletion_trips_on_deletion_fraction(
+    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+) -> None:
+    nas = make_bare_repo()
+    git_dir = tmp_path / "git-dir"
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    (vault_dir / "10-areas").mkdir()
+    for i in range(3):
+        (vault_dir / "10-areas" / f"note-{i}.md").write_text(f"# Note {i}\n")
+    stage_all(runner)
+    create_commit(runner, cycle_time=datetime.now(UTC))
+    # HEAD now tracks 00-index.md plus the 3 notes just added: 4 paths total.
+
+    for note in (vault_dir / "10-areas").glob("*.md"):
+        note.unlink()
+    stage_all(runner)  # 3/4 tracked paths staged as deletions -- well over the 50% threshold
+
+    with pytest.raises(MassDeletionError):
+        check_for_mass_deletion(runner, vault_dir)
+
+
+def test_check_for_mass_deletion_trips_on_zero_markdown_even_below_the_fraction_threshold(
+    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+) -> None:
+    """The fraction tripwire alone wouldn't catch this: losing the vault's only markdown note among
+    many non-markdown attachments is a small fraction of tracked paths, but still means the vault
+    that exists to hold notes now holds none."""
+    nas = make_bare_repo()
+    git_dir = tmp_path / "git-dir"
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    (vault_dir / "_attachments").mkdir()
+    for i in range(9):
+        (vault_dir / "_attachments" / f"file-{i}.bin").write_bytes(b"x")
+    stage_all(runner)
+    create_commit(runner, cycle_time=datetime.now(UTC))
+    # HEAD now tracks 00-index.md (the vault's only markdown note) plus 9 non-markdown attachments.
+
+    (vault_dir / "00-index.md").unlink()
+    stage_all(runner)  # only 1/10 tracked paths deleted
+
+    with pytest.raises(MassDeletionError):
+        check_for_mass_deletion(runner, vault_dir)
+
+
+def test_check_for_mass_deletion_allows_an_ordinary_partial_deletion(
+    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+) -> None:
+    """An ordinary edit -- deleting one note out of several, the shape a human archiving or
+    correcting a slug actually produces -- must not be refused."""
+    nas = make_bare_repo()
+    git_dir = tmp_path / "git-dir"
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    (vault_dir / "10-areas").mkdir()
+    for i in range(5):
+        (vault_dir / "10-areas" / f"note-{i}.md").write_text(f"# Note {i}\n")
+    stage_all(runner)
+    create_commit(runner, cycle_time=datetime.now(UTC))
+    # HEAD now tracks 00-index.md plus 5 notes: 6 paths total.
+
+    (vault_dir / "10-areas" / "note-0.md").unlink()
+    stage_all(runner)  # 1/6 tracked paths deleted, and 5 markdown notes remain
+
+    check_for_mass_deletion(runner, vault_dir)  # must not raise
 
 
 def test_push_failure_on_one_remote_does_not_block_the_other(
