@@ -18,9 +18,12 @@ from hypothesis import strategies as st
 
 from obsidian_tools.local_replicator.drift import (
     CycleVerdict,
+    SpoolSelection,
     StagedChange,
+    UpstreamComparison,
     captures_content,
     decide_cycle_outcome,
+    matches_upstream,
     select_spool_entries,
 )
 
@@ -39,32 +42,59 @@ def _change(status: str, path: str, old_path: str | None = None, patch: str = _M
     return StagedChange(status=status, path=path, old_path=old_path, patch=patch)
 
 
+_BASELINE_SHA = "1111111111111111111111111111111111111111"
+_UPSTREAM_SHA = "2222222222222222222222222222222222222222"
+
+
+def _upstream(*differing_paths: str) -> UpstreamComparison:
+    return UpstreamComparison(sha=_UPSTREAM_SHA, differing_paths=frozenset(differing_paths))
+
+
+_ALL_MATCHING_UPSTREAM = _upstream()
+
+
+def _select(
+    changes: list[StagedChange],
+    *,
+    upstream: UpstreamComparison | None = _ALL_MATCHING_UPSTREAM,
+    baseline_sha: str = _BASELINE_SHA,
+) -> SpoolSelection:
+    """`select_spool_entries` with the comparison context most tests below don't care about.
+
+    The default `upstream` deliberately names *no* differing paths, which makes every change in
+    those tests read as matching upstream -- the state that would be dropped if this component ever
+    started suppressing rather than annotating. Every classification, ordering and accounting
+    assertion below therefore doubles as a check that annotation changes nothing about which
+    entries exist."""
+    return select_spool_entries(changes, baseline_sha=baseline_sha, upstream=upstream)
+
+
 def test_added_status_classifies_as_create() -> None:
-    entries = select_spool_entries([_change("A", "00-inbox/new-note.md")]).entries
+    entries = _select([_change("A", "00-inbox/new-note.md")]).entries
     assert [e.kind for e in entries] == ["create"]
     assert entries[0].path == "00-inbox/new-note.md"
     assert entries[0].old_path is None
 
 
 def test_deleted_status_classifies_as_delete() -> None:
-    entries = select_spool_entries([_change("D", "10-areas/gone.md")]).entries
+    entries = _select([_change("D", "10-areas/gone.md")]).entries
     assert [e.kind for e in entries] == ["delete"]
 
 
 def test_modified_status_classifies_as_modify() -> None:
-    entries = select_spool_entries([_change("M", "10-areas/tech/note.md")]).entries
+    entries = _select([_change("M", "10-areas/tech/note.md")]).entries
     assert [e.kind for e in entries] == ["modify"]
 
 
 def test_type_change_status_falls_back_to_modify() -> None:
     """`T` (a regular file replaced by a symlink or vice versa) isn't a status this module names
     explicitly -- the fallback is "modify", never silently dropped."""
-    entries = select_spool_entries([_change("T", "10-areas/weird.md")]).entries
+    entries = _select([_change("T", "10-areas/weird.md")]).entries
     assert [e.kind for e in entries] == ["modify"]
 
 
 def test_rename_status_classifies_as_rename_and_carries_old_path() -> None:
-    entries = select_spool_entries([_change("R100", "10-areas/renamed.md", old_path="10-areas/original.md")]).entries
+    entries = _select([_change("R100", "10-areas/renamed.md", old_path="10-areas/original.md")]).entries
     assert entries[0].kind == "rename"
     assert entries[0].old_path == "10-areas/original.md"
 
@@ -73,12 +103,12 @@ def test_copy_status_classifies_as_rename() -> None:
     """`C` (a detected copy) is folded into the same "rename" vocabulary as `R` -- both carry an
     `old_path`, and downstream (Phase 5) cares about "this path's history traces to that one", not
     about git's rename/copy distinction specifically."""
-    entries = select_spool_entries([_change("C087", "10-areas/copy.md", old_path="10-areas/source.md")]).entries
+    entries = _select([_change("C087", "10-areas/copy.md", old_path="10-areas/source.md")]).entries
     assert entries[0].kind == "rename"
 
 
 def test_low_similarity_rename_score_still_classifies_as_rename() -> None:
-    entries = select_spool_entries([_change("R051", "note-b.md", old_path="note-a.md")]).entries
+    entries = _select([_change("R051", "note-b.md", old_path="note-a.md")]).entries
     assert entries[0].kind == "rename"
 
 
@@ -86,7 +116,7 @@ def test_patch_text_is_carried_through_unmodified() -> None:
     # The `diff --git` header is part of the fixture for the same reason as `_MINIMAL_PATCH`'s: git
     # emits it ahead of the `---`/`+++` pair for every patch, and `captures_content` now requires it.
     patch = "diff --git a/note.md b/note.md\n--- a/note.md\n+++ b/note.md\n@@ -1 +1 @@\n-old\n+new\n"
-    entries = select_spool_entries([_change("M", "note.md", patch=patch)]).entries
+    entries = _select([_change("M", "note.md", patch=patch)]).entries
     assert entries[0].patch == patch
 
 
@@ -95,30 +125,30 @@ def test_patch_text_is_carried_through_unmodified() -> None:
 
 def test_non_ascii_path_is_preserved_exactly() -> None:
     path = "40-journal/2026-07-31-日本語.md"  # "日本語"
-    entries = select_spool_entries([_change("M", path)]).entries
+    entries = _select([_change("M", path)]).entries
     assert entries[0].path == path
 
 
 def test_path_with_embedded_quote_is_preserved_exactly() -> None:
     path = '10-areas/tech/note "with quotes".md'
-    entries = select_spool_entries([_change("A", path)]).entries
+    entries = _select([_change("A", path)]).entries
     assert entries[0].path == path
 
 
 def test_patch_with_embedded_newlines_and_quotes_is_preserved_exactly() -> None:
     patch = 'diff --git a/n.md b/n.md\n+line with "quotes" and\nmultiple\nlines\n'
-    entries = select_spool_entries([_change("M", "n.md", patch=patch)]).entries
+    entries = _select([_change("M", "n.md", patch=patch)]).entries
     assert entries[0].patch == patch
 
 
 def test_path_at_odd_depth_is_preserved_exactly() -> None:
     path = "10-areas/tech/homelab/subsystem/deeply/nested/note.md"
-    entries = select_spool_entries([_change("M", path)]).entries
+    entries = _select([_change("M", path)]).entries
     assert entries[0].path == path
 
 
 def test_root_level_path_is_preserved_exactly() -> None:
-    entries = select_spool_entries([_change("M", "log.md")]).entries
+    entries = _select([_change("M", "log.md")]).entries
     assert entries[0].path == "log.md"
 
 
@@ -126,14 +156,12 @@ def test_root_level_path_is_preserved_exactly() -> None:
 
 
 def test_entries_are_sorted_by_path_regardless_of_input_order() -> None:
-    entries = select_spool_entries(
-        [_change("M", "z-note.md"), _change("A", "a-note.md"), _change("D", "m-note.md")]
-    ).entries
+    entries = _select([_change("M", "z-note.md"), _change("A", "a-note.md"), _change("D", "m-note.md")]).entries
     assert [e.path for e in entries] == ["a-note.md", "m-note.md", "z-note.md"]
 
 
 def test_empty_input_produces_empty_output() -> None:
-    assert select_spool_entries([]).entries == []
+    assert _select([]).entries == []
 
 
 def test_mixed_creation_deletion_rename_modification_in_one_call() -> None:
@@ -143,7 +171,7 @@ def test_mixed_creation_deletion_rename_modification_in_one_call() -> None:
         _change("M", "modified.md"),
         _change("R100", "renamed-to.md", old_path="renamed-from.md"),
     ]
-    entries = select_spool_entries(changes).entries
+    entries = _select(changes).entries
     by_path = {e.path: e for e in entries}
     assert len(entries) == 4
     assert by_path["created.md"].kind == "create"
@@ -151,6 +179,89 @@ def test_mixed_creation_deletion_rename_modification_in_one_call() -> None:
     assert by_path["modified.md"].kind == "modify"
     assert by_path["renamed-to.md"].kind == "rename"
     assert by_path["renamed-to.md"].old_path == "renamed-from.md"
+
+
+# --- matches_upstream: the observation each entry carries, and what it must never become --------
+#
+# The whole of ppat/obsidian-tools#36's fix lives here. What is being tested is that the entry
+# records *what was observed* -- never that the observation causes anything, because on this side of
+# the system it must not: every case below asserts the entry still exists.
+
+
+def test_content_identical_to_upstream_is_recorded_and_still_spooled() -> None:
+    """The #36 case: a path republished by a crashed cycle. The entry is annotated, not dropped --
+    dropping is the judgement docs/DESIGN.md §1.5 R2 reserves for the server, and it is
+    indistinguishable from a human edit that reproduced upstream byte-for-byte."""
+    selection = _select([_change("M", "00-index.md")], upstream=_upstream())
+
+    assert [e.path for e in selection.entries] == ["00-index.md"]
+    assert selection.entries[0].matches_upstream is True
+    assert selection.entries[0].upstream_sha == _UPSTREAM_SHA
+    assert selection.entries[0].baseline_sha == _BASELINE_SHA
+
+
+def test_content_differing_from_upstream_is_recorded_as_differing() -> None:
+    entries = _select([_change("M", "00-index.md")], upstream=_upstream("00-index.md")).entries
+    assert entries[0].matches_upstream is False
+
+
+def test_one_paths_observation_does_not_leak_onto_another() -> None:
+    """Per path, not per cycle. The rule the owner's own correction turned on: a cycle in which a
+    human edits one file while a crash republished another must not resolve to a single verdict for
+    the whole cycle -- each entry carries its own observation."""
+    entries = _select(
+        [_change("M", "republished.md"), _change("M", "typed-on-the-phone.md")],
+        upstream=_upstream("typed-on-the-phone.md"),
+    ).entries
+    by_path = {e.path: e for e in entries}
+    assert by_path["republished.md"].matches_upstream is True
+    assert by_path["typed-on-the-phone.md"].matches_upstream is False
+
+
+def test_a_deletion_matches_upstream_when_the_path_is_gone_upstream_too() -> None:
+    """ "Matches upstream" for a path upstream deleted: absent on both sides. A deletion has no
+    content to compare, and `differing_paths` lists a path present on exactly one side, so this
+    needs no special case -- the path simply never appears there."""
+    assert matches_upstream(_change("D", "10-areas/gone.md"), _upstream()) is True
+
+
+def test_a_deletion_of_a_path_upstream_still_has_does_not_match_upstream() -> None:
+    assert matches_upstream(_change("D", "10-areas/gone.md"), _upstream("10-areas/gone.md")) is False
+
+
+def test_a_rename_matches_upstream_only_when_both_of_its_paths_do() -> None:
+    """The case a per-`path` rule gets wrong. An upstream rename leaves the new path identical
+    *and* the old path gone; a device rename onto content that coincidentally matches upstream
+    leaves the old path still sitting there. Only requiring both halves separates them."""
+    rename = _change("R100", "after.md", old_path="before.md")
+
+    assert matches_upstream(rename, _upstream()) is True
+    assert matches_upstream(rename, _upstream("before.md")) is False  # upstream still has the old path
+    assert matches_upstream(rename, _upstream("after.md")) is False  # the new content isn't upstream's
+    assert matches_upstream(rename, _upstream("before.md", "after.md")) is False
+
+
+def test_no_known_upstream_revision_records_unknown_rather_than_differing() -> None:
+    """A re-provisioned cache has no upstream revision to measure against. `None` -- "no
+    observation was possible" -- and specifically not `False`, which would tell a Phase 5 reader
+    that this whole first drift enumeration was positively established as device-authored."""
+    selection = _select([_change("A", "note.md")], upstream=None)
+
+    assert selection.entries[0].matches_upstream is None
+    assert selection.entries[0].upstream_sha is None
+    assert selection.entries[0].baseline_sha == _BASELINE_SHA  # the baseline is still known
+
+
+def test_an_uncaptured_path_is_still_uncaptured_regardless_of_the_observation() -> None:
+    """The observation and the publish gate are separate mechanisms and must stay that way: a
+    binary's patch carries nothing whether or not its bytes match upstream, so it stays in
+    `uncaptured` and keeps withholding the cycle. Annotating is not a way around the gate."""
+    binary = _change("A", "_attachments/x.png", patch="diff --git a/x.png b/x.png\nBinary files a and b differ\n")
+
+    selection = _select([binary], upstream=_upstream())
+
+    assert selection.entries == []
+    assert selection.uncaptured == ["_attachments/x.png"]
 
 
 # --- decide_cycle_outcome: the publish/tag-advance gate -----------------------------------------
@@ -325,7 +436,7 @@ def test_every_input_change_is_accounted_for_exactly_once(changes: list[StagedCh
     place a path can legitimately land; *neither* list is not. Phrasing the invariant over the
     union is what keeps it a statement about never dropping a path, rather than a restatement of
     which branch the selector happened to take."""
-    selection = select_spool_entries(changes)
+    selection = _select(changes)
     input_paths = {change.path for change in changes}
     accounted = [entry.path for entry in selection.entries] + list(selection.uncaptured)
 
@@ -335,3 +446,29 @@ def test_every_input_change_is_accounted_for_exactly_once(changes: list[StagedCh
     assert not (set(selection.uncaptured) & {entry.path for entry in selection.entries}), (
         "a path is either spooled or uncaptured, never both"
     )
+
+
+@given(_staged_changes())
+def test_the_upstream_observation_never_changes_which_entries_exist(changes: list[StagedChange]) -> None:
+    """The line between an observation and a judgement, stated as a property (ppat/obsidian-tools#36).
+
+    Whatever the comparison against upstream came back with -- nothing observable at all, every path
+    identical, every path different -- the entries `select_spool_entries` produces must be the same
+    entries, carrying the same patches, with the same paths landing in `uncaptured`. The moment that
+    stops holding, the device has started deciding rather than recording, which is exactly the
+    failure docs/DESIGN.md §1.5 R2 forbids.
+
+    Deliberately *not* a restatement of `matches_upstream`'s own formula over generated input --
+    that would only assert the implementation equals itself. This asserts the thing the formula must
+    never touch."""
+    every_path = sorted({change.path for change in changes} | {c.old_path for c in changes if c.old_path is not None})
+    observations = (None, _upstream(), _upstream(*every_path))
+
+    shapes = [
+        (
+            [(e.kind, e.path, e.old_path, e.patch) for e in _select(changes, upstream=u).entries],
+            _select(changes, upstream=u).uncaptured,
+        )
+        for u in observations
+    ]
+    assert shapes.count(shapes[0]) == len(shapes)

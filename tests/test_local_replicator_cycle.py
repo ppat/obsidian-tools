@@ -30,6 +30,7 @@ from conftest import push_commit, replicate_config, run_git
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
+import obsidian_tools.local_replicator.cycle as cycle_module
 from obsidian_tools.local_replicator.cycle import run_cycle
 from obsidian_tools.local_replicator.drift import SpoolEntry
 from obsidian_tools.local_replicator.spool import SpoolWriteError, list_spool_files, read_spool_entry, write_spool_entry
@@ -1088,6 +1089,274 @@ def test_cycle_recovers_from_arbitrary_generated_crash_residue(tmp_path: Path, r
         assert not (icloud / name).exists()
     expected_index = "# Home (agent update)\n" if residue.push_upstream_first else "# Home\n"
     assert (icloud / "00-index.md").read_text() == expected_index
+
+
+# --- the crash window between publish and the tag advance: ppat/obsidian-tools#36 -----------------
+#
+# Steps 6 and 7 are two operations and cannot be made one, so a crash can always land between them:
+# publish has placed the fresh upstream tree in iCloud, and `LAST_CHECKOUT` still names the
+# pre-publish commit. The next cycle parks at that older tag, overlays an iCloud tree that has
+# already moved past it, and reads every path the upstream commit touched as device-side drift.
+#
+# **The device does not suppress that, and must not.** Deciding a drifted path is not really a human
+# edit is a judgement, and docs/DESIGN.md §1.5 R2 reserves every such judgement for the server: the
+# device-side detector "submits every path the comparison flags, and makes no judgement, so it can
+# never silently drop a real edit". What the device does instead is record what it *observed* --
+# which baseline the comparison ran against, which upstream revision it knew at that moment, and
+# whether this path's content is byte-identical to that revision -- so `drift-processor` (Phase 5)
+# can refuse to stamp `authority: human` on content that demonstrably came from upstream. Facts on
+# the record; the verdict stays server-side.
+
+
+def _origin_head(origin: Path) -> str:
+    return run_git("rev-parse", "main", cwd=origin).stdout.strip()
+
+
+def _push_tree_change(origin: Path, tmp_path: Path, message: str, mutate: Callable[[Path], None]) -> str:
+    """`conftest.push_commit` for changes that aren't "write these files": a deletion, a rename.
+    Returns the pushed commit's SHA, which is what `upstream_sha` on a spool entry must name."""
+    clone = tmp_path / f"push-clone-{uuid.uuid4().hex}"
+    run_git("clone", "-q", str(origin), str(clone), cwd=tmp_path)
+    mutate(clone)
+    run_git("add", "-A", cwd=clone)
+    run_git("-c", "user.name=x", "-c", "user.email=x@example.invalid", "commit", "-q", "-m", message, cwd=clone)
+    run_git("push", "-q", "origin", "main", cwd=clone)
+    return run_git("rev-parse", "HEAD", cwd=clone).stdout.strip()
+
+
+def _crash_cycle_at(seam: str, config: object, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run one cycle that dies at `seam`, one of the collaborators `cycle.py` calls by name.
+    Patched in `cycle.py`'s own module namespace, so everything ahead of the seam -- real git, real
+    rsync -- has already happened and nothing after it runs at all. The same mechanism the
+    crash-injection harness uses (`tests/test_local_replicator_crash_injection.py`), for the same
+    reason: a stub that raises before doing any work models a killed process, where hand-writing the
+    residue would only model our belief about what one leaves behind."""
+
+    def _die(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError(f"simulated crash at {seam}")
+
+    monkeypatch.setattr(cycle_module, seam, _die)
+    try:
+        with pytest.raises(RuntimeError, match="simulated crash"):
+            run_cycle(config)  # pyright: ignore[reportArgumentType] -- ReplicateConfig, kept loose for the helper
+    finally:
+        monkeypatch.undo()
+
+
+def _crash_between_publish_and_tag_advance(config: object, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The #36 window itself: step 6 has placed the fresh tree in iCloud, step 7 never runs."""
+    _crash_cycle_at("advance_last_checkout", config, monkeypatch)
+
+
+def test_content_republished_by_a_crashed_cycle_is_still_spooled(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The half of #36 that is deliberately *not* fixed. The device keeps submitting the path --
+    dropping it would be exactly the silent judgement docs/DESIGN.md §1.5 R2 forbids, and the
+    coincidence case (a human edit that happens to reproduce upstream byte-for-byte) is
+    indistinguishable from crash residue, so a suppressing device would drop real edits."""
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+    push_commit(seeded_origin, tmp_path, {"00-index.md": "# Home (agent update)\n"}, "agent update")
+
+    _crash_between_publish_and_tag_advance(config, monkeypatch)
+
+    result = run_cycle(config)
+
+    assert result.drifted == ("00-index.md",)
+    assert set(_spooled_by_path(tmp_path)) == {"00-index.md"}
+
+
+def test_content_republished_by_a_crashed_cycle_is_marked_as_matching_upstream(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fix for #36: the entry carries the three facts that make it legible to Phase 5's
+    `drift-processor` -- the baseline the comparison ran against, the upstream revision known at
+    that moment, and that this path's content is byte-identical to it. `baseline_sha !=
+    upstream_sha` is the crash's own signature: a cycle that completed leaves the two equal."""
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+    baseline = _tag_sha(tmp_path)
+    push_commit(seeded_origin, tmp_path, {"00-index.md": "# Home (agent update)\n"}, "agent update")
+    upstream = _origin_head(seeded_origin)
+
+    _crash_between_publish_and_tag_advance(config, monkeypatch)
+
+    # The window this is all about: iCloud holds the new content, the tag still names the old commit.
+    assert (icloud_dir / "00-index.md").read_text() == "# Home (agent update)\n"
+    assert _tag_sha(tmp_path) == baseline
+
+    run_cycle(config)
+
+    entry = _spooled_by_path(tmp_path)["00-index.md"]
+    assert entry.matches_upstream is True
+    assert entry.baseline_sha == baseline
+    assert entry.upstream_sha == upstream
+    assert "# Home (agent update)" in entry.patch  # the patch itself is unchanged by the annotation
+
+
+def test_a_genuine_device_edit_is_never_marked_as_matching_upstream(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path
+) -> None:
+    """The direction that costs something if it is wrong. A human's edit marked as matching upstream
+    is an edit Phase 5 could discard as crash residue -- so this is the assertion that stands
+    between the annotation and the silent data loss the whole component exists to prevent."""
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+    (icloud_dir / "00-index.md").write_text("typed on the phone\n")
+
+    run_cycle(config)
+
+    entry = _spooled_by_path(tmp_path)["00-index.md"]
+    assert entry.matches_upstream is False
+    # No crash, nothing new upstream: the two shas agree, which is what a healthy cycle looks like.
+    assert entry.baseline_sha == entry.upstream_sha
+
+
+def test_the_comparison_names_the_upstream_revision_known_before_this_cycles_fetch(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path
+) -> None:
+    """Which revision `matches_upstream` is measured against, pinned. The drift enumeration runs
+    *before* the pull (step 3 before step 5), so the only upstream revision that can be observed is
+    the one the clone already had -- and that is the right one, because it is the revision whose
+    tree the last publish placed in iCloud. Measuring against the revision this cycle is about to
+    fetch would mark a human's edit as upstream content whenever an agent happened to write the same
+    text upstream in the meantime, which is the one error direction that loses data."""
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+    before_fetch = _origin_head(seeded_origin)
+
+    # An agent writes upstream, and the human independently types the identical text on the phone,
+    # both between cycles. Nothing has published that upstream commit to iCloud yet.
+    push_commit(seeded_origin, tmp_path, {"00-index.md": "# Home (same text)\n"}, "agent update")
+    (icloud_dir / "00-index.md").write_text("# Home (same text)\n")
+
+    run_cycle(config)
+
+    entry = _spooled_by_path(tmp_path)["00-index.md"]
+    assert entry.upstream_sha == before_fetch
+    assert entry.matches_upstream is False
+
+
+def test_a_republished_upstream_deletion_is_marked_as_matching_upstream(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """What "matches upstream" means for a path upstream deleted: absent there too. A deletion
+    carries no content to compare, so the fact recorded is the one that is actually decidable --
+    the baseline still has this path, iCloud no longer does, and neither does upstream."""
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    push_commit(seeded_origin, tmp_path, {"10-areas/doomed.md": "upstream content\n"}, "add doomed")
+    run_cycle(config)
+    assert (icloud_dir / "10-areas" / "doomed.md").exists()
+
+    _push_tree_change(seeded_origin, tmp_path, "delete doomed", lambda clone: (clone / "10-areas/doomed.md").unlink())
+    _crash_between_publish_and_tag_advance(config, monkeypatch)
+    assert not (icloud_dir / "10-areas" / "doomed.md").exists()  # publish's `--delete` already ran
+
+    run_cycle(config)
+
+    entry = _spooled_by_path(tmp_path)["10-areas/doomed.md"]
+    assert entry.kind == "delete"
+    assert entry.matches_upstream is True
+
+
+def test_a_device_deletion_of_a_path_upstream_still_has_is_not_marked_as_matching_upstream(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path
+) -> None:
+    """The counterpart that keeps the deletion rule honest: a human deleting a note upstream still
+    holds is a real device-side deletion, and must reach Phase 5 as one."""
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+    (icloud_dir / "00-index.md").unlink()
+
+    run_cycle(config)
+
+    entry = _spooled_by_path(tmp_path)["00-index.md"]
+    assert entry.kind == "delete"
+    assert entry.matches_upstream is False
+
+
+def test_a_republished_upstream_rename_is_marked_as_matching_upstream(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rename touches two paths, so the fact has to hold for both: the new path's content
+    identical to upstream's, *and* the old path gone from upstream as well. Requiring both is what
+    keeps a half-coincidence -- a device edit that happens to reproduce upstream's new file while
+    upstream still holds the old one -- from being recorded as upstream content."""
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    push_commit(seeded_origin, tmp_path, {"10-areas/before.md": "a note with enough text to match\n"}, "add before")
+    run_cycle(config)
+
+    def _rename(clone: Path) -> None:
+        (clone / "10-areas/after.md").write_text((clone / "10-areas/before.md").read_text())
+        (clone / "10-areas/before.md").unlink()
+
+    _push_tree_change(seeded_origin, tmp_path, "rename before to after", _rename)
+    _crash_between_publish_and_tag_advance(config, monkeypatch)
+    assert (icloud_dir / "10-areas" / "after.md").exists()
+
+    run_cycle(config)
+
+    entry = _spooled_by_path(tmp_path)["10-areas/after.md"]
+    assert entry.kind == "rename"
+    assert entry.old_path == "10-areas/before.md"
+    assert entry.matches_upstream is True
+
+
+def test_a_device_rename_is_not_marked_as_matching_upstream(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path
+) -> None:
+    """The old path is what gives this away: upstream still has it, so the device's rename is a
+    real one however closely the new path's content resembles something upstream holds."""
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    push_commit(seeded_origin, tmp_path, {"10-areas/before.md": "a note with enough text to match\n"}, "add before")
+    run_cycle(config)
+
+    (icloud_dir / "10-areas" / "after.md").write_text((icloud_dir / "10-areas" / "before.md").read_text())
+    (icloud_dir / "10-areas" / "before.md").unlink()
+
+    run_cycle(config)
+
+    entry = _spooled_by_path(tmp_path)["10-areas/after.md"]
+    assert entry.kind == "rename"
+    assert entry.matches_upstream is False
+
+
+def test_a_device_deletion_is_not_hidden_by_an_unrelated_rename_pairing_against_upstream(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Why the observation's own diff runs with rename detection *off*
+    (`vault_git/runner.py`, `_IDENTITY_DIFF_FLAGS`), which nothing else here would catch.
+
+    With detection on, `git diff --name-only` prints only a rename's *destination* -- the source
+    path vanishes from the output. So a path the device deleted, which upstream still holds, can be
+    silently paired with some unrelated path the index happens to hold and upstream does not, and
+    then reads as "identical to upstream": a real human deletion recorded as republished upstream
+    content, which is the direction that loses data.
+
+    The pairing needs the baseline and the known upstream revision to disagree, which is exactly
+    what a crash at the *publish* seam leaves behind -- the fetch moved the remote-tracking ref
+    forward, the publish never ran, so iCloud still holds the pre-fetch tree.
+    """
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    identical = "the same content in both notes, long enough to be paired as a rename\n"
+    push_commit(seeded_origin, tmp_path, {"10-areas/p.md": identical, "10-areas/q.md": identical}, "add p and q")
+    run_cycle(config)
+
+    # Upstream deletes q.md. The crash at `publish` brings that commit into the clone (so the
+    # comparison below runs against it) while leaving iCloud untouched, still holding both notes.
+    _push_tree_change(seeded_origin, tmp_path, "delete q", lambda clone: (clone / "10-areas/q.md").unlink())
+    _crash_cycle_at("publish", config, monkeypatch)
+    assert (icloud_dir / "10-areas" / "q.md").exists()
+
+    # A human deletes the *other* note -- a genuine device-side deletion of a path upstream still has.
+    (icloud_dir / "10-areas" / "p.md").unlink()
+
+    run_cycle(config)
+
+    entry = _spooled_by_path(tmp_path)["10-areas/p.md"]
+    assert entry.kind == "delete"
+    assert entry.matches_upstream is False
 
 
 # --- non-ASCII and quoted filenames, end to end --------------------------------------------------

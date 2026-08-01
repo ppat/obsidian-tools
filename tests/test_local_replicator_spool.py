@@ -23,9 +23,23 @@ from obsidian_tools.local_replicator.spool import (
 
 
 def _entry(
-    path: str = "note.md", kind: SpoolEntryKind = "modify", old_path: str | None = None, patch: str = "diff\n"
+    path: str = "note.md",
+    kind: SpoolEntryKind = "modify",
+    old_path: str | None = None,
+    patch: str = "diff\n",
+    baseline_sha: str | None = "1111111111111111111111111111111111111111",
+    upstream_sha: str | None = "2222222222222222222222222222222222222222",
+    matches_upstream: bool | None = False,
 ) -> SpoolEntry:
-    return SpoolEntry(kind=kind, path=path, old_path=old_path, patch=patch)
+    return SpoolEntry(
+        kind=kind,
+        path=path,
+        old_path=old_path,
+        patch=patch,
+        baseline_sha=baseline_sha,
+        upstream_sha=upstream_sha,
+        matches_upstream=matches_upstream,
+    )
 
 
 def test_write_then_read_round_trips_every_field(tmp_path: Path) -> None:
@@ -35,6 +49,27 @@ def test_write_then_read_round_trips_every_field(tmp_path: Path) -> None:
     written = write_spool_entry(spool_dir, entry)
 
     assert written.parent == spool_dir
+    assert read_spool_entry(written) == entry
+
+
+@pytest.mark.parametrize(
+    ("upstream_sha", "matches_upstream"),
+    [
+        ("2222222222222222222222222222222222222222", True),
+        ("2222222222222222222222222222222222222222", False),
+        # No upstream revision was known, so no observation was possible -- `None`, and it has to
+        # survive as `None` rather than being flattened into `False` by the JSON round trip, since
+        # the two mean different things to a Phase 5 reader (drift.py, `matches_upstream`).
+        (None, None),
+    ],
+)
+def test_every_observed_upstream_state_round_trips(
+    tmp_path: Path, upstream_sha: str | None, matches_upstream: bool | None
+) -> None:
+    entry = _entry(upstream_sha=upstream_sha, matches_upstream=matches_upstream)
+
+    written = write_spool_entry(tmp_path / "spool", entry)
+
     assert read_spool_entry(written) == entry
 
 
@@ -159,4 +194,31 @@ def test_serialized_content_matches_json_schema(tmp_path: Path) -> None:
     written = write_spool_entry(spool_dir, entry)
     data = json.loads(written.read_text())
 
-    assert data == {"kind": "create", "path": "note.md", "old_path": None, "patch": "whole file content\n"}
+    assert data == {
+        "kind": "create",
+        "path": "note.md",
+        "old_path": None,
+        "patch": "whole file content\n",
+        "baseline_sha": "1111111111111111111111111111111111111111",
+        "upstream_sha": "2222222222222222222222222222222222222222",
+        "matches_upstream": False,
+    }
+
+
+def test_an_entry_written_before_the_provenance_fields_existed_still_reads_back(tmp_path: Path) -> None:
+    """An operator upgrading local-replicator with a non-empty spool. The old entry has no
+    provenance keys, and the drainer has to be able to send it on: indexing them would raise
+    `KeyError` inside `drain_once`'s read, which happens *outside* its per-entry `try`, wedging
+    every entry behind it. Absent reads back as `None` -- not recorded -- never as an invented sha
+    or a `False` claiming an observation was made and came back negative."""
+    spool_dir = tmp_path / "spool"
+    spool_dir.mkdir()
+    legacy = spool_dir / "00000000000000000000-legacy.json"
+    legacy.write_text(json.dumps({"kind": "modify", "path": "note.md", "old_path": None, "patch": "diff\n"}))
+
+    entry = read_spool_entry(legacy)
+
+    assert entry.path == "note.md"
+    assert entry.baseline_sha is None
+    assert entry.upstream_sha is None
+    assert entry.matches_upstream is None

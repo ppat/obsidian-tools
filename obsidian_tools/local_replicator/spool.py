@@ -59,7 +59,20 @@ def _serialize(entry: SpoolEntry) -> str:
     # directly; only its \uXXXX text escape can be, and `json.loads` reconstructs the same lone
     # surrogate character from that escape on the way back out (`read_spool_entry`).
     return json.dumps(
-        {"kind": entry.kind, "path": entry.path, "old_path": entry.old_path, "patch": entry.patch},
+        {
+            "kind": entry.kind,
+            "path": entry.path,
+            "old_path": entry.old_path,
+            "patch": entry.patch,
+            # The three provenance observations (ppat/obsidian-tools#36) -- see `SpoolEntry`'s own
+            # docstring for what each one means and why none of them is a verdict. Serialized as
+            # plain, separate keys rather than folded into a nested object or a derived summary:
+            # the reader is a Phase 5 `drift-processor` that does not exist yet, so there is nothing
+            # to test a clever encoding against.
+            "baseline_sha": entry.baseline_sha,
+            "upstream_sha": entry.upstream_sha,
+            "matches_upstream": entry.matches_upstream,
+        },
         ensure_ascii=True,
     )
 
@@ -98,5 +111,20 @@ def list_spool_files(spool_dir: Path) -> list[Path]:
 
 
 def read_spool_entry(path: Path) -> SpoolEntry:
+    """Read one entry back. The three provenance keys are read with `.get`, not indexed: an entry
+    already sitting in the spool when local-replicator is upgraded was written before those keys
+    existed, and the drainer must be able to send it on rather than dying on a `KeyError` and
+    wedging every entry behind it. Absent reads back as `None` -- "not recorded", which is what is
+    actually true of it -- never as a fabricated sha or a `False` that would claim an observation
+    was made and came back negative. Everything this version writes records all three.
+    """
     data = json.loads(path.read_text(encoding="ascii"))
-    return SpoolEntry(kind=data["kind"], path=data["path"], old_path=data["old_path"], patch=data["patch"])
+    return SpoolEntry(
+        kind=data["kind"],
+        path=data["path"],
+        old_path=data["old_path"],
+        patch=data["patch"],
+        baseline_sha=data.get("baseline_sha"),
+        upstream_sha=data.get("upstream_sha"),
+        matches_upstream=data.get("matches_upstream"),
+    )

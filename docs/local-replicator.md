@@ -195,6 +195,29 @@ already-tracked binary is not the same — its new bytes exist only on the devic
 file discards them, not just the drift; there is no way to recover those bytes through this
 component, since they were never captured anywhere.
 
+### `"event": "drift_matches_upstream"` — drift whose content the upstream revision already holds
+
+Logged at `INFO`, once per cycle it occurs in. It is **not** a fault and nothing is gated by it: the
+paths it names were spooled like any other drift. What it records is that this cycle found drift
+whose content is byte-identical to the upstream revision the clone already knew, and that each of
+those spool entries carries that observation (`matches_upstream`, alongside `baseline_sha` and
+`upstream_sha` — `obsidian_tools/local_replicator/drift.py`'s `SpoolEntry`).
+
+The ordinary cause is a crash in the window between step 6 and step 7 (`ppat/obsidian-tools#36`):
+the publish placed the fresh tree in iCloud, the process died before `LAST_CHECKOUT` advanced, and
+the next cycle's comparison therefore reads everything that upstream commit touched as device-side
+drift. The line's own `baseline_sha` and `upstream_sha` are the signature — they differ, meaning a
+previous cycle moved origin past the tag without advancing it. Seeing it once after an unclean
+shutdown, a laptop sleeping mid-cycle or a `launchctl bootout` is expected. Seeing it on cycles that
+were never interrupted is worth investigating.
+
+**Remedy: none, and deliberately so.** The cycle self-heals — this cycle publishes and advances the
+tag as normal, and the next one sees no drift. The device does not suppress the entries, because
+deciding a drifted path is not a human's edit is a judgement reserved for the server
+(`docs/DESIGN.md` §1.5 R2), and because a human edit that happens to reproduce upstream
+byte-for-byte is indistinguishable from this here. Until `drift-processor` exists (Phase 5) the
+drainer discards everything it reads, so the only cost today is a few spool entries.
+
 ### A paused cycle re-spools the same drift every cycle until the pause clears
 
 Once a cycle is gated (a spool write failure, or `drift_uncaptured` above), the drift itself is not

@@ -31,6 +31,21 @@ the new commit, that path at the old one," so a cycle either spools every real c
 or it doesn't proceed at all -- see `obsidian_tools.local_replicator.drift.decide_cycle_outcome` for
 the gate itself, held as a value rather than enacted inline here.
 
+**Steps 6 and 7 are not atomic, and the residue is recorded rather than suppressed.** A crash
+between the publish and the tag advance leaves fresh upstream content sitting in iCloud while
+`LAST_CHECKOUT` still names the pre-publish commit, so the next cycle's comparison reads every path
+that commit touched as device-side drift (ppat/obsidian-tools#36). Two operations cannot be made
+one, so the window cannot be closed -- and closing it by having *this* component decide such a path
+is not really a human's edit is the wrong repair twice over: it is the judgement docs/DESIGN.md §1.5
+R2 reserves for the server, and a human edit that happens to reproduce upstream byte-for-byte is
+indistinguishable from residue here, so a suppressing device would silently drop real edits. What
+step 3 does instead is *observe*: which baseline it compared against, which upstream revision the
+clone knew at that moment, and whether each drifted path's content is byte-identical to it
+(`_observe_upstream`, and `drift.SpoolEntry`'s own docstring). Every path is still spooled. This is
+the moment -- the only moment -- at which the iCloud tree, its baseline, and the revision that last
+published into it all exist together; nothing downstream can reconstruct it, which is why not
+recording it would be the actual loss.
+
 **Idempotent from any starting state.** Step 1 does not trust that the parked clone is still
 sitting at `LAST_CHECKOUT` just because the previous cycle *should* have left it there -- a crash at
 any point in a prior cycle (mid-overlay, mid-stage, between reset and checkout) can leave the
@@ -65,6 +80,7 @@ from obsidian_tools.local_replicator.device_baseline import is_baselined, seed_b
 from obsidian_tools.local_replicator.drift import (
     SpoolEntry,
     StagedChange,
+    UpstreamComparison,
     decide_cycle_outcome,
     select_spool_entries,
 )
@@ -120,6 +136,21 @@ def _staged_changes(runner: GitRunner) -> list[StagedChange]:
     return changes
 
 
+def _observe_upstream(runner: GitRunner, *, branch: str) -> UpstreamComparison | None:
+    """The upstream revision this clone already knows, and which staged paths differ from it --
+    read *before* the fetch, because that is both the only revision observable at comparison time
+    and the correct one (see `UpstreamComparison`'s own docstring, and ppat/obsidian-tools#36).
+
+    `None` when the clone knows no upstream revision at all: a freshly re-provisioned cache, or an
+    origin the committer has not pushed to yet. Nothing is guessed in that case -- the entries
+    record that no observation was possible.
+    """
+    sha = runner.rev_parse_or_none(f"refs/remotes/origin/{branch}")
+    if sha is None:
+        return None
+    return UpstreamComparison(sha=sha, differing_paths=frozenset(runner.staged_paths_differing_from(sha)))
+
+
 def run_cycle(config: ReplicateConfig, *, spool_writer: SpoolWriter = write_spool_entry) -> CycleResult:
     cache_clone_dir = Path(config.cache_clone_dir)
     icloud_vault_dir = Path(config.icloud_vault_dir)
@@ -155,8 +186,29 @@ def run_cycle(config: ReplicateConfig, *, spool_writer: SpoolWriter = write_spoo
         runner.run(["add", "-A"])
         changes = _staged_changes(runner)
         drifted = [change.path for change in changes]
-        selection = select_spool_entries(changes)
+        # Read while the overlay is still staged and before the fetch below moves the
+        # remote-tracking ref: this is the one moment the iCloud tree, the baseline it was compared
+        # against, and the upstream revision that last published into it all coexist
+        # (ppat/obsidian-tools#36). Nothing downstream can reconstruct it, so it is recorded on
+        # every entry rather than acted on here.
+        upstream = _observe_upstream(runner, branch=config.branch)
+        selection = select_spool_entries(changes, baseline_sha=previous_checkout, upstream=upstream)
         entries = selection.entries
+        republished = [entry.path for entry in entries if entry.matches_upstream]
+        if republished:
+            # Not a warning and not a gate: the entries were spooled like any others, and what to
+            # make of them is Phase 5's call. Logged because this is the only place an operator can
+            # ever see that a cycle died in the step 6/7 window -- `baseline_sha != upstream_sha`
+            # with content already matching upstream is that crash's whole signature.
+            logger.info(
+                "drift on paths whose content already matches the known upstream revision; spooled and annotated",
+                extra={
+                    "event": "drift_matches_upstream",
+                    "paths": republished,
+                    "baseline_sha": previous_checkout,
+                    "upstream_sha": None if upstream is None else upstream.sha,
+                },
+            )
         uncaptured = list(selection.uncaptured)
         if uncaptured:
             logger.error(

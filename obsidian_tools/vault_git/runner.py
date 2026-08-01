@@ -110,6 +110,19 @@ _GIT_CONFIG_PINS = ("core.attributesFile", "core.excludesFile")
 #   pauses on drift that lost nothing.
 _DECISION_DIFF_FLAGS = ("--no-ext-diff", "--no-textconv", "--no-color", "--find-renames")
 
+# The same environment-proofing for the one diff that is read as a *path-identity* answer rather
+# than as patch text (`staged_paths_differing_from`). `--find-renames` is deliberately inverted to
+# `--no-renames` here, and the inversion is load-bearing, not tidiness: with detection on,
+# `--name-only` prints a rename's *destination only* -- the source path disappears from the output
+# entirely (verified directly against git, not inferred). A caller reading "absent from this list"
+# as "identical to that tree" would then read a deleted path as identical the moment git happened to
+# pair its deletion with some unrelated addition elsewhere in the tree, on nothing more than content
+# similarity. `local_replicator/drift.py` re-pairs a rename's two halves itself, from git's own
+# `--name-status` output, so it needs literal per-path answers here and no heuristic pairing at all.
+# See `test_a_device_deletion_is_not_hidden_by_an_unrelated_rename_pairing_against_upstream` for the
+# case where that difference silently turns a human's deletion into republished upstream content.
+_IDENTITY_DIFF_FLAGS = ("--no-ext-diff", "--no-textconv", "--no-color", "--no-renames")
+
 # `run()` below pins `cwd` to `work_tree`, not left as whatever directory launched this process:
 # git's per-directory `.gitattributes` lookup does its own filesystem probe relative to the
 # *process's* cwd, not to `--work-tree`, even though `--work-tree` is always given explicitly --
@@ -410,6 +423,27 @@ class GitRunner:
         it is. Do not drop them as noise — see the flags' own comment for what each one closes.
         """
         return self.run(["diff", "--cached", *_DECISION_DIFF_FLAGS, "--", *pathspecs]).stdout
+
+    def staged_paths_differing_from(self, rev: str) -> list[str]:
+        """Every path at which the current index differs from `rev`'s tree
+        (`git diff --cached --name-only -z <rev>`). The complement is the useful half: a path the
+        index holds that is *absent* from this list is byte-identical to `rev` there, and a path
+        absent from both the index and `rev` produces no output either -- so "absent from this list"
+        reads uniformly as "identical to `rev` at this path", deletions included.
+
+        Added for local-replicator's drift comparison (ppat/obsidian-tools#36), which needs to
+        record, per drifted path, whether the content it is about to spool is the same content the
+        clone's known upstream revision holds. Blob-identity is git's own answer to that and needs
+        no file reading; a mode difference with identical content also lists the path, which is the
+        conservative direction (it reports *not* identical).
+
+        `_IDENTITY_DIFF_FLAGS`, not `_DECISION_DIFF_FLAGS`: see that constant for why rename
+        detection is deliberately off here. Trailing `--`: `rev` sits where git would also accept a
+        pathspec, so a vault path literally equal to a revision name would otherwise be ambiguous --
+        the same fix, for the same reason, as `cycle.py`'s `reset -q --hard HEAD --`.
+        """
+        result = self.run(["diff", "--cached", *_IDENTITY_DIFF_FLAGS, "--name-only", "-z", rev, "--"])
+        return split_nul_terminated(result.stdout)
 
     def write_staged_tree(self) -> str:
         """Write the tree object the current index would produce if committed right now, without
