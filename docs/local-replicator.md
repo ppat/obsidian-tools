@@ -145,6 +145,54 @@ changes); it is still real, running code, not something you can skip installing.
    actually tracked can ever show as drift, and only when genuinely changed — which is exactly the
    signal wanted, a human having altered a setting on a device.
 
+## Troubleshooting
+
+### `"event": "drift_uncaptured"` — a drift patch that carries no content
+
+Logged at `ERROR`, once per cycle it occurs in, whenever `git diff` produced a patch that doesn't
+actually carry what changed for one or more drifted paths
+(`obsidian_tools/local_replicator/drift.py`'s `captures_content`) — in practice, a binary landing
+in the vault on the device: a picture pasted into a note, a PDF, anything outside the vault's
+markdown-only contract (`docs/DESIGN.md` Sec 5, Sec 8b G5). `git diff --cached` emits
+`Binary files ... differ` for it — a patch asserting that something changed while carrying none of
+it — so this component withholds the path from the spool rather than risk the publish rsync's
+`--delete` destroying the only copy of those bytes.
+
+Withholding it also withholds the **whole cycle's** publish and tag advance, exactly like a spool
+write failure, not just the offending path (`docs/DESIGN.md` §4 Plane B, "Why the gate moved").
+The `cycle_complete` line that follows names the count in `uncaptured`, and `"tag_advanced": false`
+confirms nothing was published that cycle; the `cycle_tag_not_advanced` line right before it names
+the cause in plain text, distinguishing this from an actual spool write failure.
+
+**Remedy:** delete the offending file from the device's iCloud vault directory (or move it out of
+the vault entirely) and let the next scheduled cycle run — there's nothing to fix in this codebase,
+since an attachment reaching the vault at all is out-of-contract input, not a bug. Two shapes of
+that remedy behave differently, and it matters which one applies: a **deletion** of a file already
+tracked in git always resolves cleanly on its own, because the pre-deletion bytes are still in git
+at `LAST_CHECKOUT` and the next cycle simply spools the deletion. A **modification** to an
+already-tracked binary is not the same — its new bytes exist only on the device, so deleting the
+file discards them, not just the drift; there is no way to recover those bytes through this
+component, since they were never captured anywhere.
+
+### A paused cycle re-spools the same drift every cycle until the pause clears
+
+Once a cycle is gated (a spool write failure, or `drift_uncaptured` above), the drift itself is not
+remembered between cycles: the next cycle's overlay-and-diff reproduces it from scratch against the
+same, still-unmoved `LAST_CHECKOUT` (`docs/DESIGN.md` §4 Plane B). At the default 900-second
+interval, a pause left unattended for a day produces on the order of 96 duplicate spool entries for
+the same drift, and the drainer picks up every one on its own schedule — there is no deduplication
+anywhere in this pipeline. This is bounded, not unbounded: an unresolved *deletion* used to wedge a
+cycle permanently (fixed — deletions are now captured, so they resolve on the first retry); what
+remains is an ordinary paused cycle's retry cadence, not a runaway.
+
+**Remedy:** resolve whatever is gating the cycle as soon as it's noticed — delete the offending file,
+fix the disk that failed a spool write — rather than leaving a pause unattended. Deduplicating the
+spool itself is deliberately not built here: there is no consumer of the spool until Phase 5's
+`drift-processor` exists (in Phase 2 the drainer discards what it reads, `drainer.py`'s
+`discard_sink`), and *where* deduplication would belong — at the spool write, in the drainer, or in
+`drift-processor` on receipt — is a decision that belongs with that consumer, not guessed at ahead
+of it.
+
 ## Uninstall
 
 ```sh

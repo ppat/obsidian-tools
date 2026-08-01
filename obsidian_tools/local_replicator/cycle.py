@@ -16,18 +16,20 @@ parked at LAST_CHECKOUT between cycles*, it already *is* the baseline -- compare
 spool the drift, pull it forward, publish, advance the tag, and it's parked at the new
 `LAST_CHECKOUT`, ready for the next cycle. `clone.py` and `tag.py` exist to make exactly that true.
 
-**Git is the drift engine, and the gate now sits on the spool write, not on publish.** Checking out
-`LAST_CHECKOUT` and overlaying the device tree onto it turns "which paths changed, and what do
-they now contain" into one `git diff` -- a patch for a path that already existed at the baseline,
-and the whole file (once staged, since an unstaged `git diff` shows nothing for an untracked path)
-for a path created fresh on the device. Each patch is spooled atomically before anything below
-discards the overlay that produced it (`obsidian_tools.local_replicator.spool`). Publish (step 6)
-and the tag advance (step 7) are gated on every entry making it into the spool durably -- not, as an
-earlier reading of this cycle had it, gated *per path* on capturing that path's content before an
-otherwise-unconditional publish. A single `LAST_CHECKOUT` ref cannot mean "this path at the new
-commit, that path at the old one," so a cycle either spools everything and proceeds, or it doesn't
-proceed at all -- see `obsidian_tools.local_replicator.drift.decide_cycle_outcome` for the gate
-itself, held as a value rather than enacted inline here.
+**Git is the drift engine, and the gate now sits on two conditions ahead of publish, not on publish
+itself.** Checking out `LAST_CHECKOUT` and overlaying the device tree onto it turns "which paths
+changed, and what do they now contain" into one `git diff` -- a patch for a path that already
+existed at the baseline, and the whole file (once staged, since an unstaged `git diff` shows
+nothing for an untracked path) for a path created fresh on the device. Each patch is spooled
+atomically before anything below discards the overlay that produced it
+(`obsidian_tools.local_replicator.spool`). Publish (step 6) and the tag advance (step 7) proceed
+only once every staged change clears both: it made it into the spool durably, and its patch
+actually captures what changed (`obsidian_tools.local_replicator.drift.captures_content`) -- not,
+as an earlier reading of this cycle had it, gated *per path* on capturing that path's content
+before an otherwise-unconditional publish. A single `LAST_CHECKOUT` ref cannot mean "this path at
+the new commit, that path at the old one," so a cycle either spools every real change and proceeds,
+or it doesn't proceed at all -- see `obsidian_tools.local_replicator.drift.decide_cycle_outcome` for
+the gate itself, held as a value rather than enacted inline here.
 
 **Idempotent from any starting state.** Step 1 does not trust that the parked clone is still
 sitting at `LAST_CHECKOUT` just because the previous cycle *should* have left it there -- a crash at
@@ -38,15 +40,16 @@ Discarding the overlay later in the same cycle uses `git reset --hard`, never `g
 same reason: stash accumulates refs and would itself be one more piece of state a crash could
 strand.
 
-**What's unconditional versus gated, once the spool write has been attempted.** Step 5 (reset,
-check out `main`, pull) always runs, whether or not this cycle's spool write succeeded -- the design
-doc lists it as a plain step, not a conditional one, because bringing new upstream history into the
-local clone costs nothing and a future cycle will need it regardless. Only step 6 (publish) and
-step 7 (tag advance) are gated. This is deliberately not "revert the tree to the previous checkout
-on failure," the way an earlier implementation of this cycle worked: the *next* cycle's own step 1
-re-establishes `LAST_CHECKOUT` regardless of what ref this cycle's step 5 left the tree on, so there
-is nothing to reconcile here -- idempotency at the top of the cycle is what makes bookkeeping at the
-bottom unnecessary.
+**What's unconditional versus gated, once the gate's two conditions have been evaluated.** Step 5
+(reset, check out `main`, pull) always runs, whether or not this cycle's spool write succeeded and
+whether or not every staged change's patch captured content -- the design doc lists it as a plain
+step, not a conditional one, because bringing new upstream history into the local clone costs
+nothing and a future cycle will need it regardless. Only step 6 (publish) and step 7 (tag advance)
+are gated, on both conditions together. This is deliberately not "revert the tree to the previous
+checkout on failure," the way an earlier implementation of this cycle worked: the *next* cycle's own
+step 1 re-establishes `LAST_CHECKOUT` regardless of what ref this cycle's step 5 left the tree on,
+so there is nothing to reconcile here -- idempotency at the top of the cycle is what makes
+bookkeeping at the bottom unnecessary.
 """
 
 from __future__ import annotations
@@ -233,10 +236,29 @@ def run_cycle(config: ReplicateConfig, *, spool_writer: SpoolWriter = write_spoo
             extra={"event": "cycle_tag_advanced", "checkout": fetched_sha},
         )
     else:
-        logger.info(
-            "spool write failed for at least one drifted path this cycle; LAST_CHECKOUT not advanced",
-            extra={"event": "cycle_tag_not_advanced", "spooled": spooled},
-        )
+        # Two independent reasons this branch is reachable, and they are not the same operator
+        # problem: a spool write failure is a local disk fault (rare, see this module's own
+        # docstring), while an uncaptured path is ordinary device behaviour meeting a file outside
+        # the vault's markdown-only contract -- pasting an image into a note, most often
+        # (drift.captures_content). A single hardcoded message here used to name the first cause
+        # even when only the second applied, sending an operator to look at a failing disk while
+        # the actual cause was a pasted image. Logged as two independent lines, not one merged
+        # message, so a cycle where both occur names both rather than only whichever came first.
+        if spool_write_failed:
+            logger.info(
+                "spool write failed for at least one drifted path this cycle; LAST_CHECKOUT not advanced",
+                extra={"event": "cycle_tag_not_advanced", "reason": "spool_write_failed", "spooled": spooled},
+            )
+        if uncaptured:
+            logger.info(
+                "at least one drifted path's patch carried no content this cycle; LAST_CHECKOUT not advanced",
+                extra={
+                    "event": "cycle_tag_not_advanced",
+                    "reason": "uncaptured",
+                    "spooled": spooled,
+                    "uncaptured": uncaptured,
+                },
+            )
 
     return CycleResult(
         drifted=tuple(drifted),

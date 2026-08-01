@@ -19,6 +19,7 @@ Covers every scenario named in the brief for this component:
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from pathlib import Path
 
@@ -222,6 +223,84 @@ def test_entries_spooled_before_a_failure_stay_durable_on_disk(
     spooled = _spooled_by_path(tmp_path)
     assert "aaa-first.md" in spooled
     assert "edited first" in spooled["aaa-first.md"].patch
+
+
+# --- the tag-not-advanced log line states the actual cause, not just "spool write failed" --------
+
+
+def _tag_not_advanced_messages(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [r.getMessage() for r in caplog.records if getattr(r, "event", None) == "cycle_tag_not_advanced"]
+
+
+def test_uncaptured_binary_logs_the_actual_cause_not_a_spool_write_failure(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """F3: this line used to hardcode "spool write failed for at least one drifted path" regardless
+    of *why* `should_advance_tag` came back False -- reachable, and reached, by an uncaptured binary
+    with no spool write failure anywhere in the cycle. An operator reading it would go looking at a
+    failing disk while the actual cause was a pasted image. Asserted on the literal message text,
+    not just the event name or a field, so a reversion to the old hardcoded string fails this test
+    rather than passing it by satisfying a looser check."""
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+    (icloud_dir / "_attachments").mkdir(parents=True, exist_ok=True)
+    (icloud_dir / "_attachments" / "screenshot.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00")
+
+    with caplog.at_level(logging.INFO):
+        result = run_cycle(config)
+
+    assert result.tag_advanced is False
+    assert result.spool_write_failed is False
+    messages = _tag_not_advanced_messages(caplog)
+    assert len(messages) == 1
+    assert "no content" in messages[0]
+    assert "spool write failed" not in messages[0]
+
+
+def test_spool_write_failure_log_still_names_a_real_spool_write_failure(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The sibling case: a genuine spool write failure must still be named as such -- this is not a
+    swap of one hardcoded message for another that's now wrong the other way around."""
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+    push_commit(seeded_origin, tmp_path, {"00-index.md": "# Home (agent update)\n"}, "agent update")
+    (icloud_dir / "00-index.md").write_text("uncaptured human edit\n")
+
+    with caplog.at_level(logging.INFO):
+        result = run_cycle(config, spool_writer=_failing_spool_writer("00-index.md"))
+
+    assert result.tag_advanced is False
+    assert result.uncaptured == ()
+    messages = _tag_not_advanced_messages(caplog)
+    assert len(messages) == 1
+    assert "spool write failed" in messages[0]
+    assert "no content" not in messages[0]
+
+
+def test_tag_not_advanced_log_names_both_causes_when_both_occur_in_one_cycle(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Both conditions can fail in the same cycle -- an unrelated spool write failure alongside an
+    uncaptured binary -- and an operator needs both named, not just whichever the implementation
+    happens to check first."""
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+    push_commit(seeded_origin, tmp_path, {"00-index.md": "# Home (agent update)\n"}, "agent update")
+    (icloud_dir / "00-index.md").write_text("uncaptured human edit\n")
+    (icloud_dir / "_attachments").mkdir(parents=True, exist_ok=True)
+    (icloud_dir / "_attachments" / "screenshot.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00")
+
+    with caplog.at_level(logging.INFO):
+        result = run_cycle(config, spool_writer=_failing_spool_writer("00-index.md"))
+
+    assert result.tag_advanced is False
+    assert result.spool_write_failed is True
+    assert result.uncaptured == ("_attachments/screenshot.png",)
+    messages = _tag_not_advanced_messages(caplog)
+    assert len(messages) == 2
+    assert any("spool write failed" in m for m in messages)
+    assert any("no content" in m for m in messages)
 
 
 def test_a_binary_created_on_the_device_is_never_published_over(

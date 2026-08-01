@@ -197,9 +197,10 @@ class CycleVerdict:
 
     Two fields, not one, even though they currently always agree: the design doc states them as
     two separate gates in sequence -- "Only once step 4 has spooled every drift patch for this
-    cycle" gates step 6, and "Only once step 6's publish has completed" gates step 7 -- and keeping
-    them as two fields keeps that sequencing visible in the type rather than collapsing it into a
-    single boolean a future change could pull back apart incorrectly.
+    cycle, and every one of those patches actually captured what changed" gates step 6, and "Only
+    once step 6's publish has completed" gates step 7 -- and keeping them as two fields keeps that
+    sequencing visible in the type rather than collapsing it into a single boolean a future change
+    could pull back apart incorrectly.
     """
 
     should_publish: bool
@@ -217,9 +218,18 @@ def decide_cycle_outcome(*, spool_write_failed: bool, uncaptured_paths: Sequence
     gates the *whole* cycle on the *whole* spool write instead: if durably writing even one entry
     to local disk fails, this cycle's publish does not run and the tag does not advance -- the next
     cycle's overlay-and-diff reproduces the same drift from scratch, against the same,
-    still-unmoved `LAST_CHECKOUT`, and retries. A laptop being off the network is this component's
-    normal condition; a local disk write failing is not -- so this gate is a correctness guarantee
-    that is expected to survive without ever actually firing in ordinary operation.
+    still-unmoved `LAST_CHECKOUT`, and retries.
+
+    **Two conditions, not one, and they fail for different reasons.** `spool_write_failed` is a
+    local disk write failing: a laptop being off the network is this component's normal condition,
+    a local disk write failing is not, so this half of the gate is a correctness guarantee expected
+    to survive without ever actually firing in ordinary operation. `uncaptured_paths` is
+    `select_spool_entries`'s report of every staged change whose patch did not actually carry what
+    changed (`captures_content`), and that is not rare at all -- it is what happens the first time a
+    human pastes an image into a note on the phone, which is ordinary Tuesday behaviour, not a
+    fault. Both hold the cycle back identically -- no publish, no tag advance, the same drift
+    reproduced and retried next cycle -- because both mean the same thing from the gate's point of
+    view: something this cycle needs to place in iCloud is not durably and completely captured yet.
     """
     if spool_write_failed or uncaptured_paths:
         return CycleVerdict(should_publish=False, should_advance_tag=False)
