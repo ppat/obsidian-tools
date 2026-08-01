@@ -617,3 +617,54 @@ def test_a_different_misattribution_is_not_absorbed_by_the_known_defect_xfail() 
         assert not _is_only_the_known_advance_last_checkout_crash_defect(excinfo.value)
     finally:
         machine.teardown()
+
+
+# --- the same two-sided proof, on the *grouped* path -------------------------------------------
+#
+# The two tests above only ever hand the classifier a single, bare exception, but the shape it
+# actually meets in a scheduled deep run is an `ExceptionGroup`: with `report_multiple_bugs` on (the
+# default), Hypothesis raises `BaseExceptionGroup("Hypothesis found N distinct failures.", errors)`
+# rather than one of them, and the very first deep run did exactly that -- "Hypothesis found 2
+# distinct failures. (2 sub-exceptions)", still xfailed (run 30703589512). That xfail was correct
+# (both sub-exceptions were the known defect), but nothing in the suite established it *was*
+# correct: the recursion below is the only thing standing between a real, unrelated second defect
+# and a silent xfail, and it was untested. Weakening `all(...)` to `any(...)` in
+# `_is_only_the_known_advance_last_checkout_crash_defect` passes every other test in this file.
+#
+# Constructed directly rather than driven through the machine: the point is the classifier's
+# handling of the grouping, and there is no way to make Hypothesis produce a group with one
+# specific known and one specific unknown sub-exception on demand.
+
+
+def test_a_group_mixing_the_known_defect_with_anything_else_is_not_absorbed() -> None:
+    """The case the deep run can actually produce and the single-exception tests cannot reach: one
+    genuine ppat/obsidian-tools#36 sub-exception alongside one ordinary `AssertionError` must not
+    xfail on the strength of the first."""
+    known = KnownAdvanceLastCheckoutCrashDefect("upstream content 'HUMAN-x' was spooled as device drift")
+    other = AssertionError("some entirely different invariant broke")
+
+    assert not _is_only_the_known_advance_last_checkout_crash_defect(
+        ExceptionGroup("Hypothesis found 2 distinct failures.", [known, other])
+    )
+    # ...and the same mixture one level down, since Hypothesis nests groups (e.g. a `FlakyFailure`
+    # inside the outer multi-bug group) rather than flattening them.
+    assert not _is_only_the_known_advance_last_checkout_crash_defect(
+        ExceptionGroup(
+            "outer",
+            [known, ExceptionGroup("Hypothesis found 2 distinct failures.", [known, other])],
+        )
+    )
+
+
+def test_a_group_of_only_known_defects_is_still_absorbed() -> None:
+    """The complement, and the reason the first deep run's xfail was right rather than lucky:
+    Hypothesis reports two shrunk sequences that trip the *same* known defect as two distinct
+    failures, and that is not a reason to fail the suite."""
+    group = ExceptionGroup(
+        "Hypothesis found 2 distinct failures.",
+        [
+            KnownAdvanceLastCheckoutCrashDefect("marker A, via the advance_last_checkout seam"),
+            KnownAdvanceLastCheckoutCrashDefect("marker B, via the advance_last_checkout seam"),
+        ],
+    )
+    assert _is_only_the_known_advance_last_checkout_crash_defect(group)
