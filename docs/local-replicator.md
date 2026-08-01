@@ -82,10 +82,10 @@ changes); it is still real, running code, not something you can skip installing.
 
    ```sh
    mkdir -p ~/Library/LaunchAgents
-   cp packaging/launchd/com.ppat.obsidian-tools.local-replicator.plist.template \
-     ~/Library/LaunchAgents/com.ppat.obsidian-tools.local-replicator.plist
-   cp packaging/launchd/com.ppat.obsidian-tools.local-replicator-drain.plist.template \
-     ~/Library/LaunchAgents/com.ppat.obsidian-tools.local-replicator-drain.plist
+   cp packaging/launchd/com.homelab-ops.obsidian-tools.local-replicator.plist.template \
+     ~/Library/LaunchAgents/com.homelab-ops.obsidian-tools.local-replicator.plist
+   cp packaging/launchd/com.homelab-ops.obsidian-tools.local-replicator-drain.plist.template \
+     ~/Library/LaunchAgents/com.homelab-ops.obsidian-tools.local-replicator-drain.plist
    ```
 
    Open both copies in an editor and replace every `__PLACEHOLDER__` token:
@@ -114,8 +114,8 @@ changes); it is still real, running code, not something you can skip installing.
 4. Load both:
 
    ```sh
-   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.ppat.obsidian-tools.local-replicator.plist
-   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.ppat.obsidian-tools.local-replicator-drain.plist
+   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.homelab-ops.obsidian-tools.local-replicator.plist
+   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.homelab-ops.obsidian-tools.local-replicator-drain.plist
    ```
 
    `RunAtLoad` is set on both, so this also triggers an immediate first run of each rather than
@@ -124,8 +124,8 @@ changes); it is still real, running code, not something you can skip installing.
 5. Confirm they're running and check the first run's logs:
 
    ```sh
-   launchctl print gui/$(id -u)/com.ppat.obsidian-tools.local-replicator
-   launchctl print gui/$(id -u)/com.ppat.obsidian-tools.local-replicator-drain
+   launchctl print gui/$(id -u)/com.homelab-ops.obsidian-tools.local-replicator
+   launchctl print gui/$(id -u)/com.homelab-ops.obsidian-tools.local-replicator-drain
    tail -f ~/Library/Logs/obsidian-tools/local-replicator.log ~/Library/Logs/obsidian-tools/local-replicator-drain.log
    ```
 
@@ -196,10 +196,10 @@ of it.
 ## Uninstall
 
 ```sh
-launchctl bootout gui/$(id -u)/com.ppat.obsidian-tools.local-replicator
-launchctl bootout gui/$(id -u)/com.ppat.obsidian-tools.local-replicator-drain
-rm ~/Library/LaunchAgents/com.ppat.obsidian-tools.local-replicator.plist
-rm ~/Library/LaunchAgents/com.ppat.obsidian-tools.local-replicator-drain.plist
+launchctl bootout gui/$(id -u)/com.homelab-ops.obsidian-tools.local-replicator
+launchctl bootout gui/$(id -u)/com.homelab-ops.obsidian-tools.local-replicator-drain
+rm ~/Library/LaunchAgents/com.homelab-ops.obsidian-tools.local-replicator.plist
+rm ~/Library/LaunchAgents/com.homelab-ops.obsidian-tools.local-replicator-drain.plist
 ```
 
 This stops both schedules only. It does not touch:
