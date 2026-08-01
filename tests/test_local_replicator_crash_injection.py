@@ -57,7 +57,7 @@ from hypothesis.stateful import (
 
 import obsidian_tools.local_replicator.cycle as cycle_module
 from obsidian_tools.config import ReplicateConfig
-from obsidian_tools.local_replicator.cycle import run_cycle
+from obsidian_tools.local_replicator.cycle import CycleResult, run_cycle
 from obsidian_tools.local_replicator.drainer import drain_once
 from obsidian_tools.local_replicator.tag import read_last_checkout
 from obsidian_tools.vault_git.runner import GitRunner
@@ -309,32 +309,70 @@ class CrashInjectionMachine(RuleBasedStateMachine):
 
     @rule(seam=st.sampled_from(_CRASH_SEAMS))
     def run_cycle_crashed(self, seam: str) -> None:
+        """Ask for a crash at `seam`. Two outcomes are both legitimate, and the model must treat
+        both as real transitions with their own consequences -- not assume the first and fail the
+        harness itself when the second happens: the seam is reached and raises `_SimulatedCrash`
+        (`crashed` below), or the whole-cycle uncaptured-content gate (`drift.decide_cycle_outcome`)
+        withholds the cycle *before* the seam is ever reached, so the patched collaborator is never
+        called and `run_cycle` returns normally instead. The latter is not a failure to inject: a
+        NUL byte in `device_write`'s generated text makes git treat the change as binary, and the
+        gate withholding a binary drift patch is exactly what it exists to do (the same gate a
+        pasted image trips for real). Only `publish`/`advance_last_checkout` sit behind that gate
+        (cycle.py's own step order: `overlay`/`fetch_origin`/`checkout_forward` are unconditional),
+        so the gate-withheld outcome is only ever legitimate for those two seams, and only when the
+        gate's own stated reason -- `result.uncaptured` non-empty -- is actually present. Anything
+        else not raising is still a genuine disagreement between this harness and the code, and
+        still fails loudly."""
         original = _crash_at(seam)
+        crashed = False
+        result: CycleResult | None = None
         try:
-            with pytest.raises(_SimulatedCrash):
-                run_cycle(self.config)
+            try:
+                result = run_cycle(self.config)
+            except _SimulatedCrash:
+                crashed = True
         finally:
             _restore(seam, original)
 
-        if seam == "advance_last_checkout":
-            # `publish` (step 6) already ran for real before this crash -- it's strictly earlier in
-            # cycle.py's own step order than `advance_last_checkout` (step 7), so everything it
-            # wrote to iCloud is real, not simulated. Whatever upstream content is live in iCloud
-            # right now got there via that publish, not via a device edit -- record it so
-            # `upstream_content_never_misattributed` can trace a later misattribution of it back to
-            # this exact, known defect (ppat/obsidian-tools#36) rather than treat it as a new one.
-            icloud_text = "".join((self.icloud / p).read_text() for p in _PATHS if (self.icloud / p).exists())
-            self._advance_crash_explained_markers |= {m for m in self.upstream_markers if m in icloud_text}
+        if crashed:
+            if seam == "advance_last_checkout":
+                # `publish` (step 6) already ran for real before this crash -- it's strictly
+                # earlier in cycle.py's own step order than `advance_last_checkout` (step 7), so
+                # everything it wrote to iCloud is real, not simulated. Whatever upstream content
+                # is live in iCloud right now got there via that publish, not via a device edit --
+                # record it so `upstream_content_never_misattributed` can trace a later
+                # misattribution of it back to this exact, known defect (ppat/obsidian-tools#36)
+                # rather than treat it as a new one.
+                icloud_text = "".join((self.icloud / p).read_text() for p in _PATHS if (self.icloud / p).exists())
+                self._advance_crash_explained_markers |= {m for m in self.upstream_markers if m in icloud_text}
 
-        # A crash always means the tag never advances: `_crash_at` replaces the collaborator with a
-        # stub that raises before doing any real work, including `advance_last_checkout`'s own --
-        # never `tag_advanced=True` for a call that raised `_SimulatedCrash` before completing.
-        self._resolve_captured_markers(tag_advanced=False)
+            # A crash always means the tag never advances: `_crash_at` replaces the collaborator
+            # with a stub that raises before doing any real work, including
+            # `advance_last_checkout`'s own -- never `tag_advanced=True` for a call that raised
+            # `_SimulatedCrash` before completing.
+            self._resolve_captured_markers(tag_advanced=False)
+        else:
+            assert seam in ("publish", "advance_last_checkout"), (
+                f"expected a crash at {seam!r}, but the cycle completed normally instead -- this "
+                "seam sits ahead of the uncaptured-content gate (cycle.py's own step order), so "
+                "nothing legitimate should ever let it go unreached"
+            )
+            assert result is not None  # `run_cycle` always returns or raises; never both omitted
+            assert result.uncaptured, (
+                f"expected a crash at {seam!r}, but the cycle completed normally without the one "
+                "legitimate reason that seam can go unreached -- drift.decide_cycle_outcome "
+                f"withholding the cycle on uncaptured content: result={result!r}"
+            )
+            # The gate withheld the whole cycle -- real disk state (`_resolve_captured_markers`'s
+            # own per-path loop) and `result.tag_advanced` (necessarily `False`, since the gate
+            # ties `should_publish`/`should_advance_tag` together -- see `decide_cycle_outcome`)
+            # already reflect that nothing was published and the tag did not move, so this needs
+            # no different handling from an ordinary gated `run_cycle_clean`.
+            self._resolve_captured_markers(tag_advanced=result.tag_advanced)
 
         # Invariant 3, checked here rather than as a standalone @invariant: "the next cycle after
-        # any crash completes normally" is a statement about the step immediately following a
-        # crash, not about every point in the run -- a gate that pauses the cycle must never wedge
-        # it (docs/DESIGN.md's own framing, carried into this harness's brief).
+        # any crash-or-withheld cycle completes normally" -- a gate that pauses the cycle must
+        # never wedge it (docs/DESIGN.md's own framing, carried into this harness's brief).
         recovery_result = run_cycle(self.config)
         self._resolve_captured_markers(tag_advanced=recovery_result.tag_advanced)
 
