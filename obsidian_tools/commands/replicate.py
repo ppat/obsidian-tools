@@ -35,6 +35,12 @@ def run(config: ReplicateConfig) -> int:
             "drifted": len(result.drifted),
             "spooled": len(result.spooled),
             "spool_write_failed": result.spool_write_failed,
+            # `uncaptured` (a path whose patch carried no content, e.g. a binary -- see
+            # drift.select_spool_entries) is the other reason a cycle can hold back publish and the
+            # tag advance, alongside spool_write_failed. This process is watched by nothing else
+            # (docs/DESIGN.md §2 item 10), so a field missing from this line is a field with no way
+            # to be seen at all -- not merely one an operator has to go looking for.
+            "uncaptured": len(result.uncaptured),
             "obsidian_seed_attempted": result.obsidian_seed_attempted,
             "tag_advanced": result.tag_advanced,
             "checkout": result.checkout,

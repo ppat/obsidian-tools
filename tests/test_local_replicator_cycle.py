@@ -19,43 +19,16 @@ Covers every scenario named in the brief for this component:
 
 from __future__ import annotations
 
-import uuid
 from collections.abc import Callable
 from pathlib import Path
 
-from conftest import run_git
+from conftest import push_commit, replicate_config, run_git
 
-from obsidian_tools.config import ReplicateConfig
 from obsidian_tools.local_replicator.cycle import run_cycle
 from obsidian_tools.local_replicator.drift import SpoolEntry
 from obsidian_tools.local_replicator.spool import SpoolWriteError, list_spool_files, read_spool_entry, write_spool_entry
 from obsidian_tools.local_replicator.tag import read_last_checkout
 from obsidian_tools.vault_git.runner import GitRunner
-
-
-def _config(tmp_path: Path, origin: Path, icloud: Path) -> ReplicateConfig:
-    return ReplicateConfig(
-        cache_clone_dir=str(tmp_path / "cache-clone"),
-        icloud_vault_dir=str(icloud),
-        branch="main",
-        origin_url=str(origin),
-        ssh_key_path=str(tmp_path / "unused-key"),
-        ssh_known_hosts_path=str(tmp_path / "unused-known-hosts"),
-        spool_dir=str(tmp_path / "spool"),
-    )
-
-
-def _push_commit(origin: Path, tmp_path: Path, files: dict[str, str], message: str) -> None:
-    """Simulates the git committer taking and pushing another cycle's commit."""
-    clone = tmp_path / f"push-clone-{uuid.uuid4().hex}"
-    run_git("clone", "-q", str(origin), str(clone), cwd=tmp_path)
-    for relative, content in files.items():
-        path = clone / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content)
-    run_git("add", "-A", cwd=clone)
-    run_git("-c", "user.name=x", "-c", "user.email=x@example.invalid", "commit", "-q", "-m", message, cwd=clone)
-    run_git("push", "-q", "origin", "main", cwd=clone)
 
 
 def _tag_sha(tmp_path: Path) -> str | None:
@@ -83,7 +56,7 @@ def _failing_spool_writer(fail_on: str) -> Callable[[Path, SpoolEntry], Path]:
 def test_first_cycle_publishes_everything_and_advances_the_tag(
     tmp_path: Path, seeded_origin: Path, icloud_dir: Path
 ) -> None:
-    config = _config(tmp_path, seeded_origin, icloud_dir)
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
 
     result = run_cycle(config)
 
@@ -97,13 +70,13 @@ def test_order_attributes_upstream_change_and_device_drift_correctly(
 ) -> None:
     """The whole reason for the step ordering: an upstream change and a device edit that land in
     the same cycle must not be conflated. Comparing before the pull is what keeps them apart."""
-    _push_commit(seeded_origin, tmp_path, {"10-areas/other.md": "original other\n"}, "add other")
-    config = _config(tmp_path, seeded_origin, icloud_dir)
+    push_commit(seeded_origin, tmp_path, {"10-areas/other.md": "original other\n"}, "add other")
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
     run_cycle(config)  # cycle 1: bootstrap both files onto the device
 
     # Between cycles: an agent updates one file upstream; independently, a human edits a
     # *different* file directly in the device's iCloud copy.
-    _push_commit(seeded_origin, tmp_path, {"00-index.md": "# Home (agent update)\n"}, "agent update")
+    push_commit(seeded_origin, tmp_path, {"00-index.md": "# Home (agent update)\n"}, "agent update")
     (icloud_dir / "10-areas" / "other.md").write_text("typed on the phone\n")
 
     result = run_cycle(config)
@@ -125,7 +98,7 @@ def test_device_creation_is_spooled_as_a_create_with_full_content(
     """ "Creations are not diffs" trap: a file created on the device is untracked with an empty
     unstaged `git diff`. Staging first (`add -A`, in cycle.py) is what turns that into a real
     "new file" patch carrying the whole content."""
-    config = _config(tmp_path, seeded_origin, icloud_dir)
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
     run_cycle(config)
     (icloud_dir / "typed-on-phone.md").write_text("brand new note from the device\n")
 
@@ -138,7 +111,7 @@ def test_device_creation_is_spooled_as_a_create_with_full_content(
 
 
 def test_device_deletion_is_spooled_as_a_delete(tmp_path: Path, seeded_origin: Path, icloud_dir: Path) -> None:
-    config = _config(tmp_path, seeded_origin, icloud_dir)
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
     run_cycle(config)
     (icloud_dir / "00-index.md").unlink()
 
@@ -159,10 +132,10 @@ def test_spool_write_failure_blocks_the_whole_cycles_publish_and_tag_advance(
     """docs/DESIGN.md §7 Phase 2's own acceptance test, verbatim: "Force the spool write to fail
     for a drift patch, run the cycle -> publish does not run for that cycle, the tag does not
     advance, and the next cycle retries the overlay from scratch"."""
-    config = _config(tmp_path, seeded_origin, icloud_dir)
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
     run_cycle(config)
     checkout_after_bootstrap = _tag_sha(tmp_path)
-    _push_commit(seeded_origin, tmp_path, {"00-index.md": "# Home (agent update)\n"}, "agent update")
+    push_commit(seeded_origin, tmp_path, {"00-index.md": "# Home (agent update)\n"}, "agent update")
     (icloud_dir / "00-index.md").write_text("uncaptured human edit\n")
 
     result = run_cycle(config, spool_writer=_failing_spool_writer("00-index.md"))
@@ -191,11 +164,11 @@ def test_spool_write_failure_on_one_path_blocks_publish_of_an_unrelated_drifted_
     (docs/DESIGN.md §4 Plane B, "Why the gate moved"): a single stuck path holds back *every*
     path's publish, because `LAST_CHECKOUT` names one commit and cannot mean "this path at the new
     commit, that path at the old one"."""
-    _push_commit(seeded_origin, tmp_path, {"10-areas/other.md": "original other\n"}, "add other")
-    config = _config(tmp_path, seeded_origin, icloud_dir)
+    push_commit(seeded_origin, tmp_path, {"10-areas/other.md": "original other\n"}, "add other")
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
     run_cycle(config)
 
-    _push_commit(seeded_origin, tmp_path, {"00-index.md": "# Home (agent update)\n"}, "agent update")
+    push_commit(seeded_origin, tmp_path, {"00-index.md": "# Home (agent update)\n"}, "agent update")
     (icloud_dir / "00-index.md").write_text("stuck edit\n")
     (icloud_dir / "10-areas" / "other.md").write_text("an unrelated, perfectly capturable edit\n")
 
@@ -213,8 +186,8 @@ def test_entries_spooled_before_a_failure_stay_durable_on_disk(
     """The spool write is real and durable from the moment it succeeds, independent of whether the
     rest of that cycle goes on to fail -- an entry already written is never rolled back just
     because a later entry in the same cycle couldn't be written."""
-    _push_commit(seeded_origin, tmp_path, {"aaa-first.md": "first\n"}, "add first")
-    config = _config(tmp_path, seeded_origin, icloud_dir)
+    push_commit(seeded_origin, tmp_path, {"aaa-first.md": "first\n"}, "add first")
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
     run_cycle(config)
 
     (icloud_dir / "aaa-first.md").write_text("edited first (sorts before the failing path)\n")
@@ -236,7 +209,7 @@ def test_a_binary_created_on_the_device_is_never_published_over(
     that something changed while carrying none of it -- the spool write for it then *succeeds*, so
     the gate read the cycle as safe and the publish rsync's `--delete` removed the file from iCloud.
     The bytes existed nowhere else: not in git, not in the spool, not on the device."""
-    config = _config(tmp_path, seeded_origin, icloud_dir)
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
     run_cycle(config)
     checkout_before = _tag_sha(tmp_path)
 
@@ -258,7 +231,7 @@ def test_a_binary_does_not_block_the_cycle_once_it_leaves_the_vault(
 ) -> None:
     """The gate pauses the cycle; it must not wedge it. Removing the out-of-contract file -- the
     operator's remedy -- lets the very next cycle proceed normally."""
-    config = _config(tmp_path, seeded_origin, icloud_dir)
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
     run_cycle(config)
     (icloud_dir / "_attachments").mkdir(parents=True, exist_ok=True)
     (icloud_dir / "_attachments" / "screenshot.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00")
@@ -282,7 +255,7 @@ def test_cycle_recovers_from_a_working_tree_left_mid_overlay_by_a_prior_crash(
     tree has stray, uncommitted, untracked content sitting in it when the next cycle starts. Step
     1's `checkout -f` + `clean -fd` must recover cleanly rather than erroring or corrupting the
     next comparison."""
-    config = _config(tmp_path, seeded_origin, icloud_dir)
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
     run_cycle(config)  # establishes the parked clone and LAST_CHECKOUT
 
     cache_clone_dir = tmp_path / "cache-clone"
@@ -319,11 +292,11 @@ def test_cycle_recovers_from_a_working_tree_left_on_main_by_a_prior_crash(
     `--delete` and checksum copy neutralise before step 1 could matter -- which is why deleting step
     1 outright leaves it green. This one plants residue rsync cannot undo.
     """
-    config = _config(tmp_path, seeded_origin, icloud_dir)
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
     run_cycle(config)
     parked_at = _tag_sha(tmp_path)
 
-    _push_commit(seeded_origin, tmp_path, {"00-index.md": "# Home (agent update)\n"}, "agent update")
+    push_commit(seeded_origin, tmp_path, {"00-index.md": "# Home (agent update)\n"}, "agent update")
 
     cache_clone_dir = tmp_path / "cache-clone"
     run_git("fetch", "-q", "origin", "main", cwd=cache_clone_dir)
@@ -346,7 +319,7 @@ def test_non_ascii_filename_drift_survives_the_full_git_and_rsync_pipeline(
 ) -> None:
     """The exact bug class that "wedged the committer permanently" (ppat/obsidian-tools#3): a note
     titled in Japanese must not break `-z` porcelain parsing anywhere in this pipeline."""
-    config = _config(tmp_path, seeded_origin, icloud_dir)
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
     run_cycle(config)
     non_ascii_name = "40-journal/2026-07-31-日本語のノート.md"
     (icloud_dir / "40-journal").mkdir(parents=True, exist_ok=True)
@@ -370,7 +343,7 @@ def test_non_ascii_filename_drift_survives_the_full_git_and_rsync_pipeline(
 def test_filename_with_embedded_quote_survives_the_full_pipeline(
     tmp_path: Path, seeded_origin: Path, icloud_dir: Path
 ) -> None:
-    config = _config(tmp_path, seeded_origin, icloud_dir)
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
     run_cycle(config)
     quoted_name = '10-areas/note "with quotes".md'
     (icloud_dir / "10-areas").mkdir(parents=True, exist_ok=True)
@@ -388,7 +361,7 @@ def test_filename_with_embedded_quote_survives_the_full_pipeline(
 def test_obsidian_copied_once_absent_then_left_alone_when_present(
     tmp_path: Path, seeded_origin: Path, icloud_dir: Path
 ) -> None:
-    _push_commit(
+    push_commit(
         seeded_origin,
         tmp_path,
         {
@@ -397,7 +370,7 @@ def test_obsidian_copied_once_absent_then_left_alone_when_present(
         },
         "obsidian baseline",
     )
-    config = _config(tmp_path, seeded_origin, icloud_dir)
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
 
     result = run_cycle(config)
 
@@ -422,7 +395,7 @@ def test_obsidian_copied_once_absent_then_left_alone_when_present(
 def test_shared_exclude_list_suppresses_spurious_drift_end_to_end(
     tmp_path: Path, seeded_origin: Path, icloud_dir: Path
 ) -> None:
-    config = _config(tmp_path, seeded_origin, icloud_dir)
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
     run_cycle(config)
 
     (icloud_dir / ".DS_Store").write_text("finder metadata\n")
