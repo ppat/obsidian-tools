@@ -9,8 +9,21 @@ name: test-hypothesis-deep
 # (tests/conftest.py's "deep" profile), on a schedule rather than gating every PR -- and the one
 # place the crash-injection stateful harness (test_local_replicator_crash_injection.py, marked
 # `slow` and excluded from the ordinary `test` job) actually runs. Findings land in the same
-# `.hypothesis/examples` database `test.yaml`'s own cache step restores/saves, so a case this job
-# discovers is remembered by the very next ordinary PR run, not just by the next scheduled one.
+# `.hypothesis/examples` database `test.yaml`'s own cache steps restore/save.
+#
+# That sharing is one-directional, and an earlier version of this comment claimed otherwise ("as
+# available to tomorrow's ordinary PR run as one that PR run finds itself, and vice versa"). The
+# "vice versa" is false: GitHub cache scope flows child -> parent only. This job runs on the default
+# branch, so what it saves is restorable by every branch and every PR -- deep -> PR genuinely works.
+# A PR's own save is scoped to that PR's merge ref: only that PR's re-runs can read it, and it is
+# evicted when the PR closes. PR -> main, PR -> this job, and PR -> another PR never happen.
+#
+# The design is deliberately left that way rather than restricted to make the claim true. The
+# scheduled job and `push: main` runs of `test.yaml` are what build the shared corpus; a PR's save
+# buys within-PR determinism, which is worth having on its own (a genuine finding stays red on
+# re-run instead of re-rolling into something that reads as flake). Making this job the sole writer
+# would discard every counterexample the gate finds -- exactly the bug the restore/save split in
+# `test.yaml` exists to fix.
 on:
   schedule:
   # Offset from lint.yaml's own Monday 05:00 UTC schedule, deliberately: nothing else in this repo
@@ -42,12 +55,20 @@ jobs:
     - name: Install dependencies
       working-directory: ./current
       run: mise exec -- uv sync --all-extras
-    # Same path, same key prefix as test.yaml's own cache step -- deliberately: a case this deep
-    # run discovers should be exactly as available to tomorrow's ordinary PR run as one that PR
-    # run finds itself, and vice versa. See test.yaml's own comment for how the key/path pairing
-    # was proven to actually restore, not just configured.
-    - name: Cache - Hypothesis example database
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+    # Same path, same key prefix, and the same restore/save split as test.yaml -- see that file's
+    # comment for the two reasons: why the profile resolved to `database=None` in CI and made both
+    # steps inert, and why the combined `actions/cache` (`post-if: "success()"`) could never save a
+    # counterexample, since finding one fails the job.
+    #
+    # This job is the one place that distinction has a second edge. It goes green-with-a-failure
+    # only through `pytest.xfail`, and only for the single known defect the crash-injection harness
+    # classifies (ppat/obsidian-tools#36). A *novel* failure makes the classifier return False, the
+    # ExceptionGroup re-raises, and the job goes red -- so under the combined action this workflow
+    # would have persisted examples for the defect already known about and discarded every new one,
+    # which inverts the entire purpose of running a deeper search on a schedule.
+    - name: Restore - Hypothesis example database
+      id: hypothesis-cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: current/.hypothesis/examples
         key: hypothesis-examples-${{ github.run_id }}
@@ -58,3 +79,12 @@ jobs:
       env:
         HYPOTHESIS_PROFILE: deep
       run: mise exec -- uv run pytest -vrsx
+    # `!cancelled()`, matching test.yaml. This workflow sets `cancel-in-progress: false`, so a
+    # cancellation here is always a human deliberately stopping the run; a 60-minute budget
+    # exhausted instead is reported as a failure, and still saves whatever the search had found.
+    - name: Save - Hypothesis example database
+      if: ${{ !cancelled() }}
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: current/.hypothesis/examples
+        key: ${{ steps.hypothesis-cache.outputs.cache-primary-key }}

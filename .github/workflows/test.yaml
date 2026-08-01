@@ -70,11 +70,66 @@ jobs:
     # silently un-persisted until the key next rotated. The pattern below is the standard
     # ever-growing-cache shape instead: every run saves under its own unique key
     # (`github.run_id` never repeats), and `restore-keys` falls back to the most recent previous
-    # run's save -- proven to actually restore, not just configured, by tracing
-    # `hypothesis.database`'s own default path resolution and round-tripping a real failing
-    # example through it locally (see the session this was added in for the full trace).
-    - name: Cache - Hypothesis example database
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+    # run's save.
+    #
+    # That round-trip was originally verified *locally*, and that verification was worthless: the
+    # thing that broke it -- Hypothesis auto-loading its own built-in, `database=None` "ci" profile
+    # as the inheritance parent for this repo's profiles -- fires only when `CI`/`GITHUB_ACTIONS` is
+    # set, so the one environment it was checked in is the one where it structurally cannot happen.
+    # In CI this step saved nothing at all from the day it was added: `Cache not found for input
+    # keys: hypothesis-examples-<id>, hypothesis-examples-` on entry (nothing had ever saved under
+    # the prefix), and `Path Validation Error: Path(s) specified in the action for caching do(es)
+    # not exist` from the post step (Hypothesis never created the directory), both in a green job.
+    # Fixed in tests/conftest.py -- see its `parent=_HYPOTHESIS_DEFAULTS` comment -- and guarded by
+    # tests/test_hypothesis_profiles.py plus an import-time check in conftest.py, because a warning
+    # line inside a passing job is not a signal anyone reads.
+    #
+    # **Split into restore + save, and the split is the whole point.** The combined `actions/cache`
+    # declares `post-if: "success()"` (verified in its `action.yml` at the pinned SHA), so its save
+    # runs only when the job succeeds. Compose that with what Hypothesis actually writes and the two
+    # conditions are mutually exclusive: a green run writes nothing to `.hypothesis/examples` at all
+    # (Hypothesis creates it only when it has a failing example to record), and a run that *does*
+    # have one exits non-zero, fails the job, and skips the save. The one case the cache exists for
+    # is the one case it could never cover.
+    #
+    # Measured, not inferred, on a throwaway branch carrying a deliberately failing property:
+    # with the combined action, `Run tests -> failure` and `Post Cache - Hypothesis example
+    # database -> skipped`, no cache entry created (run 30705559385); with the split below, same
+    # failing property, `Run tests -> failure` and `Save - Hypothesis example database -> success`,
+    # `Cache saved with key: hypothesis-examples-30705620098` (run 30705620098).
+    #
+    # `!cancelled()` rather than `always()`: this workflow sets `cancel-in-progress: true`, so
+    # cancellation is routine (every new push to a PR cancels the previous run), and a run killed
+    # mid-suite has nothing worth persisting -- `always()` would spend time fighting a cancellation
+    # someone deliberately asked for. `!cancelled()` covers success *and* failure, which is the full
+    # set of outcomes where the corpus means anything; a job that exceeds `timeout-minutes` is
+    # reported as a failure, not a cancellation, so a deep run that runs out of clock still saves
+    # what it found.
+    #
+    # The gate saving a counterexample is deliberate, not incidental. It means a red PR stays red on
+    # re-run until the bug is fixed, because the next run replays the same example from the database
+    # (this workflow's own cache scope -- see the note on the restore step). That is the behaviour
+    # this design wanted: the original worry was a property going red on an unrelated PR from a
+    # fresh random draw, and the answer was never "make it go away on re-run", it was "make it
+    # deterministic". A red that vanishes when you press the button again is strictly worse than one
+    # that persists.
+    #
+    # A green run still logs `Path Validation Error: Path(s) specified in the action for caching
+    # do(es) not exist` from the save step, and that is correct there -- nothing was found, so there
+    # is nothing to write. It is not evidence either way. What the guards actually assert on is the
+    # profile line the run prints (`hypothesis profile 'ci' -> ...` with no `database=None`), plus
+    # the resolved database *path*, which tests/conftest.py pins to the repository root so it cannot
+    # drift away from the `current/` prefix below.
+    - name: Restore - Hypothesis example database
+      id: hypothesis-cache
+      # GitHub cache scope flows child -> parent only. A run on `main` (this workflow's `push`
+      # trigger, and test-hypothesis-deep.yaml's schedule) writes an entry every branch and PR can
+      # restore. A run on a PR writes one only that PR's own re-runs can see, and it is evicted when
+      # the PR closes. So the shared corpus is built by `main` and by the scheduled deep job; a PR's
+      # own save buys within-PR determinism and nothing wider. Both are worth having, which is why
+      # this step is not restricted to `main` -- restricting it would simply reinstate, for the
+      # gate, the discarded-counterexample bug the split above fixes.
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: current/.hypothesis/examples
         key: hypothesis-examples-${{ github.run_id }}
@@ -88,3 +143,9 @@ jobs:
       # harness (tests/test_local_replicator_crash_injection.py) is excluded here and runs, at
       # greater depth, on its own schedule instead (test-hypothesis-deep.yaml).
       run: mise exec -- uv run pytest -vrsx -m "not slow"
+    - name: Save - Hypothesis example database
+      if: ${{ !cancelled() }}
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: current/.hypothesis/examples
+        key: ${{ steps.hypothesis-cache.outputs.cache-primary-key }}
