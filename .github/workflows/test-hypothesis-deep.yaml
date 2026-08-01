@@ -1,0 +1,60 @@
+---
+# yamllint disable rule:line-length
+name: test-hypothesis-deep
+
+# Deep, out-of-band Hypothesis search -- the third of three agreed CI-discipline mitigations for
+# property-based tests (tests/conftest.py's own comment carries the full reasoning; the strategy
+# note this stems from is /home/coder/.claude/tmp/obsidian-brain/notes/decision-testing-strategy-
+# for-obsidian-tools.md). An order of magnitude more examples than any PR run should pay for
+# (tests/conftest.py's "deep" profile), on a schedule rather than gating every PR -- and the one
+# place the crash-injection stateful harness (test_local_replicator_crash_injection.py, marked
+# `slow` and excluded from the ordinary `test` job) actually runs. Findings land in the same
+# `.hypothesis/examples` database `test.yaml`'s own cache step restores/saves, so a case this job
+# discovers is remembered by the very next ordinary PR run, not just by the next scheduled one.
+on:
+  schedule:
+  # Offset from lint.yaml's own Monday 05:00 UTC schedule, deliberately: nothing else in this repo
+  # runs at this hour, so a failure here is never confused with an unrelated scheduled job's own
+  # noise.
+  - cron: '0 4 * * 0'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test-deep:
+    runs-on: ubuntu-24.04
+    # An order of magnitude more Hypothesis examples, plus the git/rsync-heavy stateful harness --
+    # deliberately given far more room than the ordinary `test` job's 15 minutes.
+    timeout-minutes: 60
+    steps:
+    - name: Setup repository and tools
+      uses: ppat/homelab-ops-actions/actions/setup-repository-tools@f1ae73db4ab080b7e8dc66d078e5905d5ca526cb # v2.1.0
+      with:
+        current_git_ref: ${{ github.head_ref || github.ref }}
+        current_repository: ${{ github.repository }}
+        token: ${{ secrets.GITHUB_TOKEN }}
+    - name: Install dependencies
+      working-directory: ./current
+      run: mise exec -- uv sync --all-extras
+    # Same path, same key prefix as test.yaml's own cache step -- deliberately: a case this deep
+    # run discovers should be exactly as available to tomorrow's ordinary PR run as one that PR
+    # run finds itself, and vice versa. See test.yaml's own comment for how the key/path pairing
+    # was proven to actually restore, not just configured.
+    - name: Cache - Hypothesis example database
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: current/.hypothesis/examples
+        key: hypothesis-examples-${{ github.run_id }}
+        restore-keys: |
+          hypothesis-examples-
+    - name: Run full suite at deep search depth
+      working-directory: ./current
+      env:
+        HYPOTHESIS_PROFILE: deep
+      run: mise exec -- uv run pytest -vrsx
