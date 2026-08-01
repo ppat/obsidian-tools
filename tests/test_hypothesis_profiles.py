@@ -33,6 +33,7 @@ type Profiles = dict[str, dict[str, object]]
 # Reads the profile as registered, rather than as loaded, so one subprocess covers all three.
 _PROBE = """
 import json, sys
+from pathlib import Path
 sys.path.insert(0, {root!r})
 import tests.conftest  # noqa: F401  -- importing is what registers the profiles
 from hypothesis import settings
@@ -41,6 +42,11 @@ print(json.dumps({{
     name: {{
         "derandomize": settings.get_profile(name).derandomize,
         "database": repr(settings.get_profile(name).database),
+        "database_dir": (
+            str(Path(str(getattr(settings.get_profile(name).database, "path", ""))).resolve())
+            if getattr(settings.get_profile(name).database, "path", None) is not None
+            else None
+        ),
         "max_examples": settings.get_profile(name).max_examples,
         "print_blob": settings.get_profile(name).print_blob,
     }}
@@ -77,11 +83,22 @@ def test_no_profile_is_derandomized_in_ci(profile: str, ci_profiles: Profiles) -
 
 @pytest.mark.parametrize("profile", ["dev", "ci", "deep"])
 def test_every_profile_keeps_its_example_database_in_ci(profile: str, ci_profiles: Profiles) -> None:
-    """`database=None` is the state in which the `actions/cache` steps are decorative: nothing is
-    written for the cache to save, and nothing restored is ever read."""
-    database = ci_profiles[profile]["database"]
-    assert database != repr(None), f"profile {profile!r} has no example database under CI"
-    assert ".hypothesis/examples" in str(database)
+    """`database=None` is the state in which the cache steps are decorative: nothing is written for
+    the save to pick up, and nothing restored is ever read."""
+    assert ci_profiles[profile]["database"] != repr(None), f"profile {profile!r} has no database"
+
+
+@pytest.mark.parametrize("profile", ["dev", "ci", "deep"])
+def test_every_profile_writes_to_the_directory_the_workflows_cache(profile: str, ci_profiles: Profiles) -> None:
+    """A database *somewhere* is not the invariant the workflows rely on. Both cache
+    `current/.hypothesis/examples`, which is the repository root's `.hypothesis/examples` only
+    because they run pytest with `working-directory: ./current`. Asserting a substring would pass
+    for any working directory; asserting the resolved path against this file's own location is what
+    ties the two together. `None` here is also how an `InMemoryExampleDatabase` -- which
+    `hypothesis.database._db_for_path` substitutes with only a warning when the directory is
+    unusable -- fails rather than passing as "a database"."""
+    expected = str((_REPO_ROOT / ".hypothesis" / "examples").resolve())
+    assert ci_profiles[profile]["database_dir"] == expected
 
 
 def test_deep_prints_blobs_in_ci(ci_profiles: Profiles) -> None:
