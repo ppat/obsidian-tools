@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.4.0](https://github.com/ppat/obsidian-tools/compare/v0.3.1...v0.4.0) (2026-08-01)
+
+
+### 🛠 Improvements
+
+* **dev-tools:** stop the Hypothesis profiles inheriting database=None inside GitHub Actions ([#40](https://github.com/ppat/obsidian-tools/issues/40)) ([b6dcdc5](https://github.com/ppat/obsidian-tools/commit/b6dcdc58d6d9474b04805f9ff3b1c776aedda6d0))
+
+
+### ✨ Features
+
+* **replication:** implement local-replicator (read-replica publication) ([#23](https://github.com/ppat/obsidian-tools/issues/23)) ([5ab1bd3](https://github.com/ppat/obsidian-tools/commit/5ab1bd35724433d13536eabe5e7d5946d9ca22af))
+
+
+### 🚀 Enhancements + Bug Fixes
+
+* **committer:** baseline the daily-notes and templates settings the Phase 1 lock set ([#43](https://github.com/ppat/obsidian-tools/issues/43)) ([babfd30](https://github.com/ppat/obsidian-tools/commit/babfd30c21141ee1a5d912583af0c85f43577938))
+* **committer:** refuse a partial .obsidian/ baseline, and log what the allowlist drops ([#41](https://github.com/ppat/obsidian-tools/issues/41)) ([9504253](https://github.com/ppat/obsidian-tools/commit/9504253ca83e2e627398f615f1ed85e2c2dd41f6))
+* **replication:** record the upstream-identity observation on every drift patch ([#42](https://github.com/ppat/obsidian-tools/issues/42)) ([bba5d99](https://github.com/ppat/obsidian-tools/commit/bba5d995f044def1149ffe71e18dbf6641f6905d))
+* **replication:** stat each entry explicitly so an unreadable file withholds the device marker ([#44](https://github.com/ppat/obsidian-tools/issues/44)) ([a7aff96](https://github.com/ppat/obsidian-tools/commit/a7aff96420a6314bbe3d8c7d3400759d3d199d5f))
+
 ## [0.3.1](https://github.com/ppat/obsidian-tools/compare/v0.3.0...v0.3.1) (2026-08-01)
 
 
