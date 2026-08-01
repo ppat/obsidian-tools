@@ -673,3 +673,68 @@ def test_max_deletion_fraction_env_var_actually_reaches_the_mass_deletion_guard(
 
     assert exit_code == 0
     assert commit_count(seeded_origin) == commits_before + 1
+
+
+def test_an_unreadable_obsidian_subtree_defers_the_baseline_without_failing_the_run(
+    tmp_path: Path,
+    seeded_origin: Path,
+    make_bare_repo: Callable[[], Path],
+    vault_dir: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """BROKEN, reproduced (`ppat/obsidian-tools#35`), at the seam a CronJob run actually takes: an
+    unreadable directory under `.obsidian/` used to be dropped from the walk silently, and this
+    run committed and pushed the rest as the baseline -- after which
+    `ensure_obsidian_baseline`'s `path_exists_at("HEAD", ".obsidian")` guard is true forever and the
+    omission can never be retried.
+
+    It also pins the two orchestration decisions the refusal makes, neither of which
+    `test_vault_git_baseline.py` can see, since both are about the *rest* of the run:
+
+    - **The exit code does not change.** The run's job is committing vault content, and it did that.
+      A non-zero exit marks the Job failed and buys a `backoffLimit` retry of a cycle that succeeded
+      at everything it was for; the deferred baseline is retried by the next scheduled run anyway,
+      and soft-mount I/O failure is the documented *expected* condition on this volume
+      (docs/DESIGN.md §8c V12), not a run failure.
+    - **Nothing else in the run is skipped.** A `.obsidian/` problem stopping vault content being
+      committed is precisely the wedge `ppat/obsidian-tools#22` cost twice.
+
+    The warning is the only channel that carries the deferral, which is why its content is asserted
+    here rather than just its presence."""
+    nas = make_bare_repo()
+    git_dir = tmp_path / "git-dir"
+    obsidian = vault_dir / ".obsidian"
+    obsidian.mkdir()
+    (obsidian / "app.json").write_text('{"legacyEditor": false}\n')
+    denied = obsidian / "plugins" / "dataview"
+    denied.mkdir(parents=True)
+    (denied / "manifest.json").write_text('{"id": "dataview"}\n')
+    (vault_dir / "10-areas").mkdir()
+    (vault_dir / "10-areas" / "note.md").write_text("# Note\n")
+    denied.chmod(0)
+
+    try:
+        with caplog.at_level(logging.INFO):
+            exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas)))
+
+        assert exit_code == 0
+        assert commit_count(seeded_origin) == 2  # the vault content still went to both remotes
+        assert commit_count(nas) == 2
+        committed = subprocess.run(
+            ["git", f"--git-dir={git_dir}", "ls-tree", "-r", "--name-only", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.splitlines()
+        assert "10-areas/note.md" in committed
+        assert not any(path.startswith(".obsidian") for path in committed), (
+            "a partial .obsidian/ baseline reached history; the HEAD guard now freezes it forever"
+        )
+        refusals = [
+            record for record in caplog.records if getattr(record, "event", None) == "baseline_refused_incomplete_walk"
+        ]
+        assert len(refusals) == 1
+        assert refusals[0].levelno == logging.WARNING
+        assert getattr(refusals[0], "unreadable_paths") == [str(denied)]  # noqa: B009 -- LogRecord attr
+    finally:
+        denied.chmod(stat.S_IRWXU)  # tmp_path cleanup
