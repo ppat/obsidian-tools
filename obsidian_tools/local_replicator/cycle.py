@@ -85,6 +85,7 @@ class CycleResult:
     drifted: tuple[str, ...]
     spooled: tuple[str, ...]
     spool_write_failed: bool
+    uncaptured: tuple[str, ...]
     obsidian_seed_attempted: bool
     tag_advanced: bool
     checkout: str | None
@@ -130,6 +131,7 @@ def run_cycle(config: ReplicateConfig, *, spool_writer: SpoolWriter = write_spoo
 
     drifted: list[str] = []
     spooled: list[str] = []
+    uncaptured: list[str] = []
     spool_write_failed = False
 
     # A missing baseline (first run, or a lost/re-provisioned cache) means there is nothing
@@ -150,7 +152,14 @@ def run_cycle(config: ReplicateConfig, *, spool_writer: SpoolWriter = write_spoo
         runner.run(["add", "-A"])
         changes = _staged_changes(runner)
         drifted = [change.path for change in changes]
-        entries = select_spool_entries(changes)
+        selection = select_spool_entries(changes)
+        entries = selection.entries
+        uncaptured = list(selection.uncaptured)
+        if uncaptured:
+            logger.error(
+                "drift detected on a path whose patch carries no content; this cycle will not publish",
+                extra={"event": "drift_uncaptured", "paths": uncaptured},
+            )
 
         # Step 4: publish each drift patch to the spool, atomically and durably, before anything
         # below discards the overlay that produced it. Stops at the first failure rather than
@@ -175,7 +184,7 @@ def run_cycle(config: ReplicateConfig, *, spool_writer: SpoolWriter = write_spoo
         runner.run(["reset", "-q", "--hard", "HEAD"])
         runner.run(["clean", "-q", "-fd"])
 
-    verdict = decide_cycle_outcome(spool_write_failed=spool_write_failed)
+    verdict = decide_cycle_outcome(spool_write_failed=spool_write_failed, uncaptured_paths=uncaptured)
 
     # Step 5, part two: check out main, and pull -- unconditional (module docstring, "What's
     # unconditional versus gated").
@@ -189,6 +198,7 @@ def run_cycle(config: ReplicateConfig, *, spool_writer: SpoolWriter = write_spoo
             drifted=tuple(drifted),
             spooled=tuple(spooled),
             spool_write_failed=spool_write_failed,
+            uncaptured=tuple(uncaptured),
             obsidian_seed_attempted=False,
             tag_advanced=False,
             checkout=previous_checkout,
@@ -232,6 +242,7 @@ def run_cycle(config: ReplicateConfig, *, spool_writer: SpoolWriter = write_spoo
         drifted=tuple(drifted),
         spooled=tuple(spooled),
         spool_write_failed=spool_write_failed,
+        uncaptured=tuple(uncaptured),
         obsidian_seed_attempted=obsidian_seed_attempted,
         tag_advanced=tag_advanced,
         checkout=checkout,

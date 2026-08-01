@@ -228,6 +228,50 @@ def test_entries_spooled_before_a_failure_stay_durable_on_disk(
     assert "edited first" in spooled["aaa-first.md"].patch
 
 
+def test_a_binary_created_on_the_device_is_never_published_over(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path
+) -> None:
+    """A pasted image is the most ordinary non-text thing a human does in Obsidian, and it used to
+    be destroyed silently: `git diff --cached` emits `Binary files ... differ` -- a patch asserting
+    that something changed while carrying none of it -- the spool write for it then *succeeds*, so
+    the gate read the cycle as safe and the publish rsync's `--delete` removed the file from iCloud.
+    The bytes existed nowhere else: not in git, not in the spool, not on the device."""
+    config = _config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+    checkout_before = _tag_sha(tmp_path)
+
+    (icloud_dir / "_attachments").mkdir(parents=True, exist_ok=True)
+    (icloud_dir / "_attachments" / "screenshot.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00")
+
+    result = run_cycle(config)
+
+    assert result.uncaptured == ("_attachments/screenshot.png",)
+    assert result.tag_advanced is False
+    assert _tag_sha(tmp_path) == checkout_before
+    assert (icloud_dir / "_attachments" / "screenshot.png").exists()
+    assert (icloud_dir / "_attachments" / "screenshot.png").read_bytes().startswith(b"\x89PNG")
+    assert "_attachments/screenshot.png" not in _spooled_by_path(tmp_path)
+
+
+def test_a_binary_does_not_block_the_cycle_once_it_leaves_the_vault(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path
+) -> None:
+    """The gate pauses the cycle; it must not wedge it. Removing the out-of-contract file -- the
+    operator's remedy -- lets the very next cycle proceed normally."""
+    config = _config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+    (icloud_dir / "_attachments").mkdir(parents=True, exist_ok=True)
+    (icloud_dir / "_attachments" / "screenshot.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00")
+    assert run_cycle(config).tag_advanced is False
+
+    (icloud_dir / "_attachments" / "screenshot.png").unlink()
+
+    result = run_cycle(config)
+
+    assert result.uncaptured == ()
+    assert result.tag_advanced is True
+
+
 # --- idempotency from an arbitrary starting state ------------------------------------------------
 
 

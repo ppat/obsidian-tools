@@ -67,7 +67,56 @@ class SpoolEntry:
     patch: str
 
 
-def select_spool_entries(changes: Sequence[StagedChange]) -> list[SpoolEntry]:
+# `git diff` emits this line *instead of* a hunk body when either side of a change is binary, so
+# the resulting patch describes that something changed without carrying a single byte of what.
+# Matched as a substring of the patch rather than by sniffing the path's extension: what makes a
+# capture incomplete is what git actually produced, not what the filename suggests it should have.
+_BINARY_PATCH_MARKER = "\nBinary files "
+
+
+def captures_content(change: StagedChange) -> bool:
+    """Whether this change's patch actually carries what changed, as opposed to merely asserting
+    that something did.
+
+    **This is the predicate the publish gate's safety property rests on**, and it was assumed
+    rather than checked. `StagedChange`'s docstring claims "`patch` is never empty for a real
+    change... a creation's patch adds every line" -- true for text, false for binary. Paste an
+    image into a note on the phone and `git diff --cached` produces
+    `Binary files /dev/null and b/_attachments/x.png differ`: a patch with no content. The spool
+    write for it then *succeeds*, so the gate reports the cycle safe, and the publish rsync's
+    `--delete` removes the file from iCloud -- destroying the only copy of those bytes anywhere.
+
+    A pure rename deliberately passes: `similarity index 100%` / `rename from` / `rename to` has
+    no hunk body either, but the header describes the change completely, so nothing is lost.
+    Keying on git's binary marker rather than on "has a hunk" is what keeps that case captured.
+
+    **This is not a new policy call.** The vault receives markdown only, images are deferred past
+    the first pass, and `_attachments/` is a committed placeholder with nothing in it yet
+    (docs/DESIGN.md Sec 5, Sec 8b G5) -- so a binary here is out of contract. What to do about
+    out-of-contract input is likewise already settled, by DESIGN.md's "Fail loud, destroy nothing":
+    every component defaults to that posture when it meets something it cannot reconcile. Silently
+    deleting the bytes is the one response that policy rules out.
+    """
+    return _BINARY_PATCH_MARKER not in change.patch
+
+
+@dataclass(frozen=True, slots=True)
+class SpoolSelection:
+    """What a cycle's staged changes decompose into: entries safe to spool, and paths whose
+    capture came back without content.
+
+    Two lists rather than a filtered one, because dropping the second silently is exactly what
+    docs/DESIGN.md Sec 1.5 R2 forbids -- "it submits every drift patch... and makes no judgement, so
+    it can never silently drop a real edit." `uncaptured` is not a judgement about whether the
+    edit mattered; it is a statement that this component could not capture it, which the cycle
+    then treats as a capture failure rather than as permission to proceed.
+    """
+
+    entries: list[SpoolEntry]
+    uncaptured: list[str]
+
+
+def select_spool_entries(changes: Sequence[StagedChange]) -> SpoolSelection:
     """The one place a staged git change becomes a spool entry.
 
     One entry per input change -- nothing is merged, split, or dropped. That is what lets the
@@ -80,12 +129,15 @@ def select_spool_entries(changes: Sequence[StagedChange]) -> list[SpoolEntry]:
     "this cycle's batch" once entries are written (spool.py), so a stable order is what makes a
     written spool directory reproducible from the same drift, run to run.
     """
-    return sorted(
-        (
-            SpoolEntry(kind=_classify(change.status), path=change.path, old_path=change.old_path, patch=change.patch)
-            for change in changes
-        ),
-        key=lambda entry: entry.path,
+    entries = [
+        SpoolEntry(kind=_classify(change.status), path=change.path, old_path=change.old_path, patch=change.patch)
+        for change in changes
+        if captures_content(change)
+    ]
+    uncaptured = [change.path for change in changes if not captures_content(change)]
+    return SpoolSelection(
+        entries=sorted(entries, key=lambda entry: entry.path),
+        uncaptured=sorted(uncaptured),
     )
 
 
@@ -116,7 +168,7 @@ class CycleVerdict:
     should_advance_tag: bool
 
 
-def decide_cycle_outcome(*, spool_write_failed: bool) -> CycleVerdict:
+def decide_cycle_outcome(*, spool_write_failed: bool, uncaptured_paths: Sequence[str] = ()) -> CycleVerdict:
     """The gate, as a value, not a side effect (docs/DESIGN.md §4 Plane B, "Why the gate moved,
     not disappeared").
 
@@ -131,6 +183,6 @@ def decide_cycle_outcome(*, spool_write_failed: bool) -> CycleVerdict:
     normal condition; a local disk write failing is not -- so this gate is a correctness guarantee
     that is expected to survive without ever actually firing in ordinary operation.
     """
-    if spool_write_failed:
+    if spool_write_failed or uncaptured_paths:
         return CycleVerdict(should_publish=False, should_advance_tag=False)
     return CycleVerdict(should_publish=True, should_advance_tag=True)
