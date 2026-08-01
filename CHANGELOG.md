@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/ppat/obsidian-tools/compare/v0.3.0...v0.3.1) (2026-08-01)
+
+
+### 🚀 Enhancements + Bug Fixes
+
+* **committer:** build the venv at its final path so the entrypoint can exec ([#33](https://github.com/ppat/obsidian-tools/issues/33)) ([66ad3eb](https://github.com/ppat/obsidian-tools/commit/66ad3eb9d999e79b8dfe4d5a766c434f813826c6))
+
 ## [0.3.0](https://github.com/ppat/obsidian-tools/compare/v0.2.1...v0.3.0) (2026-08-01)
 
 
