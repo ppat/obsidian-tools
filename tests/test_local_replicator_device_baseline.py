@@ -135,3 +135,33 @@ def test_seed_applies_the_shared_baseline_allowlist_not_a_denylist(tmp_path: Pat
     assert not (icloud / ".obsidian" / "plugins" / "obsidian-local-rest-api" / "data.json").exists()
     assert not (icloud / ".obsidian" / "themes" / "deep" / "nested" / "inner" / "data.json").exists()
     assert not (icloud / ".obsidian" / "plugins" / "obsidian-local-rest-api" / "main.js").exists()
+
+
+def test_seed_refuses_a_symlinked_source_obsidian_dir(tmp_path: Path) -> None:
+    """The per-path allowlist (above) only ever sees entries *inside* `.obsidian/` — nothing
+    produces a `PathInfo` for the root itself, so it cannot protect against `.obsidian` in the
+    parked clone being a symlink rather than a real directory (`Path.is_dir()` resolves symlinks,
+    so the existing `if not source.is_dir()` guard reads a symlinked `.obsidian` as "present" and
+    happily walks through it). `vault_git/baseline.py` guards this exact case on the committer side
+    (ppat/obsidian-tools#22); this is the same rule, one level up, on the replicator side.
+
+    Plants a symlinked `.obsidian` pointing at a directory holding both an allowlisted-shaped file
+    (`app.json`) and a plugin `data.json`, and asserts *nothing* reaches the device copy — not even
+    `app.json`, which the per-path selector would happily allow if it ever saw it. That's what makes
+    this red on the per-path fix alone: `data.json` is already blocked by the allowlist regardless of
+    the root, but `app.json` is not, so its absence is the only signal that proves the root guard
+    fired rather than the per-path selector doing unrelated work.
+    """
+    clone = tmp_path / "clone"
+    clone.mkdir()
+    icloud = tmp_path / "icloud"
+    icloud.mkdir()
+    outside_target = tmp_path / "outside-obsidian"
+    _write(outside_target / "app.json", "{}\n")
+    _write(outside_target / "data.json", '{"apiKey": "must never reach iCloud"}\n')
+    (clone / ".obsidian").symlink_to(outside_target)
+
+    seed_baseline(clone, icloud)
+
+    assert is_baselined(icloud) is False
+    assert not (icloud / ".obsidian").exists()

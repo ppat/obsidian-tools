@@ -84,6 +84,28 @@ def seed_baseline(cache_clone_dir: Path, icloud_vault_dir: Path) -> None:
     """Copy the frozen `.obsidian/` baseline from the parked clone into the iCloud vault, then
     write the completion marker. Idempotent and safe to re-run after a partial prior attempt."""
     source = cache_clone_dir / OBSIDIAN_DIR
+    if source.is_symlink():
+        # Checked before `is_dir()` below, and separately from it, for the same reason
+        # `vault_git/baseline.py`'s own root guard exists (ppat/obsidian-tools#22): `is_dir()`
+        # resolves symlinks, so it would read a symlinked `.obsidian` as "present" and hand this
+        # walk a source it doesn't actually control. That module's copy of this check exists to
+        # stop a symlinked `.obsidian` from wedging `git add --force`; this one exists to stop this
+        # module from copying an unknown target's contents into iCloud, where they replicate to the
+        # phone and to Apple's servers — a wider blast radius than a failed git command, which is
+        # why this logs at `warning` rather than the `info` the routine "not written yet" skips
+        # below use. The committer's own invariants (`ensure_ignore_rule`, docs/DESIGN.md §7 Phase
+        # 2) mean `.obsidian` should never be anything but an ordinary directory in a clone pulled
+        # from history it produced; seeing a symlink here means one of those invariants didn't hold,
+        # which is worth a human noticing rather than a silent skip identical to bootstrap-not-done.
+        # The marker stays unwritten, so the next cycle retries rather than treating a symlinked
+        # `.obsidian` as permanently unseeded.
+        logger.warning(
+            "refusing to seed device .obsidian/ baseline: .obsidian/ in the parked clone is a "
+            "symlink, not a real directory",
+            extra={"event": "device_baseline_skip_symlinked_source"},
+        )
+        return
+
     if not source.is_dir():
         # The committer hasn't taken its own .obsidian baseline commit yet (docs/DESIGN.md §8a D3)
         # — nothing to seed from. Not an error: the marker stays unwritten, and the next cycle
