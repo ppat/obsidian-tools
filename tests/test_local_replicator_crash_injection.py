@@ -59,6 +59,7 @@ import obsidian_tools.local_replicator.cycle as cycle_module
 from obsidian_tools.config import ReplicateConfig
 from obsidian_tools.local_replicator.cycle import CycleResult, run_cycle
 from obsidian_tools.local_replicator.drainer import drain_once
+from obsidian_tools.local_replicator.spool import list_spool_files, read_spool_entry
 from obsidian_tools.local_replicator.tag import read_last_checkout
 from obsidian_tools.vault_git.runner import GitRunner
 
@@ -180,6 +181,11 @@ class CrashInjectionMachine(RuleBasedStateMachine):
         # what the most recent marker written to each path was, purely so a later overwrite can
         # tell whether it's superseding a still-raw edit or an already-resolved one).
         self.open_markers: set[str] = set()
+        # Every marker a device action has *ever* minted, monotonically growing -- unlike
+        # `open_markers` (which shrinks once a marker is superseded or drained), this never
+        # forgets one, because `upstream_content_never_misattributed` needs to recognize a device's
+        # own handiwork inside an *already-spooled, possibly long-drained* patch (below).
+        self._device_markers: set[str] = set()
         self.upstream_markers: set[str] = set()
         # Upstream markers this instance has *itself* watched reach iCloud via a real crash at the
         # `advance_last_checkout` seam (populated in `run_cycle_crashed`, below) -- the only markers
@@ -251,6 +257,7 @@ class CrashInjectionMachine(RuleBasedStateMachine):
         (self.icloud / path).write_text(f"{marker} {body}\n")
         self.last_written_marker[path] = marker
         self.open_markers.add(marker)
+        self._device_markers.add(marker)
         self.pending_delete.discard(path)  # a fresh write supersedes any uncaptured deletion too
 
     @rule(path=st.sampled_from(_PATHS))
@@ -283,6 +290,7 @@ class CrashInjectionMachine(RuleBasedStateMachine):
         self.pending_delete.add(src)
         self.last_written_marker[dst] = marker
         self.open_markers.add(marker)
+        self._device_markers.add(marker)
         self.pending_delete.discard(dst)
 
     # --- rules: upstream activity (the git-committer / an agent pushing to origin) --------------
@@ -439,11 +447,29 @@ class CrashInjectionMachine(RuleBasedStateMachine):
     @invariant()
     def upstream_content_never_misattributed(self) -> None:
         """A narrower, harness-specific corollary of the tag/publish ordering
-        (docs/DESIGN.md §4 Plane B, "Why the gate moved, not disappeared"): content that reached
-        iCloud purely via `publish` -- never typed on a device -- must never be spooled as if a
-        human wrote it. Present in iCloud is fine and expected (that's what publish is for); present
-        in the *spool* would mean a later cycle re-diffed already-published content as fresh
-        device drift.
+        (docs/DESIGN.md §4 Plane B, "Why the gate moved, not disappeared"): no spool entry exists
+        whose *own drift* was caused by upstream content arriving, rather than by a device edit.
+        Content that reached iCloud purely via `publish` -- never typed on a device -- must never
+        be spooled as if a human wrote it.
+
+        What this is actually asserting is narrower than "no upstream marker's text ever appears
+        anywhere in the spool": a marker's mere *presence* inside a spooled patch is not evidence
+        of misattribution when the entry it's inside is itself a correctly-captured device edit.
+        `device_rename` copies a path's old content forward into its new one, so a marker `publish`
+        legitimately placed in iCloud can end up embedded inside a *different*, genuinely
+        device-authored entry -- that's the rename being captured correctly, not upstream content
+        leaking in. The distinguishing fact is one this machine already tracks, not new bookkeeping
+        invented to paper over the false positive: every device-authored create/modify carries a
+        fresh `HUMAN-` marker in the content it writes (`_marker`, `device_write`/`device_rename`),
+        by construction -- so a create/modify entry whose patch contains an upstream marker *and*
+        no device marker (`_device_markers`, every `HUMAN-` marker ever minted, checked rather than
+        `open_markers`, which shrinks once a marker is superseded or drained and would stop
+        recognizing a device's own already-drained handiwork) never had a device edit behind it at
+        all. A delete entry's patch shows whatever content the path *had*, not what a device wrote,
+        so this distinction doesn't apply to it the same way -- but this harness's own rule set
+        never gives upstream content a way to be *deleted* (`upstream_commit` only ever writes), so
+        a delete entry can only ever originate from `device_delete`/`device_rename`, and is exempt
+        structurally rather than by inference.
 
         Raises `KnownAdvanceLastCheckoutCrashDefect`, not a plain `AssertionError`, when (and only
         when) the misattributed marker is one this instance itself watched reach iCloud via a real
@@ -453,22 +479,32 @@ class CrashInjectionMachine(RuleBasedStateMachine):
         different defect and raises a plain `AssertionError`, which
         `test_crash_injection_state_machine`'s classifier does not match, so it fails the suite
         rather than xfailing."""
-        spool_text = self._spool_text()
-        for marker in self.upstream_markers:
-            if marker not in spool_text:
+        for spool_file in list_spool_files(self.spool_dir):
+            entry = read_spool_entry(spool_file)
+            if entry.kind == "delete":
                 continue
-            if marker in self._advance_crash_explained_markers:
-                raise KnownAdvanceLastCheckoutCrashDefect(
-                    f"upstream content {marker!r} was spooled as device drift -- explained by "
-                    "ppat/obsidian-tools#36 (a crash at the advance_last_checkout seam left this "
-                    "marker published in iCloud while LAST_CHECKOUT still named the pre-publish "
-                    "commit)"
+            if any(device_marker in entry.patch for device_marker in self._device_markers):
+                continue  # this entry's own drift is a genuine device edit; embedded upstream
+                # content it happened to carry forward (a rename's copied-forward text) is not
+                # misattribution
+            for marker in self.upstream_markers:
+                if marker not in entry.patch:
+                    continue
+                if marker in self._advance_crash_explained_markers:
+                    raise KnownAdvanceLastCheckoutCrashDefect(
+                        f"upstream content {marker!r} was spooled as device drift (entry: "
+                        f"{entry.path!r}, kind={entry.kind!r}) -- explained by "
+                        "ppat/obsidian-tools#36 (a crash at the advance_last_checkout seam left "
+                        "this marker published in iCloud while LAST_CHECKOUT still named the "
+                        "pre-publish commit)"
+                    )
+                raise AssertionError(
+                    f"upstream content {marker!r} was spooled as device drift (entry: "
+                    f"{entry.path!r}, kind={entry.kind!r}), with no device marker anywhere in that "
+                    "entry's own patch, and is NOT explained by the known advance_last_checkout-seam "
+                    "crash defect (ppat/obsidian-tools#36) -- this is a different, previously-unseen "
+                    "defect"
                 )
-            raise AssertionError(
-                f"upstream content {marker!r} was spooled as device drift, and is NOT explained by "
-                "the known advance_last_checkout-seam crash defect (ppat/obsidian-tools#36) -- this "
-                "is a different, previously-unseen defect"
-            )
 
     @invariant()
     def tag_never_names_unpublished_content(self) -> None:
