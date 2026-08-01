@@ -104,6 +104,61 @@ _GIT_CONFIG_PINS = ("core.attributesFile", "core.excludesFile")
 #   pauses on drift that lost nothing.
 _DECISION_DIFF_FLAGS = ("--no-ext-diff", "--no-textconv", "--no-color", "--find-renames")
 
+# `run()` below pins `cwd` to `work_tree`, not left as whatever directory launched this process:
+# git's per-directory `.gitattributes` lookup does its own filesystem probe relative to the
+# *process's* cwd, not to `--work-tree`, even though `--work-tree` is always given explicitly --
+# verified directly (strace on a real invocation). `$GIT_DIR/info/attributes` and the system
+# attributes file are unaffected (both opened by absolute path); this is specific to the
+# per-directory stack.
+#
+# When that cwd-relative probe finds nothing at a given directory level -- the ordinary case, cwd
+# unrelated to this repository -- git correctly falls back to that level's `.gitattributes` as
+# recorded in the *index*. That fallback is not a degraded case here: every load-bearing diff in
+# this codebase runs after `git add -A`, so the index already reflects anything the vault or the
+# device just staged, and nothing this repository's own tracked `.gitattributes` says is lost by
+# preferring it. But when the cwd probe *does* find a same-named file at the launching directory --
+# an unrelated `.gitattributes` sitting wherever this process happened to start, matching only by
+# name, never by content -- that file wins over the index fallback for that directory level, silently
+# blanking or replacing whatever this repository's own tracked `.gitattributes` says there instead.
+# That is a second, independent way the launching environment can reach a decision diff's output, on
+# top of the ones `_GIT_ENV_OVERRIDES`/`_GIT_CONFIG_PINS`/`_DECISION_DIFF_FLAGS` already close --
+# and unlike those, nothing above closes it, because none of them name the process's cwd. It is not
+# hypothetical: it silently defeated the textconv tests in this project's own suite whenever pytest's
+# cwd was this project's checkout root, which carries a `.gitattributes` of its own.
+#
+# Two other anchors were tried and rejected, both caught by this suite the moment they were tried
+# rather than shipped -- recorded so a future reader doesn't reach for either again:
+#
+# - `git_dir` itself: always exists before this class's first call (`clone.py`/`provisioning.py`
+#   create it first) and is never populated by the vault or a device, but its own top level *is* a
+#   set of filenames git treats as revisions when they appear bare on the command line -- `HEAD`
+#   above all, which every git directory contains unconditionally. `git reset --hard HEAD` run with
+#   cwd equal to a directory containing a file literally named `HEAD` fails outright: "ambiguous
+#   argument 'HEAD': both revision and filename."
+# - a dedicated, permanently-empty subdirectory *inside* `git_dir` (avoiding the `HEAD` collision
+#   above by construction): breaks something more basic than attributes. A relative pathspec --
+#   `:(literal)<path>`, used everywhere in this codebase -- resolves against cwd *as a prefix within
+#   the work tree*, not against the work tree's root, whenever cwd is a non-root descendant of the
+#   work tree; local-replicator's `git_dir` sits inside its own `work_tree` (an ordinary clone, not
+#   the committer's detached bare layout), so any cwd under it is such a descendant. Every diff and
+#   `add -A` this codebase runs came back empty against a real, freshly-staged file -- silently, no
+#   error, so this is the more dangerous of the two to have shipped.
+#
+# `work_tree` is the one directory that is simultaneously the correct root for both: pathspecs
+# resolve correctly *because* cwd-as-prefix and work-tree-root coincide when cwd *is* the work-tree
+# root, and it is what git's own per-directory `.gitattributes` docs assume "running from the
+# repository" means. It reintroduces a narrower version of the `git_dir` collision above -- a vault
+# or committer mount path literally named `HEAD` with no extension would make `reset --hard HEAD`
+# ambiguous again -- checked directly against every other bare `HEAD` argument this codebase passes
+# (`rev-parse --verify --quiet`, `ls-tree`, `read-tree`): none of the others are ambiguous, because
+# none of those commands accept a pathspec in the same argument position, so `HEAD` cannot mean two
+# things to them the way it can to `reset`/`checkout`/`diff`. Only `cycle.py`'s
+# `reset -q --hard HEAD` needed the trailing `--` git's own error message recommends; see that call
+# site. Not defensively created here the way the rejected `git_dir` anchor was: `work_tree` is
+# guaranteed to exist by the time any call reaches this point regardless -- `ensure_cache_clone`
+# creates local-replicator's before its own first `run()` call, and the committer's is a
+# read-only-mounted volume present from container start, never something this codebase creates.
+
 
 class GitCommandError(RuntimeError):
     """A git invocation exited non-zero."""
@@ -160,7 +215,13 @@ class GitRunner:
             # subprocess already encodes str argv elements with `os.fsencode` (also surrogateescape
             # on POSIX) independent of this method's stdout/stderr decoding.
             result = subprocess.run(
-                command, capture_output=True, encoding="utf-8", errors="surrogateescape", env=env, check=False
+                command,
+                capture_output=True,
+                encoding="utf-8",
+                errors="surrogateescape",
+                env=env,
+                check=False,
+                cwd=self.work_tree,
             )
             if check and result.returncode != 0:
                 raise GitCommandError(args, result)

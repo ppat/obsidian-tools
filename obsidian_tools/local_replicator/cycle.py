@@ -184,7 +184,14 @@ def run_cycle(config: ReplicateConfig, *, spool_writer: SpoolWriter = write_spoo
         # Step 5, part one: reset the tree -- `git reset --hard`, not a stash (module docstring).
         # Unconditional: whether or not the spool write above succeeded, the overlay must not
         # survive into the pull below.
-        runner.run(["reset", "-q", "--hard", "HEAD"])
+        #
+        # Trailing `--`: `vault_git/runner.py` now runs every git invocation with `cwd` pinned to
+        # `work_tree` (see that module's comment on why), which means a vault note or folder
+        # literally named `HEAD` -- no extension, unlikely but not disallowed -- would otherwise
+        # make this ambiguous between the ref and a same-named path in cwd ("ambiguous argument
+        # 'HEAD': both revision and filename"). The trailing `--` is git's own documented fix: it
+        # says there are zero pathspecs, so everything before it is unambiguously a revision.
+        runner.run(["reset", "-q", "--hard", "HEAD", "--"])
         runner.run(["clean", "-q", "-fd"])
 
     verdict = decide_cycle_outcome(spool_write_failed=spool_write_failed, uncaptured_paths=uncaptured)
