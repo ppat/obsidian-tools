@@ -56,6 +56,35 @@ jobs:
     - name: Install dependencies
       working-directory: ./current
       run: mise exec -- uv sync --all-extras
+    # Restores/saves Hypothesis's own failing-example database (tests/conftest.py's "ci" profile;
+    # see that file's own comment for why this is a plain, un-derandomized profile) so a case a
+    # property discovers once is replayed on every later run, in CI, regardless of that run's own
+    # random draw -- rather than needing to be rediscovered by luck each time.
+    #
+    # A single, run-id-suffixed key with a prefix `restore-keys` fallback, not
+    # `setup-repository-tools`'s own `extra_cache_path`/`extra_cache_key` inputs: that action's
+    # cache key is fixed for a whole calendar month with no `restore-keys` of its own (see its
+    # `action.yml`), which is right for a rebuildable tool cache but wrong here -- GitHub's cache
+    # entries are immutable per key, so only the *first* run in any given month could ever save
+    # anything under it, and every example a property found on day 2 through day 30 would be
+    # silently un-persisted until the key next rotated. The pattern below is the standard
+    # ever-growing-cache shape instead: every run saves under its own unique key
+    # (`github.run_id` never repeats), and `restore-keys` falls back to the most recent previous
+    # run's save -- proven to actually restore, not just configured, by tracing
+    # `hypothesis.database`'s own default path resolution and round-tripping a real failing
+    # example through it locally (see the session this was added in for the full trace).
+    - name: Cache - Hypothesis example database
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: current/.hypothesis/examples
+        key: hypothesis-examples-${{ github.run_id }}
+        restore-keys: |
+          hypothesis-examples-
     - name: Run tests
       working-directory: ./current
-      run: mise exec -- uv run pytest -vrsx
+      env:
+        HYPOTHESIS_PROFILE: ci
+      # Real git/rsync per generated step, not just per test -- the crash-injection stateful
+      # harness (tests/test_local_replicator_crash_injection.py) is excluded here and runs, at
+      # greater depth, on its own schedule instead (test-hypothesis-deep.yaml).
+      run: mise exec -- uv run pytest -vrsx -m "not slow"

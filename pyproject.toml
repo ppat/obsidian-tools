@@ -23,6 +23,13 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+  # Real git/rsync per generated step (the crash-injection stateful harness) rather than per test
+  # -- too slow for every PR's critical path. Excluded from the `test` job's ordinary run
+  # (`-m "not slow"`, .github/workflows/test.yaml) and run at higher depth by the scheduled deep
+  # job instead (.github/workflows/test-hypothesis-deep.yaml).
+  "slow: real git/rsync-heavy tests, run out-of-band rather than on every PR",
+]
 
 [tool.ruff]
 target-version = "py314"
