@@ -1,9 +1,10 @@
 """obsidian-tools: CLI entry point.
 
 Subcommands share the same config/git helpers under `obsidian_tools/` — see
-`obsidian_tools/commands/` for each subcommand's own orchestration. `commit` is the first;
-`replicate` (the Mac-side `local-replicator`, tracked separately at ppat/obsidian-tools#3) is
-expected to land beside it as another subparser here, over the same shared helpers.
+`obsidian_tools/commands/` for each subcommand's own orchestration. `commit` is the in-cluster git
+committer; `replicate` is `local-replicator`'s replication cycle, and `drain` is its spool drainer,
+run on a separate schedule (ppat/obsidian-tools#3, docs/DESIGN.md §2 item 10) — all three are
+clients of the same shared `GitRunner`/config/retry/logging helpers, not a parallel set each.
 """
 
 from __future__ import annotations
@@ -16,7 +17,9 @@ from collections.abc import Callable, Sequence
 from types import FrameType
 
 from obsidian_tools.commands import commit as commit_command
-from obsidian_tools.config import CommitConfig, ConfigError
+from obsidian_tools.commands import drain as drain_command
+from obsidian_tools.commands import replicate as replicate_command
+from obsidian_tools.config import CommitConfig, ConfigError, DrainConfig, ReplicateConfig
 from obsidian_tools.logging_config import configure_logging
 
 logger = logging.getLogger(__name__)
@@ -60,6 +63,16 @@ def build_parser() -> argparse.ArgumentParser:
     commit_parser = subparsers.add_parser("commit", help="stage, commit and push the vault's git history")
     commit_parser.set_defaults(handler=_run_commit)
 
+    replicate_parser = subparsers.add_parser(
+        "replicate", help="run one local-replicator cycle: overlay, diff, spool, pull, publish, advance"
+    )
+    replicate_parser.set_defaults(handler=_run_replicate)
+
+    drain_parser = subparsers.add_parser(
+        "drain", help="drain the local spool: send each drift patch onward (Phase 2: discard)"
+    )
+    drain_parser.set_defaults(handler=_run_drain)
+
     return parser
 
 
@@ -70,6 +83,24 @@ def _run_commit(_args: argparse.Namespace) -> int:
         logger.exception("invalid configuration", extra={"event": "config_error"})
         return 2
     return commit_command.run(config)
+
+
+def _run_replicate(_args: argparse.Namespace) -> int:
+    try:
+        config = ReplicateConfig.from_env()
+    except ConfigError:
+        logger.exception("invalid configuration", extra={"event": "config_error"})
+        return 2
+    return replicate_command.run(config)
+
+
+def _run_drain(_args: argparse.Namespace) -> int:
+    try:
+        config = DrainConfig.from_env()
+    except ConfigError:
+        logger.exception("invalid configuration", extra={"event": "config_error"})
+        return 2
+    return drain_command.run(config)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

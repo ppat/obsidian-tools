@@ -5,10 +5,19 @@ platform this repository's code implements — read [`docs/DESIGN.md`](./docs/DE
 record. This document is the narrower view: what belongs in *this* repository specifically, and why its pieces
 relate to each other the way they do.
 
-**Status: the `commit` subcommand (the in-cluster git committer) is implemented.** Everything else this
-document describes — `promotion-processor`, `batch-processor`, the drift-reconciliation channel, the
-frontmatter validator, and `local-replicator` (the Mac-side `replicate` subcommand) — is still a future
-ticket, landing one at a time; see the epic
+**Status: the `commit` subcommand (the in-cluster git committer), the `replicate` subcommand
+(`local-replicator`'s replication cycle), and the `drain` subcommand (its spool drainer) are
+implemented.** Git is the drift engine: `replicate` checks the parked clone out at `LAST_CHECKOUT`,
+overlays the device-facing iCloud tree onto it, and reads `git diff` as the drift enumeration —
+patches, not paths. Each patch is written to a local spool, atomically, before the clone is reset
+and pulled forward; publish and the tag advance are gated on that spool write succeeding for the
+whole cycle, not per path (docs/DESIGN.md §4 Plane B, "Why the gate moved, not disappeared"). Ships
+as a stub with a real contract: the spool is real, on disk, written durably from day one; only
+`drain`'s destination is a stub (`discard_sink`) — it reads each entry and throws it away rather
+than publishing it onward, because there's nowhere else to send it yet. Only that destination
+changes at Phase 5, not the spool's format or the cycle's ordering. Everything else this document
+describes — `promotion-processor`, `batch-processor`, the drift-reconciliation channel proper, and
+the frontmatter validator — is still a future ticket, landing one at a time; see the epic
 [`ppat/homelab-ops-kubernetes-apps#3439`](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3439)
 for sequencing.
 
@@ -47,9 +56,10 @@ kept running as a scheduled entrypoint, on its own, under its own name.
 | Git committer (`commit` subcommand) | Turn the vault volume into git history, and push it to both remotes — GitHub and the NAS — directly | Create, edit, or delete vault content — it mounts content read-only and `.git/` write-only |
 | `promotion-processor` | Real-time ingest/promote out of `00-inbox/`, driven by the promotion stream | Write vault content directly — writes go through the MCP ingestor handle only |
 | `batch-processor` | Apply queued git patches through the same MCP path as ordinary writes | Apply a patch directly to the filesystem, or treat batch as a separate write mode |
-| Drift-reconciliation channel | Dispatch a captured device-side edit back into the funnel as an ordinary agent write | Overwrite a device replica in place, or treat a device edit as anything other than an ingest event |
+| Drift-reconciliation channel | Dispatch a spooled device-side edit back into the funnel as an ordinary agent write | Overwrite a device replica in place, or treat a device edit as anything other than an ingest event |
 | Frontmatter validator | Enforce the JSON-Schema contract at the promotion gate | Silently drop or "fix" a note that fails validation — quarantine it, never delete it |
 | `local-replicator` (Mac, `replicate` subcommand) | Keep the iCloud-synced Obsidian vault current from the cluster's authoritative copy, one-way | Push a device-side edit back onto the authoritative volume — that's the drift channel's job, not this script's |
+| `local-replicator`'s drainer (Mac, `drain` subcommand) | Send each spooled drift patch onward, decoupled from the replication cycle's own schedule | Decide whether a drift patch is intentional or accidental — that's Phase 5's server-side classifier's job, not this dumb drainer's |
 
 ## The volume mount contract
 
@@ -89,7 +99,7 @@ flowchart TB
 
     PatchQueue["patch queue"] --> Batch
     PromotionStream["promotion stream"] --> Promotion
-    Capture["durable capture store\n(device drift)"] --> DriftChannel
+    Spool["local spool\n(device drift, atomic)"] --> DriftChannel
 
     Lint -->|"MCP, ingestor handle"| MCP["scoped MCP server"]
     Promotion -->|"MCP, ingestor handle"| MCP

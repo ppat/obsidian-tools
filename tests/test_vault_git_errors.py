@@ -37,6 +37,9 @@ _VAULT_READ_FAILURE_STDERR = (
 )
 
 
+_WORK_TREE_UNUSABLE_STDERR = "fatal: this operation must be run in a work tree\n"
+
+
 def test_stale_lock() -> None:
     assert classify_git_error(_STALE_LOCK_STDERR) is ErrorKind.STALE_LOCK
 
@@ -53,6 +56,17 @@ def test_permission_denied_on_the_git_dir_itself() -> None:
 
 def test_vault_read_failure() -> None:
     assert classify_git_error(_VAULT_READ_FAILURE_STDERR) is ErrorKind.VAULT_READ_FAILURE
+
+
+def test_work_tree_unusable_is_a_kind_of_its_own_not_a_vault_read_failure() -> None:
+    """git's wording when it cannot use the work tree it was given at all -- captured identical for
+    a `--work-tree` that is absent, that is a plain file, and that is a directory this uid cannot
+    enter. Distinct from `VAULT_READ_FAILURE`, which is a *file* under an otherwise-fine work tree:
+    on a freshly provisioned `vault-data` PVC the vault directory the committer is pointed at simply
+    does not exist yet, and "a vault file could not be read" would send an operator looking for the
+    wrong thing."""
+    assert classify_git_error(_WORK_TREE_UNUSABLE_STDERR) is ErrorKind.WORK_TREE_UNUSABLE
+    assert classify_git_error(_VAULT_READ_FAILURE_STDERR) is not ErrorKind.WORK_TREE_UNUSABLE
 
 
 def test_unrecognized_text_is_unknown_not_guessed() -> None:
