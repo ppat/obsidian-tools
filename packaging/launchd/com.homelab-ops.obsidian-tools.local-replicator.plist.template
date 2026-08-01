@@ -13,7 +13,7 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.ppat.obsidian-tools.local-replicator</string>
+  <string>com.homelab-ops.obsidian-tools.local-replicator</string>
 
   <key>ProgramArguments</key>
   <array>
@@ -83,8 +83,9 @@
          sensible default (obsidian_tools/config.py's ReplicateConfig), set explicitly here anyway
          so it's visible beside the other paths this job touches, matching OBSIDIAN_CACHE_CLONE_DIR
          above. Drained (Phase 2: discarded) by the separate
-         com.ppat.obsidian-tools.local-replicator-drain job — see local-replicator-drain.plist.template
-         and docs/local-replicator.md. -->
+         com.homelab-ops.obsidian-tools.local-replicator-drain job — see
+         com.homelab-ops.obsidian-tools.local-replicator-drain.plist.template and
+         docs/local-replicator.md. -->
     <key>LOCAL_REPLICATOR_SPOOL_DIR</key>
     <string>__HOME_DIR__/Library/Application Support/obsidian-tools/local-replicator/spool</string>
   </dict>
