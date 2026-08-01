@@ -18,28 +18,66 @@ The marker lives inside `.obsidian/` itself, in iCloud — not in any local-repl
 the Mac — because presence is a fact about the shared iCloud vault, not about this one process's
 own memory: Mac and iPhone open the *same* iCloud-synced `.obsidian/`, and local-replicator's own
 state could be lost and rebuilt independently of whether the device copy was ever actually seeded.
+
+**What gets copied is decided by `vault_git/baseline_selector.py`, not by a rule re-derived here.**
+That module is the one place every `.obsidian/` safety rule applies — an allowlist, not a denylist
+— after three prior ad hoc rules in this repository each fixed one hole and left another (a plugin's
+`data.json`/bearer token; `themes/`/`snippets/` as bare directory prefixes; a symlink followed on
+one enumeration branch but not another — see that module's docstring). This module used to carry a
+fourth such rule, a two-name denylist of workspace-state files, which was narrower than the
+allowlist it duplicated in spirit and reintroduced exactly the "is a plugin's `data.json` on this
+list" gap the selector exists to close. The walk below only has to build `PathInfo` candidates —
+computing `is_symlink` is this module's job because it is the one with a filesystem to check it
+against, per `PathInfo`'s own docstring — and hand them to the same selector `vault_git/baseline.py`
+uses for the committer-side capture; deciding which paths are safe never happens here.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 from pathlib import Path
+
+from obsidian_tools.vault_git.baseline_selector import PathInfo, select_baseline_paths
 
 logger = logging.getLogger(__name__)
 
 OBSIDIAN_DIR = ".obsidian"
 BASELINE_MARKER = ".local-replicator-baseline-complete"
 
-# Never copy per-instance workspace state into a device baseline — same two files the shared
-# exclude list (exclude.py) protects on every ordinary cycle, named because Obsidian's own
-# documentation calls them out as ones to ignore ("they update frequently based on current
-# workspace state"). A fresh device generates its own from a blank slate.
-_WORKSPACE_STATE_FILES = frozenset({"workspace.json", "workspaces.json"})
-
 
 def is_baselined(icloud_vault_dir: Path) -> bool:
     return (icloud_vault_dir / OBSIDIAN_DIR / BASELINE_MARKER).exists()
+
+
+def _iter_obsidian_candidates(source: Path) -> list[PathInfo]:
+    """Walk `source` (a parked clone's `.obsidian/`) into `PathInfo` candidates for
+    `select_baseline_paths`, relative to `source` itself.
+
+    `os.walk(..., followlinks=False)` is the standard-library equivalent of the non-descent
+    guarantee `vault_git/baseline.py`'s own walker documents and hand-rolls with an explicit stack:
+    it never recurses into a symlinked directory, so nothing beneath one — a symlinked plugin
+    directory, say — is ever produced as a candidate in the first place. This walk only has to
+    enumerate files to copy, not build `git` pathspecs or tolerate the retry/pathspec-magic concerns
+    that walker also carries, so it leans on the library default rather than reusing that function.
+    A directory this process can't read (a transient NFS/iCloud glitch) is skipped via `onerror`,
+    same tolerance `vault_git/baseline.py` documents for the equivalent case.
+    """
+    candidates: list[PathInfo] = []
+    for dirpath, _dirnames, filenames in os.walk(source, onerror=lambda _err: None, followlinks=False):
+        current_directory = Path(dirpath)
+        for filename in filenames:
+            entry = current_directory / filename
+            try:
+                is_file = entry.is_file()
+                is_symlink = entry.is_symlink()
+            except OSError:
+                continue
+            candidates.append(
+                PathInfo(relative_path=entry.relative_to(source).as_posix(), is_file=is_file, is_symlink=is_symlink)
+            )
+    return candidates
 
 
 def seed_baseline(cache_clone_dir: Path, icloud_vault_dir: Path) -> None:
@@ -59,15 +97,10 @@ def seed_baseline(cache_clone_dir: Path, icloud_vault_dir: Path) -> None:
     destination = icloud_vault_dir / OBSIDIAN_DIR
     destination.mkdir(parents=True, exist_ok=True)
     copied = 0
-    for item in source.rglob("*"):
-        if item.is_dir():
-            continue
-        relative = item.relative_to(source)
-        if relative.name in _WORKSPACE_STATE_FILES:
-            continue
-        target = destination / relative
+    for relative_path in select_baseline_paths(_iter_obsidian_candidates(source)):
+        target = destination / relative_path
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(item, target)
+        shutil.copy2(source / relative_path, target)
         copied += 1
 
     (destination / BASELINE_MARKER).write_text("seeded by obsidian-tools local-replicator\n")

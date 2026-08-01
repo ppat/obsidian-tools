@@ -94,3 +94,44 @@ def test_marker_file_name_is_not_mistaken_for_vault_content(tmp_path: Path) -> N
     seed_baseline(clone, icloud)
 
     assert (icloud / ".obsidian" / BASELINE_MARKER).exists()
+
+
+def test_seed_applies_the_shared_baseline_allowlist_not_a_denylist(tmp_path: Path) -> None:
+    """The seed used to exclude by name (two workspace-state filenames) rather than include by
+    allowlist (`vault_git/baseline_selector.py`) — the same shape of bug an independent review found
+    three times on the committer side (ppat/obsidian-tools#3, #22): a denylist only ever knows about
+    the holes someone already noticed. This plants exactly those shapes under a fresh `.obsidian/`
+    and asserts none of them reach the device copy, even though none is named
+    `workspace.json`/`workspaces.json`:
+
+    - a plugin's `data.json`, which for the Local REST API plugin holds a bearer token;
+    - a file at an unexpected depth under `themes/` (`themes/deep/nested/inner/data.json`), which a
+      bare directory-prefix rule would admit at any depth;
+    - a symlinked plugin file (`plugins/.../main.js`, an otherwise-allowlisted name) pointing outside
+      `.obsidian/` entirely.
+
+    Every one of these was captured by the old two-name denylist (nothing here is named
+    workspace.json/workspaces.json), so this test fails against it — see PR description for the
+    reproduced failure — and only passes once seeding goes through the shared allowlist selector.
+    """
+    clone = tmp_path / "clone"
+    icloud = tmp_path / "icloud"
+    _write(clone / ".obsidian" / "app.json", "{}\n")
+    _write(
+        clone / ".obsidian" / "plugins" / "obsidian-local-rest-api" / "data.json",
+        '{"apiKey": "not-a-real-token-but-shaped-like-one"}\n',
+    )
+    _write(clone / ".obsidian" / "themes" / "deep" / "nested" / "inner" / "data.json", '{"leaked": true}\n')
+    outside_secret = tmp_path / "outside-obsidian-secret.txt"
+    outside_secret.write_text("must never reach iCloud\n")
+    symlinked_plugin_file = clone / ".obsidian" / "plugins" / "obsidian-local-rest-api" / "main.js"
+    symlinked_plugin_file.parent.mkdir(parents=True, exist_ok=True)
+    symlinked_plugin_file.symlink_to(outside_secret)
+    icloud.mkdir()
+
+    seed_baseline(clone, icloud)
+
+    assert (icloud / ".obsidian" / "app.json").exists()
+    assert not (icloud / ".obsidian" / "plugins" / "obsidian-local-rest-api" / "data.json").exists()
+    assert not (icloud / ".obsidian" / "themes" / "deep" / "nested" / "inner" / "data.json").exists()
+    assert not (icloud / ".obsidian" / "plugins" / "obsidian-local-rest-api" / "main.js").exists()
