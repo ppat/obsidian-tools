@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/ppat/obsidian-tools/compare/v0.2.1...v0.3.0) (2026-08-01)
+
+
+### ✨ Features
+
+* **committer:** assemble known_hosts at runtime; make the NAS remote optional ([#30](https://github.com/ppat/obsidian-tools/issues/30)) ([a5bd9df](https://github.com/ppat/obsidian-tools/commit/a5bd9df8845db3fd9cf1956c3242b128182c40d1))
+
 ## [0.2.1](https://github.com/ppat/obsidian-tools/compare/v0.2.0...v0.2.1) (2026-07-31)
 
 
