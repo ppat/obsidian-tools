@@ -304,8 +304,8 @@ class CrashInjectionMachine(RuleBasedStateMachine):
 
     @rule()
     def run_cycle_clean(self) -> None:
-        run_cycle(self.config)
-        self._resolve_captured_markers(comparison_happened=True)
+        result = run_cycle(self.config)
+        self._resolve_captured_markers(tag_advanced=result.tag_advanced)
 
     @rule(seam=st.sampled_from(_CRASH_SEAMS))
     def run_cycle_crashed(self, seam: str) -> None:
@@ -315,11 +315,6 @@ class CrashInjectionMachine(RuleBasedStateMachine):
                 run_cycle(self.config)
         finally:
             _restore(seam, original)
-        # `overlay` is the only seam that fires *before* the comparison (git add -A + diff) runs at
-        # all -- every other seam crashes strictly after it, since cycle.py's own step order runs
-        # overlay, then the diff, then the spool loop, before ever reaching fetch/checkout/publish/
-        # tag-advance (see this module's docstring and cycle.py's own).
-        self._resolve_captured_markers(comparison_happened=seam != "overlay")
 
         if seam == "advance_last_checkout":
             # `publish` (step 6) already ran for real before this crash -- it's strictly earlier in
@@ -331,37 +326,50 @@ class CrashInjectionMachine(RuleBasedStateMachine):
             icloud_text = "".join((self.icloud / p).read_text() for p in _PATHS if (self.icloud / p).exists())
             self._advance_crash_explained_markers |= {m for m in self.upstream_markers if m in icloud_text}
 
+        # A crash always means the tag never advances: `_crash_at` replaces the collaborator with a
+        # stub that raises before doing any real work, including `advance_last_checkout`'s own --
+        # never `tag_advanced=True` for a call that raised `_SimulatedCrash` before completing.
+        self._resolve_captured_markers(tag_advanced=False)
+
         # Invariant 3, checked here rather than as a standalone @invariant: "the next cycle after
         # any crash completes normally" is a statement about the step immediately following a
         # crash, not about every point in the run -- a gate that pauses the cycle must never wedge
         # it (docs/DESIGN.md's own framing, carried into this harness's brief).
-        run_cycle(self.config)
-        self._resolve_captured_markers(comparison_happened=True)
+        recovery_result = run_cycle(self.config)
+        self._resolve_captured_markers(tag_advanced=recovery_result.tag_advanced)
 
-    def _resolve_captured_markers(self, *, comparison_happened: bool) -> None:
+    def _resolve_captured_markers(self, *, tag_advanced: bool) -> None:
         """After any real `run_cycle` call (crashed or not), a marker that was raw-in-iCloud and
         is no longer the live content at its path has been captured -- it now lives in the spool
         (or, if publish also ran, only in the spool, since publish overwrites iCloud from `main`,
         which never includes device edits in Phase 2 -- see cycle.py's own module docstring). This
         does not need to know *why* -- INV1 below checks that capture actually landed somewhere,
         directly off disk; this only stops treating a path as "still raw" once it demonstrably
-        isn't, so `_supersede_if_still_raw` doesn't misfire on a future edit to the same path.
+        isn't, so `_supersede_if_still_raw` doesn't misfire on a future edit to the same path. Real
+        disk content, not the cycle's own outcome, is the right signal for this half: a path is
+        free for a fresh edit the moment its raw content is gone, whether that's because publish
+        overwrote it or because a comparison captured it into the spool -- durability is INV1's job,
+        not this bookkeeping's.
 
-        A pending deletion has no marker text to look for, so it's resolved differently: once a
-        comparison has actually happened (this cycle diffed the overlay against the baseline),
-        every currently-pending deletion was necessarily part of that diff -- this harness never
-        induces a per-path capture failure, so a comparison always captures everything pending."""
+        A pending deletion has no marker text to look for, so it can't be resolved the same way --
+        and, unlike the loop above, resolving it needs the cycle's own outcome, not just disk
+        content: `tag_never_names_unpublished_content` treats `pending_delete` as "the tag hasn't
+        caught up to this deletion yet," and the tag only catches up when this cycle actually
+        advanced it. A comparison can capture a deletion into the spool -- durably, real content
+        gone from iCloud -- while the *whole-cycle* gate (`drift.decide_cycle_outcome`) still
+        withholds publish and the tag advance over an unrelated path's uncaptured content; the
+        deletion is durable, but the tag still names the pre-deletion commit, so it is still
+        "pending" by this invariant's own definition. Clearing on anything less than
+        `tag_advanced` was the bug: a comparison happening is necessary but not sufficient for the
+        tag to have caught up."""
         for path in _PATHS:
             marker = self.last_written_marker.get(path)
             if marker is None:
                 continue
             current = self._icloud_content(path)
             if current is None or marker not in current:
-                # No longer raw at this path -- either captured (now in spool, until drained) or
-                # overwritten by a publish. Either way, this path is free for a fresh edit; the
-                # marker's own durability is INV1's job, not this bookkeeping's.
                 self.last_written_marker[path] = None
-        if comparison_happened:
+        if tag_advanced:
             self.pending_delete.clear()
 
     # --- rules: the drainer -----------------------------------------------------------------------
