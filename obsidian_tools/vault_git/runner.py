@@ -24,6 +24,86 @@ from obsidian_tools.vault_git.name_status import NameStatusEntry, parse_name_sta
 # `staged_name_status` below) is where it's actually defined.
 __all__ = ["GitCommandError", "GitRunner", "NameStatusEntry"]
 
+# --- keeping the environment out of git's output -------------------------------------------------
+#
+# `git diff`'s output is not a fixed format: it is a *configurable* one, and a caller that makes a
+# decision from it is reading something the machine's owner can replace. local-replicator is the one
+# component of this system that runs outside the cluster, on the operator's own MacBook with a real
+# `~/.gitconfig` (docs/DESIGN.md §4 Plane B) — and a single `[diff] external = ...`, a line
+# difftastic's README instructs users to add, replaces every patch this codebase reads with a
+# summary line carrying none of the content the publish gate is there to protect
+# (ppat/obsidian-tools#3).
+#
+# The narrow reading of that fact is what let it happen twice. `core.quotePath=false` was pinned on
+# this same clone one commit earlier, on the finding that unpinned git configuration corrupts patch
+# output — recorded as being about path quoting, when the general fact is that git's output is
+# user-configurable in ways that can replace it wholesale. So this closes the *class*, not the two
+# settings that were found: everything the operator's environment can say about what git prints,
+# stages, or checks out is cut off here, once, for every invocation.
+
+# Neutralise every git configuration file outside this repository. `GIT_CONFIG_GLOBAL` /
+# `GIT_CONFIG_SYSTEM` replace `~/.gitconfig` (and its XDG location) and `/etc/gitconfig`;
+# `GIT_CONFIG_NOSYSTEM` is the older mechanism for the latter, set alongside so this holds on a git
+# predating the pair; `GIT_ATTR_NOSYSTEM` does the same for `/etc/gitattributes`. Repository-local
+# config is deliberately untouched — it is where this codebase's own pins live (`core.quotePath`,
+# the committer's identity and `core.fileMode`), and it is not something the environment supplies.
+#
+# `core.attributesFile` and `core.excludesFile` are pinned as command-line config rather than left
+# to the scrub, because their *defaults* point into the operator's home directory
+# (`~/.config/git/attributes` and `~/.config/git/ignore`): unsetting the config that names them does
+# not stop git reading them. `-c` outranks every configuration file, including this repository's
+# own, so the pin cannot be edited away. The excludes pin is the one that matters most and is the
+# least obvious: `git add -A` consults ignore rules for untracked paths, so one pattern in a global
+# ignore file makes a note created on the phone invisible to the drift diff entirely — no patch to
+# judge, nothing in `uncaptured`, and the publish's `--delete` removes it. It is scoped to the
+# user-global file specifically: the vault's own tracked `.gitignore` and `$GIT_DIR/info/exclude`
+# still apply, and must — `.obsidian/` exclusion depends on them (see `vault_git/baseline.py`).
+_GIT_ENV_OVERRIDES = {
+    "GIT_CONFIG_GLOBAL": os.devnull,
+    "GIT_CONFIG_SYSTEM": os.devnull,
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_ATTR_NOSYSTEM": "1",
+}
+
+# The same reach, through environment variables rather than configuration files, which the scrub
+# above cannot cover because they are not configuration files: `GIT_EXTERNAL_DIFF` is `diff.external`
+# by another name, `GIT_CONFIG_PARAMETERS` / `GIT_CONFIG_COUNT` inject arbitrary config into every
+# invocation, `GIT_INDEX_FILE` redirects the very index `add -A` and `diff --cached` talk to, and the
+# pathspec-magic variables reinterpret the `:(literal)` pathspecs this codebase builds from real
+# filenames. `GIT_CONFIG_COUNT`'s numbered `GIT_CONFIG_KEY_<n>`/`GIT_CONFIG_VALUE_<n>` companions
+# are inert once the count is gone.
+_GIT_ENV_REMOVED = (
+    "GIT_EXTERNAL_DIFF",
+    "GIT_EXTERNAL_DIFF_TRUST_EXIT_CODE",
+    "GIT_DIFF_OPTS",
+    "GIT_CONFIG",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_INDEX_FILE",
+    "GIT_LITERAL_PATHSPECS",
+    "GIT_GLOB_PATHSPECS",
+    "GIT_NOGLOB_PATHSPECS",
+    "GIT_ICASE_PATHSPECS",
+)
+
+_GIT_CONFIG_PINS = ("core.attributesFile", "core.excludesFile")
+
+# Flags for the two diff invocations whose *output is read as evidence* (`staged_name_status`,
+# `staged_patch`), as opposed to the environment scrub's blanket cover. They are not redundant with
+# it: an in-tree `.gitattributes` — which the vault could grow, or a device could create — reaches
+# diff drivers by a path no environment variable controls, and only these flags close it.
+#
+# --no-ext-diff/--no-textconv: the two ways a driver substitutes its own text for git's patch.
+#   textconv is the quiet one: it produces a plausible hunk with no binary marker for a file whose
+#   bytes git never carried.
+# --no-color: an ANSI-coloured patch is not what a Phase 5 consumer will parse, and git colours the
+#   metadata lines the gate's marker sits among.
+# --find-renames: rename detection is load-bearing, not cosmetic — a pure rename is captured
+#   *because* its header describes the change completely (see `drift.captures_content`). With
+#   detection off, a renamed binary decomposes into an add that carries nothing, and the cycle
+#   pauses on drift that lost nothing.
+_DECISION_DIFF_FLAGS = ("--no-ext-diff", "--no-textconv", "--no-color", "--find-renames")
+
 
 class GitCommandError(RuntimeError):
     """A git invocation exited non-zero."""
@@ -58,10 +138,13 @@ class GitRunner:
         command = ["git", f"--git-dir={self.git_dir}"]
         if include_work_tree:
             command.append(f"--work-tree={self.work_tree}")
+        for key in _GIT_CONFIG_PINS:
+            command.extend(["-c", f"{key}={os.devnull}"])
         command.extend(args)
-        env: dict[str, str] | None = None
+        env = {key: value for key, value in os.environ.items() if key not in _GIT_ENV_REMOVED}
+        env.update(_GIT_ENV_OVERRIDES)
         if self._ssh_command:
-            env = {**os.environ, "GIT_SSH_COMMAND": self._ssh_command}
+            env["GIT_SSH_COMMAND"] = self._ssh_command
 
         def _invoke() -> subprocess.CompletedProcess[str]:
             # `encoding="utf-8", errors="surrogateescape"` rather than the plain `text=True` this
@@ -137,8 +220,13 @@ class GitRunner:
     def staged_name_status(self) -> list[NameStatusEntry]:
         """`git diff --cached --name-status -z`, parsed into structured records by
         `vault_git/name_status.py`'s pure `parse_name_status` — this method's only job is running
-        the git command and handing its raw stdout over."""
-        result = self.run(["diff", "--cached", "--name-status", "-z"])
+        the git command and handing its raw stdout over.
+
+        `_DECISION_DIFF_FLAGS`: this output and `staged_patch`'s must describe the same set of
+        changes, so both are pinned identically — with rename detection settled differently between
+        them, a status line claiming `R100` would be paired with a patch showing an unrelated
+        add/delete pair."""
+        result = self.run(["diff", "--cached", *_DECISION_DIFF_FLAGS, "--name-status", "-z"])
         return parse_name_status(result.stdout)
 
     def staged_patch(self, *pathspecs: str) -> str:
@@ -154,8 +242,13 @@ class GitRunner:
         from a real path should prefix it with `:(literal)` -- the same convention
         `vault_git/baseline.py` already uses -- so a filename containing a pathspec metacharacter
         (`*`, `[`, `?`) is matched as itself rather than reinterpreted as a pattern.
+
+        `_DECISION_DIFF_FLAGS` is what makes this output *evidence*: the publish gate
+        (`local_replicator/drift.py`) decides from this text whether a device-side edit was actually
+        captured, and without these flags that text is whatever the machine's git configuration says
+        it is. Do not drop them as noise — see the flags' own comment for what each one closes.
         """
-        return self.run(["diff", "--cached", "--", *pathspecs]).stdout
+        return self.run(["diff", "--cached", *_DECISION_DIFF_FLAGS, "--", *pathspecs]).stdout
 
     def write_staged_tree(self) -> str:
         """Write the tree object the current index would produce if committed right now, without

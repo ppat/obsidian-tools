@@ -27,7 +27,15 @@ from obsidian_tools.local_replicator.drift import (
 # --- select_spool_entries: status classification ----------------------------------------------
 
 
-def _change(status: str, path: str, old_path: str | None = None, patch: str = "diff\n") -> StagedChange:
+# The default is a real, minimal `git diff` patch rather than the placeholder `"diff\n"` it used to
+# be: `captures_content` now requires positive evidence that what it is judging is git's own patch
+# format at all (drift.py, `_PATCH_HEADER_PREFIX`), so a stand-in that no git invocation could ever
+# emit is no longer a neutral fixture value. Every test below asserts on classification, ordering or
+# accounting -- none of them on this text -- so the assertions are unchanged.
+_MINIMAL_PATCH = "diff --git a/n.md b/n.md\n@@ -1 +1 @@\n-old\n+new\n"
+
+
+def _change(status: str, path: str, old_path: str | None = None, patch: str = _MINIMAL_PATCH) -> StagedChange:
     return StagedChange(status=status, path=path, old_path=old_path, patch=patch)
 
 
@@ -75,7 +83,9 @@ def test_low_similarity_rename_score_still_classifies_as_rename() -> None:
 
 
 def test_patch_text_is_carried_through_unmodified() -> None:
-    patch = "--- a/note.md\n+++ b/note.md\n@@ -1 +1 @@\n-old\n+new\n"
+    # The `diff --git` header is part of the fixture for the same reason as `_MINIMAL_PATCH`'s: git
+    # emits it ahead of the `---`/`+++` pair for every patch, and `captures_content` now requires it.
+    patch = "diff --git a/note.md b/note.md\n--- a/note.md\n+++ b/note.md\n@@ -1 +1 @@\n-old\n+new\n"
     entries = select_spool_entries([_change("M", "note.md", patch=patch)]).entries
     assert entries[0].patch == patch
 
@@ -204,6 +214,36 @@ def test_prose_mentioning_binary_files_mid_hunk_still_captures_content() -> None
     git's own marker."""
     patch = "diff --git a/n.md b/n.md\n@@ -0,0 +1 @@\n+Binary files are excluded from this vault.\n"
     assert captures_content(_change("M", "n.md", patch=patch)) is True
+
+
+def test_an_empty_patch_does_not_capture_content() -> None:
+    """The strongest possible signal that nothing was carried, and the one an "absence of the
+    binary marker" predicate reads as healthy. A real change always produces a patch; an empty one
+    means the diff that was supposed to describe this path produced nothing at all."""
+    assert captures_content(_change("M", "10-areas/note.md", patch="")) is False
+
+
+def test_a_whitespace_only_patch_does_not_capture_content() -> None:
+    assert captures_content(_change("A", "10-areas/note.md", patch="\n \n")) is False
+
+
+def test_a_patch_that_is_not_git_patch_output_does_not_capture_content() -> None:
+    """Defence in depth behind the flags and the scrubbed environment that keep git's own output
+    from being replaced (`vault_git/runner.py`): whatever else a capture is, it is `git diff`'s
+    patch format. Output that never carried a `diff --git` header is not a patch this component
+    can claim carries anything -- the summary line an external diff tool emits in its place is the
+    exact shape this rejects."""
+    assert captures_content(_change("M", "note.md", patch="1 file changed (difftastic-style summary)\n")) is False
+
+
+def test_a_mode_only_change_captures_content_despite_having_no_hunk() -> None:
+    """The other case that rules out an obvious-looking implementation, alongside the pure rename:
+    a permission change produces `old mode`/`new mode` and no hunk body, and loses nothing --
+    content is not what changed. A predicate demanding positive evidence of a hunk would withhold
+    it, and since a mode change persists in the tree it would regenerate every cycle: a wedge, not
+    a pause."""
+    patch = "diff --git a/note.md b/note.md\nold mode 100644\nnew mode 100755\n"
+    assert captures_content(_change("M", "note.md", patch=patch)) is True
 
 
 # --- Hypothesis property: select_spool_entries accounts for every change exactly once -----------

@@ -73,6 +73,14 @@ class SpoolEntry:
 # capture incomplete is what git actually produced, not what the filename suggests it should have.
 _BINARY_PATCH_MARKER = "\nBinary files "
 
+# Every patch `git diff` produces opens with this, whatever the change is -- a creation, a deletion,
+# a mode-only change, a rename with no hunk at all, a non-ASCII or quote-bearing filename, a binary.
+# Requiring it is a *positive* check that what arrived is git's own patch format, standing behind
+# the flags and scrubbed environment that keep the operator's git configuration from replacing that
+# format (`vault_git/runner.py`). A predicate phrased only as "the binary marker is absent" reads
+# every possible non-patch -- an empty string most of all -- as a healthy capture.
+_PATCH_HEADER_PREFIX = "diff --git "
+
 
 def captures_content(change: StagedChange) -> bool:
     """Whether this change's patch actually carries what changed, as opposed to merely asserting
@@ -87,8 +95,18 @@ def captures_content(change: StagedChange) -> bool:
     `--delete` removes the file from iCloud -- destroying the only copy of those bytes anywhere.
 
     A pure rename deliberately passes: `similarity index 100%` / `rename from` / `rename to` has
-    no hunk body either, but the header describes the change completely, so nothing is lost.
-    Keying on git's binary marker rather than on "has a hunk" is what keeps that case captured.
+    no hunk body either, but the header describes the change completely, so nothing is lost. A
+    mode-only change (`old mode` / `new mode`) is the same shape for the same reason. Keying on
+    git's binary marker rather than on "has a hunk" is what keeps both captured -- and a
+    hunk-demanding predicate would not merely be wrong about them, it would *wedge* the cycle,
+    since a mode change persists in the tree and regenerates as the same drift every cycle.
+
+    **What it is not enough to check.** The two guards before the marker are not defensive
+    padding. An empty patch is the strongest possible signal that nothing was carried, and
+    "the binary marker is absent" reads it as healthy; so does a summary line from an external
+    diff tool that replaced git's output entirely. `vault_git/runner.py` is what stops the
+    environment reaching this text at all -- this is the check that the text is what that
+    invocation was supposed to produce.
 
     **This is not a new policy call.** The vault receives markdown only, images are deferred past
     the first pass, and `_attachments/` is a committed placeholder with nothing in it yet
@@ -97,6 +115,8 @@ def captures_content(change: StagedChange) -> bool:
     every component defaults to that posture when it meets something it cannot reconcile. Silently
     deleting the bytes is the one response that policy rules out.
     """
+    if not change.patch.startswith(_PATCH_HEADER_PREFIX):
+        return False
     return _BINARY_PATCH_MARKER not in change.patch
 
 

@@ -22,6 +22,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
+import pytest
 from conftest import push_commit, replicate_config, run_git
 
 from obsidian_tools.local_replicator.cycle import run_cycle
@@ -39,6 +40,28 @@ def _tag_sha(tmp_path: Path) -> str | None:
 def _spooled_by_path(tmp_path: Path) -> dict[str, SpoolEntry]:
     spool_dir = tmp_path / "spool"
     return {entry.path: entry for f in list_spool_files(spool_dir) for entry in [read_spool_entry(f)]}
+
+
+def _hostile_global_git_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str) -> None:
+    """Point git's *global* configuration at a file this test writes, via `GIT_CONFIG_GLOBAL`.
+
+    This is not a weaker stand-in for `~/.gitconfig`: `GIT_CONFIG_GLOBAL` *replaces* the global
+    configuration file git would otherwise read, by git's own documented mechanism, so a setting
+    placed here reaches every git invocation by exactly the path the operator's own `~/.gitconfig`
+    reaches it. That is what makes the tests below evidence about what the environment can still
+    do to us, rather than evidence that we wrote the argv we meant to write -- and it keeps them
+    hermetic (nothing outside `tmp_path` is written, no real user configuration is read), which
+    setting a genuine `~/.gitconfig` would not be.
+    """
+    config_path = tmp_path / "hostile-gitconfig"
+    config_path.write_text(body)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config_path))
+
+
+def _executable_script(path: Path, body: str) -> Path:
+    path.write_text(body)
+    path.chmod(0o755)
+    return path
 
 
 def _failing_spool_writer(fail_on: str) -> Callable[[Path, SpoolEntry], Path]:
@@ -243,6 +266,208 @@ def test_a_binary_does_not_block_the_cycle_once_it_leaves_the_vault(
 
     assert result.uncaptured == ()
     assert result.tag_advanced is True
+
+
+# --- the operator's own git configuration must not reach any decision this cycle makes -----------
+#
+# local-replicator is the one component of this system that runs on a real machine with a real
+# `~/.gitconfig` (docs/DESIGN.md §4 Plane B). Every test below sets a *real* hostile global
+# configuration and drives the *real* cycle through it. None of them assert on argv: an assertion
+# that a flag is present proves only that we wrote the argv we intended, not that the environment
+# can no longer reach the output that argv produces.
+
+
+def test_a_global_diff_external_cannot_replace_the_patch_a_markdown_edit_spools(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The severe half of the defect, and the silent one: `[diff] external = ...` -- a setting
+    difftastic's own README instructs users to add -- replaces `git diff --cached`'s output
+    wholesale with a summary line. The gate reads that summary, finds no binary marker, and calls
+    the cycle captured; the spool entry carries a summary instead of the thought typed on the
+    phone, and the publish rsync's `--delete` then overwrites the device's copy with git's. The
+    note exists nowhere afterwards -- not on the device, not in git, not in the spool -- while
+    `drifted`, `spooled` and `tag_advanced` all read healthy."""
+    external = _executable_script(
+        tmp_path / "hostile-external-diff.sh",
+        "#!/bin/sh\necho '1 file changed (difftastic-style summary)'\n",
+    )
+    _hostile_global_git_config(tmp_path, monkeypatch, f"[diff]\n\texternal = {external}\n")
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+
+    push_commit(seeded_origin, tmp_path, {"00-index.md": "# Home (agent update)\n"}, "agent update")
+    (icloud_dir / "00-index.md").write_text("a thought typed on the phone\n")
+
+    result = run_cycle(config)
+
+    assert result.drifted == ("00-index.md",)
+    spooled = _spooled_by_path(tmp_path)
+    assert "a thought typed on the phone" in spooled["00-index.md"].patch
+    assert "difftastic-style summary" not in spooled["00-index.md"].patch
+
+
+def test_a_global_diff_external_cannot_smuggle_a_binary_past_the_gate(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same setting, against the case the gate exists for: git's binary marker never appears in
+    the replaced output, so the pasted image is spooled as "captured" and the publish deletes the
+    only copy of its bytes."""
+    external = _executable_script(
+        tmp_path / "hostile-external-diff.sh",
+        "#!/bin/sh\necho '1 file changed (difftastic-style summary)'\n",
+    )
+    _hostile_global_git_config(tmp_path, monkeypatch, f"[diff]\n\texternal = {external}\n")
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+
+    (icloud_dir / "_attachments").mkdir(parents=True, exist_ok=True)
+    (icloud_dir / "_attachments" / "screenshot.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00")
+
+    result = run_cycle(config)
+
+    assert result.uncaptured == ("_attachments/screenshot.png",)
+    assert result.tag_advanced is False
+    assert (icloud_dir / "_attachments" / "screenshot.png").read_bytes().startswith(b"\x89PNG")
+
+
+def test_a_global_textconv_driver_cannot_smuggle_a_binary_past_the_gate(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The quieter reach into the same output: a `diff.<driver>.textconv` found through a global
+    `core.attributesFile`. Nothing is replaced wholesale -- git produces an ordinary-looking patch
+    with an ordinary-looking hunk, and no binary marker anywhere, for a file whose actual bytes it
+    never carried."""
+    textconv = _executable_script(
+        tmp_path / "hostile-textconv.sh",
+        "#!/bin/sh\necho 'PNG image data, 800 x 600, 8-bit/color RGBA'\n",
+    )
+    attributes = tmp_path / "hostile-gitattributes"
+    attributes.write_text("*.png diff=img\n")
+    _hostile_global_git_config(
+        tmp_path,
+        monkeypatch,
+        f'[core]\n\tattributesFile = {attributes}\n[diff "img"]\n\ttextconv = {textconv}\n',
+    )
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+
+    (icloud_dir / "_attachments").mkdir(parents=True, exist_ok=True)
+    (icloud_dir / "_attachments" / "screenshot.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00")
+
+    result = run_cycle(config)
+
+    assert result.uncaptured == ("_attachments/screenshot.png",)
+    assert result.tag_advanced is False
+    assert (icloud_dir / "_attachments" / "screenshot.png").read_bytes().startswith(b"\x89PNG")
+
+
+def test_a_global_ignore_file_cannot_hide_a_device_creation_from_the_drift_diff(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same class reached one step earlier than the patch, and the most silent member of it:
+    `core.excludesFile`. Step 3 stages the overlay with `git add -A`, which consults ignore rules
+    for untracked paths -- so a pattern in the operator's global ignore file makes a note created
+    on the phone never appear in `git diff --cached` at all. There is no patch to judge, nothing
+    lands in `uncaptured`, the gate sees a clean cycle, and the publish's `--delete` removes the
+    note from iCloud.
+
+    The vault's own tracked `.gitignore` must keep working (the `.obsidian/` rule depends on it --
+    see the commit "correct the claim that .obsidian churn reaches the spool"), so what closes this
+    has to be scoped to the *user-global* file specifically, not to ignore rules in general."""
+    global_ignore = tmp_path / "hostile-global-gitignore"
+    global_ignore.write_text("phone-*.md\n")
+    _hostile_global_git_config(tmp_path, monkeypatch, f"[core]\n\texcludesFile = {global_ignore}\n")
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+
+    (icloud_dir / "phone-draft.md").write_text("typed on the phone, never seen by git add -A\n")
+
+    result = run_cycle(config)
+
+    assert result.drifted == ("phone-draft.md",)
+    entry = _spooled_by_path(tmp_path)["phone-draft.md"]
+    assert entry.kind == "create"
+    # The publish's `--delete` does remove it from the device this cycle, and that is correct
+    # *because* it was captured first: the spool holds the whole note, and it returns to the device
+    # once the server commits it. That ordering -- captured, then published over -- is the entire
+    # property, and the ignore file removed the "captured" half of it while leaving the other.
+    assert "typed on the phone, never seen by git add -A" in entry.patch
+
+
+def test_a_repository_local_diff_external_cannot_replace_the_patch_either(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path
+) -> None:
+    """The route neutralising the *environment* deliberately cannot close, and the one the flags on
+    the diff invocation exist for: the same setting in the cache clone's own `.git/config`. This is
+    not exotic -- `git config --local diff.external ...` is what an operator debugging a diff in
+    that clone leaves behind, and the clone is a directory on their laptop like any other.
+
+    Repository-local configuration is left readable on purpose (it is where this codebase's own
+    pins live), so nothing about the scrub helps here. An explicit flag overrides configuration
+    from every source at once, which is why the two mechanisms are not redundant."""
+    external = _executable_script(
+        tmp_path / "hostile-external-diff.sh",
+        "#!/bin/sh\necho '1 file changed (difftastic-style summary)'\n",
+    )
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+    run_git("config", "--local", "diff.external", str(external), cwd=tmp_path / "cache-clone")
+
+    (icloud_dir / "00-index.md").write_text("a thought typed on the phone\n")
+
+    result = run_cycle(config)
+
+    assert result.drifted == ("00-index.md",)
+    assert "a thought typed on the phone" in _spooled_by_path(tmp_path)["00-index.md"].patch
+
+
+def test_a_global_hooks_path_cannot_reach_the_tree_this_cycle_publishes(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The knob nobody would have enumerated, which is the point of closing the class rather than
+    the findings: `core.hooksPath`. It names a directory of scripts git *executes*, and the cycle
+    checks out twice per pass -- so a `post-checkout` hook rewrites the parked tree between the
+    checkout and the publish, and the publish rsync then writes that rewrite onto the device over
+    a note the human never touched. No diff flag and no capture predicate is in this path at all;
+    only refusing to read the operator's configuration in the first place stops it.
+
+    Kept as a test rather than as a comment because it is the evidence that the scrub is load-
+    bearing on its own: every other hostile setting here is closed twice over."""
+    hooks_dir = tmp_path / "hostile-hooks"
+    hooks_dir.mkdir()
+    # Hooks run with the working tree as their cwd, so a relative path is all this needs.
+    _executable_script(hooks_dir / "post-checkout", "#!/bin/sh\nprintf 'CLOBBERED BY A GLOBAL HOOK\\n' > 00-index.md\n")
+    _hostile_global_git_config(tmp_path, monkeypatch, f"[core]\n\thooksPath = {hooks_dir}\n")
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+
+    result = run_cycle(config)
+
+    assert result.tag_advanced is True
+    assert (icloud_dir / "00-index.md").read_text() == "# Home\n"
+
+
+def test_the_default_user_ignore_file_cannot_hide_a_device_creation_either(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same hole reached by the route that neutralising git's configuration files does *not*
+    close, and the reason `core.excludesFile` is pinned on the invocation rather than left to the
+    scrub: its default value is a path, `$XDG_CONFIG_HOME/git/ignore` (`~/.config/git/ignore`), so
+    unsetting the config that names it changes nothing -- git reads the file anyway. Verified
+    directly: with every configuration file replaced by `/dev/null`, an ignore file at the default
+    location still made `git add -A` skip the note."""
+    xdg_config_home = tmp_path / "xdg-config"
+    (xdg_config_home / "git").mkdir(parents=True)
+    (xdg_config_home / "git" / "ignore").write_text("phone-*.md\n")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_config_home))
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+
+    (icloud_dir / "phone-draft.md").write_text("typed on the phone, hidden by the default ignore file\n")
+
+    result = run_cycle(config)
+
+    assert result.drifted == ("phone-draft.md",)
+    assert "hidden by the default ignore file" in _spooled_by_path(tmp_path)["phone-draft.md"].patch
 
 
 # --- idempotency from an arbitrary starting state ------------------------------------------------
