@@ -51,9 +51,11 @@ def is_baselined(icloud_vault_dir: Path) -> bool:
     return (icloud_vault_dir / OBSIDIAN_DIR / BASELINE_MARKER).exists()
 
 
-def _iter_obsidian_candidates(source: Path) -> list[PathInfo]:
+def _iter_obsidian_candidates(source: Path) -> tuple[list[PathInfo], list[str]]:
     """Walk `source` (a parked clone's `.obsidian/`) into `PathInfo` candidates for
-    `select_baseline_paths`, relative to `source` itself.
+    `select_baseline_paths`, relative to `source` itself. Returns `(candidates, unreadable)` —
+    `unreadable` names every directory `os.walk` could not enumerate, collected rather than
+    swallowed (see `seed_baseline`, which refuses to call the result complete when this is non-empty).
 
     `os.walk(..., followlinks=False)` is the standard-library equivalent of the non-descent
     guarantee `vault_git/baseline.py`'s own walker documents and hand-rolls with an explicit stack:
@@ -61,11 +63,26 @@ def _iter_obsidian_candidates(source: Path) -> list[PathInfo]:
     directory, say — is ever produced as a candidate in the first place. This walk only has to
     enumerate files to copy, not build `git` pathspecs or tolerate the retry/pathspec-magic concerns
     that walker also carries, so it leans on the library default rather than reusing that function.
-    A directory this process can't read (a transient NFS/iCloud glitch) is skipped via `onerror`,
-    same tolerance `vault_git/baseline.py` documents for the equivalent case.
+
+    A directory this process can't read (a transient NFS/iCloud glitch) is *not* silently skipped
+    the way an earlier revision of this walker did (`onerror=lambda _err: None`, by analogy to the
+    tolerance `vault_git/baseline.py`'s own walker states for the same kind of failure). The analogy
+    does not hold *here*, specifically because of `seed_baseline`'s completion marker: a directory
+    this walk fails to enumerate produces no candidates for anything beneath it, so the copy that
+    follows can quietly finish "successfully" having skipped a whole plugin, and the marker — once
+    written — is the only thing that ever stops this walk from running again. Swallowing the error
+    does not degrade to "retry next cycle" here; it degrades to "permanently correct-looking and
+    wrong" (independent review of this module, ppat/obsidian-tools). Reporting every failure instead
+    lets `seed_baseline` withhold the marker and actually retry — see it for the rest of this
+    argument, including what a withheld marker versus a fully-refused seed each cost the device.
     """
     candidates: list[PathInfo] = []
-    for dirpath, _dirnames, filenames in os.walk(source, onerror=lambda _err: None, followlinks=False):
+    unreadable: list[str] = []
+
+    def _record_unreadable(error: OSError) -> None:
+        unreadable.append(error.filename if isinstance(error.filename, str) else str(error))
+
+    for dirpath, _dirnames, filenames in os.walk(source, onerror=_record_unreadable, followlinks=False):
         current_directory = Path(dirpath)
         for filename in filenames:
             entry = current_directory / filename
@@ -73,11 +90,12 @@ def _iter_obsidian_candidates(source: Path) -> list[PathInfo]:
                 is_file = entry.is_file()
                 is_symlink = entry.is_symlink()
             except OSError:
+                unreadable.append(str(entry))
                 continue
             candidates.append(
                 PathInfo(relative_path=entry.relative_to(source).as_posix(), is_file=is_file, is_symlink=is_symlink)
             )
-    return candidates
+    return candidates, unreadable
 
 
 def seed_baseline(cache_clone_dir: Path, icloud_vault_dir: Path) -> None:
@@ -118,12 +136,35 @@ def seed_baseline(cache_clone_dir: Path, icloud_vault_dir: Path) -> None:
 
     destination = icloud_vault_dir / OBSIDIAN_DIR
     destination.mkdir(parents=True, exist_ok=True)
+    candidates, unreadable = _iter_obsidian_candidates(source)
     copied = 0
-    for relative_path in select_baseline_paths(_iter_obsidian_candidates(source)):
+    for relative_path in select_baseline_paths(candidates):
         target = destination / relative_path
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source / relative_path, target)
         copied += 1
+
+    if unreadable:
+        # Copy what was reachable — it is additive and idempotent (never deletes, per this
+        # module's own docstring), so a device that gets some of its config now is strictly better
+        # off than one that gets none, and nothing here is destroyed by a later cycle finishing the
+        # job. What must NOT happen is the marker: writing it here would make this cycle's gap in
+        # `.obsidian/` — whatever sat under the directory that failed to enumerate — permanent,
+        # since the marker is the only thing that ever stops this walk from running again (module
+        # docstring, "Presence is decided by a completion marker"). Leaving it unwritten means the
+        # next cycle re-walks from scratch and tops up anything still missing once the read error
+        # clears, the same "retried wholesale" property the marker exists to give a crash-interrupted
+        # copy — this is that same property, applied to a walk that finished but wasn't complete.
+        logger.warning(
+            "device .obsidian/ baseline seed incomplete: part of .obsidian/ could not be read this "
+            "cycle; marker withheld so the next cycle retries and tops up what's missing",
+            extra={
+                "event": "device_baseline_seed_incomplete",
+                "file_count": copied,
+                "unreadable_paths": unreadable,
+            },
+        )
+        return
 
     (destination / BASELINE_MARKER).write_text("seeded by obsidian-tools local-replicator\n")
     logger.info("seeded device .obsidian/ baseline", extra={"event": "device_baseline_seeded", "file_count": copied})

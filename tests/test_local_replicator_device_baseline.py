@@ -7,6 +7,7 @@ a completion marker written only after every file has copied, not by the directo
 
 from __future__ import annotations
 
+import stat
 from pathlib import Path
 
 from obsidian_tools.local_replicator.device_baseline import BASELINE_MARKER, is_baselined, seed_baseline
@@ -165,3 +166,44 @@ def test_seed_refuses_a_symlinked_source_obsidian_dir(tmp_path: Path) -> None:
 
     assert is_baselined(icloud) is False
     assert not (icloud / ".obsidian").exists()
+
+
+def test_an_unreadable_subdirectory_withholds_the_marker_but_keeps_what_was_reachable(tmp_path: Path) -> None:
+    """The completion marker exists so a copy that dies partway is retried wholesale rather than
+    mistaken for done (module docstring) — but a swallowed `os.walk` error used to let a copy that
+    *finished cleanly* still be incomplete: a transient unreadable plugin directory produced no
+    candidates for anything beneath it, the rest of `.obsidian/` copied fine, and the marker got
+    written anyway (independent review of this branch: reproduced `.local-replicator-baseline-complete`
+    written with the plugin's files missing, permanently, since the marker is the only thing that
+    ever triggers another attempt).
+
+    Fixed by reporting every walk failure back to `seed_baseline` instead of swallowing it: what
+    *is* reachable this cycle is still copied (additive, idempotent, so a partly-configured device
+    now is strictly better than an unconfigured one, and nothing here is ever destroyed by a later
+    cycle finishing the job) — but the marker is withheld, so `is_baselined` keeps reporting False
+    and the next cycle re-walks and tops up whatever was missing once the read error clears.
+    """
+    clone = tmp_path / "clone"
+    icloud = tmp_path / "icloud"
+    _write(clone / ".obsidian" / "app.json", "{}\n")
+    broken_plugin_dir = clone / ".obsidian" / "plugins" / "broken-plugin"
+    _write(broken_plugin_dir / "main.js", "// plugin code, unreachable while the directory is denied\n")
+    broken_plugin_dir.chmod(0)
+    icloud.mkdir()
+
+    try:
+        seed_baseline(clone, icloud)
+
+        assert is_baselined(icloud) is False
+        assert (icloud / ".obsidian" / "app.json").exists()  # still copied -- reachable, additive
+        assert not (icloud / ".obsidian" / "plugins" / "broken-plugin" / "main.js").exists()
+
+        # The read error clears (an operator fixes the transient permission glitch); the next cycle
+        # tops up the file the first cycle could not reach and only now completes the baseline.
+        broken_plugin_dir.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+        seed_baseline(clone, icloud)
+
+        assert is_baselined(icloud) is True
+        assert (icloud / ".obsidian" / "plugins" / "broken-plugin" / "main.js").exists()
+    finally:
+        broken_plugin_dir.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)  # tmp_path cleanup
