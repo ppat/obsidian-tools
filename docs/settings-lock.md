@@ -356,6 +356,8 @@ git add --force -- \
   .obsidian/appearance.json \
   .obsidian/core-plugins.json \
   .obsidian/community-plugins.json \
+  .obsidian/daily-notes.json \
+  .obsidian/templates.json \
   .obsidian/hotkeys.json \
   .obsidian/types.json \
   .obsidian/snippets/*.css \
