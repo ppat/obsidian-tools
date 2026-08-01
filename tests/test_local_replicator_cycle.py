@@ -304,6 +304,40 @@ def test_cycle_recovers_from_a_working_tree_left_mid_overlay_by_a_prior_crash(
     assert (icloud_dir / "00-index.md").read_text() == "# Home\n"
 
 
+def test_cycle_recovers_from_a_working_tree_left_on_main_by_a_prior_crash(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path
+) -> None:
+    """The residue step 1 actually exists for, and the one its sibling test cannot reach.
+
+    A crash *after* step 5 (reset, check out `main`, pull) leaves the clone on `main`, ahead of
+    `LAST_CHECKOUT`, with the tag still naming the older revision. HEAD is not something the overlay
+    touches -- rsync writes files, it does not move refs -- so unless step 1 forces the tree back to
+    `LAST_CHECKOUT`, the comparison runs against `main` instead of against what was actually last
+    placed in iCloud, and every path the agent changed upstream reads as a device-side *reversion*.
+
+    The sibling crash test plants stray files and staged content, both of which the overlay's own
+    `--delete` and checksum copy neutralise before step 1 could matter -- which is why deleting step
+    1 outright leaves it green. This one plants residue rsync cannot undo.
+    """
+    config = _config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+    parked_at = _tag_sha(tmp_path)
+
+    _push_commit(seeded_origin, tmp_path, {"00-index.md": "# Home (agent update)\n"}, "agent update")
+
+    cache_clone_dir = tmp_path / "cache-clone"
+    run_git("fetch", "-q", "origin", "main", cwd=cache_clone_dir)
+    run_git("checkout", "-q", "-B", "main", "FETCH_HEAD", cwd=cache_clone_dir)
+    assert _tag_sha(tmp_path) == parked_at
+
+    result = run_cycle(config)
+
+    assert result.drifted == ()
+    assert _spooled_by_path(tmp_path) == {}
+    assert result.tag_advanced is True
+    assert (icloud_dir / "00-index.md").read_text() == "# Home (agent update)\n"
+
+
 # --- non-ASCII and quoted filenames, end to end --------------------------------------------------
 
 
