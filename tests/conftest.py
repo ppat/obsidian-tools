@@ -7,15 +7,83 @@ exclusions, fast-forward vs. divergence), so mocking git away would prove nothin
 
 from __future__ import annotations
 
+import os
 import subprocess
 import uuid
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from hypothesis import HealthCheck, settings
 
 from obsidian_tools.config import ReplicateConfig
 from obsidian_tools.vault_git.runner import GitRunner
+
+# --- Hypothesis profiles ---------------------------------------------------------------------
+#
+# Three CI-discipline mitigations, all agreed rather than optional (see
+# /home/coder/.claude/tmp/obsidian-brain/notes/decision-testing-strategy-for-obsidian-tools.md):
+# a run must be reproducible so a property finding a real bug at random on an unrelated PR doesn't
+# read as CI flakiness; a case discovered once must be remembered rather than re-earned by luck on
+# every later run; and deep search belongs out-of-band, not on every PR's critical path.
+#
+# **Deliberately NOT `derandomize=True`, NOT `@seed(...)`, NOT `--hypothesis-seed`.** All three were
+# tried, in that order, and all three turned out to disable exactly the database persistence the
+# second mitigation needs -- not documented as a shared consequence anywhere obvious, so this is
+# recorded here rather than left to be rediscovered:
+#   - `derandomize=True` -- `Settings.__init__` (hypothesis/_settings.py) hard-codes "derandomize=True
+#     implies database=None": passing both raises `InvalidArgument`, and omitting `database` just
+#     sets it to `None` silently.
+#   - `@seed(N)` -- `hypothesis.core.seed()`'s own `accept()` closure does the identical thing by
+#     hand: `test._hypothesis_internal_use_settings = Settings(current_settings, database=None)`.
+#   - `--hypothesis-seed` (equivalently `core.global_force_seed`) -- a third, independent path to
+#     the same outcome: `core.py`'s `run_engine` computes `database_key = None` whenever
+#     `global_force_seed is not None`, and `ConjectureRunner.save_choices` silently no-ops whenever
+#     its `database_key` is `None` (`internal/conjecture/engine.py`) -- confirmed by tracing
+#     `save_choices` directly, since nothing in the settings repr surfaces this path the way the
+#     first two do.
+# All three were verified empirically, not just read off the source: with any one of them active,
+# a real, reproduced failure on this property (see the crash-residue property in
+# tests/test_local_replicator_cycle.py) never created `.hypothesis/examples/` at all; with none of
+# them active, it did, every time. Fixing the *generation seed* and persisting *found examples* are
+# mutually exclusive levers in this Hypothesis version -- not a bug, evidently deliberate (three
+# independent code paths agree), but exactly the kind of composition the doctrine warns against
+# assuming rather than checking.
+#
+# Given that, "an unrelated PR does not go red on a fresh random draw" is bought by the database
+# instead of by fixing the seed: once any run, with any seed, finds a failing example, Hypothesis's
+# own "reuse" phase replays it first on every later run regardless of that run's own seed -- so a
+# bug found once reproduces on every subsequent run deterministically, without needing the whole
+# run's generation pinned. This is Hypothesis's own documented shape for CI, not an improvisation
+# here: `hypothesis.database`'s own `MultiplexedDatabase` docstring gives
+# `settings.load_profile("ci" if os.environ.get("CI") else "dev")` with the *database*, not the
+# seed, as the thing that differs between CI and a laptop. `max_examples` stays modest in the "ci"
+# profile below for a different, complementary reason: it bounds how much of the input space any
+# one run explores fresh, which is what actually limits how often a genuinely new (not-yet-in-the-
+# database) failure can surface for the first time on an unrelated PR.
+#
+# The example database itself is left at its default (`.hypothesis/examples`, relative to the
+# working directory `uv run pytest` runs from -- `current/` in every workflow that uses
+# `setup-repository-tools`, per that action's own `path: current` checkout step) in every profile
+# below, including "deep": a case the scheduled deep run turns up is exactly the kind of thing an
+# ordinary PR run should get for free from the database, rather than needing its own rediscovery.
+# `.github/workflows/test.yaml` restores/saves that same path across runs with `actions/cache` --
+# see the comment there for how the restore was proven to actually take effect, not just configured.
+settings.register_profile("dev", max_examples=25, deadline=None)
+settings.register_profile(
+    "ci",
+    max_examples=25,
+    deadline=None,
+    print_blob=True,  # a failure's minimal example lands directly in the CI log, not just the database
+    suppress_health_check=[HealthCheck.too_slow],
+)
+# Pushed out-of-band (a scheduled workflow, not a PR gate) precisely because it's expensive on
+# purpose: an order of magnitude more examples than any PR run should pay for, in exchange for
+# reaching further into the interaction/ordering space the doctrine says property tests earn their
+# keep in. Findings still land in the same shared database every other profile reads from (above).
+settings.register_profile("deep", max_examples=500, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+
+settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "dev"))
 
 
 def run_git(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
