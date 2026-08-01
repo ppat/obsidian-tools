@@ -66,6 +66,27 @@ message pointing back here.
    command -v obsidian-tools
    ```
 
+5. **Set the Tasks plugin's task format, by hand, on every device this vault reaches** — Obsidian
+   Settings → Tasks → Task format = **Dataview** (`taskFormat: "dataview"`), on this Mac and on
+   every iPhone/iPad that opens the vault. This one cannot ride in on the `.obsidian/` baseline the
+   way the vault's other locked settings do: the Tasks plugin stores it in
+   `.obsidian/plugins/obsidian-tasks-plugin/data.json`, and the baseline allowlist withholds *every*
+   plugin's `data.json` categorically, because that filename is also where a plugin keeps its
+   credentials — the Local REST API bearer token included
+   (`obsidian_tools/vault_git/baseline_selector.py`, `ppat/obsidian-tools#3`). Carving out one
+   plugin's `data.json` would turn that categorical rule into a per-plugin judgement call, which is
+   the mistake the rule exists to prevent — so this setting is set by hand per device instead, and a
+   freshly seeded device does not arrive with it.
+
+   Left unset the plugin defaults to the emoji format, while the vault mandates the bracket
+   inline-field form (the vault's own `CLAUDE.md` section 11; `docs/settings-lock.md` "Tasks", which
+   also records the minimum Obsidian version every device needs for that format to render). Nothing
+   reports the mismatch: a task written on that device carries the wrong format, this component's
+   drift capture publishes the line into the vault as ordinary human-authored content, and mixed
+   formats are terminal — there is no converter, upstream closed mixed-format support
+   `not_planned`, and some tasks in a mixed vault simply stop parsing. Set it on every device or on
+   none.
+
 ## Install
 
 This installs **two** LaunchAgents: the replication cycle itself (`replicate`), and a separate one

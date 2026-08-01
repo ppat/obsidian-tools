@@ -35,11 +35,47 @@ from dataclasses import dataclass
 # updates every session — they are excluded from this baseline by never appearing on either list
 # below, not by a denylist entry naming them specifically (see the module docstring for why that
 # distinction is the whole point).
+#
+# `daily-notes.json` and `templates.json` are the *configuration* of two core plugins that
+# `core-plugins.json` only records as enabled, and they carry the half of the Phase 1 settings lock
+# nothing else here captures (docs/DESIGN.md Sec 7): of the five retroactively-painful settings that
+# phase exists to fix in place, new-note location and the attachment folder land in `app.json` and
+# the property types in `types.json`, but the daily-note format/folder/template and the template
+# folder live only in these two. Absent them a device runs Daily Notes at its defaults — folder =
+# vault root, no template — and has no route to `_templates/` at all, on the one write path with no
+# server-side gate (Templater is deliberately not installed; docs/settings-lock.md "Templates and
+# daily notes").
+#
+# They are safe to capture for a structural reason rather than a per-file judgement, which is what
+# distinguishes this from carving an exception into `PLUGIN_CODE_FILES` below. The credential
+# surface sits on the other side of the core/community line: a plugin's own state reaches disk
+# through `Plugin.saveData`, documented as writing to `data.json` in that plugin's own folder, and
+# Obsidian's "Store secrets" guide names that file as the thing it wants secrets *out* of ("secrets
+# are stored in plaintext alongside other plugin data") — which is why `SecretStorage` exists as of
+# 1.11.4. This allowlist refuses that path categorically, along with every other name in a plugin
+# directory bar the three below. Obsidian draws the same line itself: its own Sync replicates core
+# plugin settings by default and leaves community plugins to be opted in.
+#
+# The two files are first-party *core* plugin config, and neither plugin has a network surface, an
+# account or any authentication to hold a credential for (unlike Sync, Publish and Web viewer, which
+# do). Between them they hold date/time format strings, two vault-relative folder paths, a template
+# path and a boolean — no free-form value and, across the ~1,900 instances of these two filenames
+# indexed on GitHub, not one URL. Nor is either known to churn: Obsidian's only documented
+# gitignore-this warning names `workspace.json`/`workspaces.json` and nothing else (docs/DESIGN.md
+# Sec 8a D3), and no report of either file being rewritten other than by a settings change turns up
+# anywhere, including the obsidian-git issue tracker where git users would raise it.
+#
+# The residual is a schema question, not a path one, and is recorded rather than solved: these are
+# path entries, so a key Obsidian adds to either file in a future version is captured sight unseen.
+# `autorun` in `daily-notes.json` is already undocumented — the key set is known empirically, not
+# from Obsidian's own docs, which document these plugins' settings panes and never their JSON.
 BASELINE_TOP_LEVEL_FILES = (
     "app.json",
     "appearance.json",
     "core-plugins.json",
     "community-plugins.json",
+    "daily-notes.json",
+    "templates.json",
     "hotkeys.json",
     "types.json",
 )

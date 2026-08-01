@@ -25,6 +25,11 @@ _CREDENTIAL_SHAPED_BASENAMES = ("data.json", "secrets.json", ".env", "credential
 
 _GLOB_METACHAR_BASENAMES = ("weird[1].css", "star*.css", "question?.css")
 
+# The two core-plugin configuration files added to the top-level allowlist for the Phase 1 settings
+# lock (`docs/DESIGN.md` Sec 7). Held here as a table so the "selected at the top level" and "nowhere
+# but the top level" cases below are driven by one list rather than two that can drift apart.
+_PHASE_ONE_SETTINGS_FILES = ("daily-notes.json", "templates.json")
+
 
 def _select(*infos: PathInfo) -> list[str]:
     return select_baseline_paths(infos)
@@ -48,6 +53,47 @@ def test_top_level_symlink_is_excluded_even_with_an_allowlisted_name() -> None:
 
 def test_top_level_directory_is_never_selected_even_with_an_allowlisted_name() -> None:
     assert _select(PathInfo("app.json", is_file=False, is_symlink=False)) == []
+
+
+def test_phase_one_settings_files_are_selected_at_the_top_level() -> None:
+    """`daily-notes.json` and `templates.json` carry the daily-note format/folder/template and the
+    template folder -- the two Phase 1 settings no other allowlisted file holds. Without them a
+    device runs Daily Notes at its defaults (folder = vault root, no template) and cannot reach
+    `_templates/` at all."""
+    for basename in _PHASE_ONE_SETTINGS_FILES:
+        assert _select(PathInfo(basename, is_file=True, is_symlink=False)) == [basename]
+
+
+def test_phase_one_settings_files_are_selected_alongside_the_rest_of_the_top_level() -> None:
+    candidates = [PathInfo(basename, is_file=True, is_symlink=False) for basename in ("app.json", "types.json")]
+    candidates += [PathInfo(basename, is_file=True, is_symlink=False) for basename in _PHASE_ONE_SETTINGS_FILES]
+    assert select_baseline_paths(candidates) == ["app.json", "daily-notes.json", "templates.json", "types.json"]
+
+
+def test_phase_one_settings_files_are_symlink_checked_like_every_other_allowlisted_name() -> None:
+    for basename in _PHASE_ONE_SETTINGS_FILES:
+        assert _select(PathInfo(basename, is_file=True, is_symlink=True)) == []
+        assert _select(PathInfo(basename, is_file=False, is_symlink=False)) == []
+
+
+def test_phase_one_settings_names_are_excluded_anywhere_but_the_top_level() -> None:
+    """The load-bearing half of adding these two names: they were added to
+    `BASELINE_TOP_LEVEL_FILES`, which `_is_allowlisted` consults **only** on the `len(parts) == 1`
+    branch. So the same basename one level down, inside a plugin directory, or under `themes/` /
+    `snippets/` must still be refused -- a plugin is free to name its own state file anything,
+    including one of these, and a widening that matched on basename alone would admit it."""
+    for basename in _PHASE_ONE_SETTINGS_FILES:
+        for path in (
+            f"plugins/obsidian-tasks-plugin/{basename}",
+            f"plugins/some-plugin/nested/{basename}",
+            f"themes/Minimal/{basename}",
+            f"snippets/{basename}",
+            f"snippets/sub/dir/{basename}",
+            f"sub/{basename}",
+        ):
+            assert _select(PathInfo(path, is_file=True, is_symlink=False)) == [], (
+                f"{path} was selected -- the top-level allowlist must not match at any other depth"
+            )
 
 
 # --- themes/ and snippets/ ---------------------------------------------------------------------
