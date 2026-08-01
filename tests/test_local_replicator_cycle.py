@@ -1322,6 +1322,51 @@ def test_a_device_rename_is_not_marked_as_matching_upstream(
     assert entry.matches_upstream is False
 
 
+def test_an_ordinary_gated_cycle_also_produces_matches_upstream_on_a_real_human_edit(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path
+) -> None:
+    """**No crash anywhere in this test**, and the entry still comes out looking exactly like #36
+    residue. This is the case that governs how `matches_upstream` may be read at Phase 5, and it is
+    the reason the field licenses far less than an earlier reading of it claimed.
+
+    `upstream_sha` is only "the revision whose tree the last publish placed in iCloud" when the
+    previous cycle both fetched *and* published. Step 5 fetches unconditionally while step 6 is
+    gated, so any withheld cycle -- a crash, a spool-write failure, or, as here, the wholly ordinary
+    gate on a pasted image (`captures_content`) -- leaves the remote-tracking ref ahead of anything
+    iCloud has ever seen, and it runs further ahead every cycle the gate persists.
+
+    In that state a human's own deletion of a note upstream happens to have deleted too records
+    `matches_upstream: true` with `baseline_sha != upstream_sha`: byte-for-byte the signature of
+    republished upstream content. The observation is *correct* -- the path genuinely is absent from
+    `upstream_sha` -- but a consumer treating that signature as proof of crash residue would discard
+    a genuine human deletion. Note also that this needed no content coincidence at all, only a path
+    coincidence, which is a far likelier thing for an agent reorganising upstream to produce."""
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    push_commit(seeded_origin, tmp_path, {"10-areas/note.md": "a note that exists in both places\n"}, "add note")
+    run_cycle(config)
+    baseline = _tag_sha(tmp_path)
+
+    # An agent deletes the note upstream. Independently, the device acquires an out-of-contract
+    # binary, which gates every subsequent cycle's publish and tag advance.
+    _push_tree_change(seeded_origin, tmp_path, "delete note", lambda clone: (clone / "10-areas/note.md").unlink())
+    (icloud_dir / "pasted.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x01\x02\x03")
+
+    gated = run_cycle(config)
+    assert gated.uncaptured == ("pasted.png",)
+    assert gated.tag_advanced is False
+    assert _tag_sha(tmp_path) == baseline  # ...while the fetch inside the same cycle moved on
+
+    # Now the human deletes the note on the device, for their own reasons.
+    (icloud_dir / "10-areas" / "note.md").unlink()
+
+    run_cycle(config)
+
+    entry = _spooled_by_path(tmp_path)["10-areas/note.md"]
+    assert entry.kind == "delete"
+    assert entry.matches_upstream is True
+    assert entry.baseline_sha != entry.upstream_sha
+
+
 def test_a_device_deletion_is_not_hidden_by_an_unrelated_rename_pairing_against_upstream(
     tmp_path: Path, seeded_origin: Path, icloud_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

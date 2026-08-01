@@ -197,26 +197,45 @@ component, since they were never captured anywhere.
 
 ### `"event": "drift_matches_upstream"` — drift whose content the upstream revision already holds
 
-Logged at `INFO`, once per cycle it occurs in. It is **not** a fault and nothing is gated by it: the
+Logged at `INFO`, once per cycle it occurs in. It is **not** a fault, nothing is gated by it, and the
 paths it names were spooled like any other drift. What it records is that this cycle found drift
 whose content is byte-identical to the upstream revision the clone already knew, and that each of
 those spool entries carries that observation (`matches_upstream`, alongside `baseline_sha` and
 `upstream_sha` — `obsidian_tools/local_replicator/drift.py`'s `SpoolEntry`).
 
-The ordinary cause is a crash in the window between step 6 and step 7 (`ppat/obsidian-tools#36`):
-the publish placed the fresh tree in iCloud, the process died before `LAST_CHECKOUT` advanced, and
-the next cycle's comparison therefore reads everything that upstream commit touched as device-side
-drift. The line's own `baseline_sha` and `upstream_sha` are the signature — they differ, meaning a
-previous cycle moved origin past the tag without advancing it. Seeing it once after an unclean
-shutdown, a laptop sleeping mid-cycle or a `launchctl bootout` is expected. Seeing it on cycles that
-were never interrupted is worth investigating.
+**It is an observation, not a diagnosis, and it must not be read as one.** At least two quite
+different situations produce it, and this component cannot tell them apart:
 
-**Remedy: none, and deliberately so.** The cycle self-heals — this cycle publishes and advances the
-tag as normal, and the next one sees no drift. The device does not suppress the entries, because
-deciding a drifted path is not a human's edit is a judgement reserved for the server
-(`docs/DESIGN.md` §1.5 R2), and because a human edit that happens to reproduce upstream
-byte-for-byte is indistinguishable from this here. Until `drift-processor` exists (Phase 5) the
-drainer discards everything it reads, so the only cost today is a few spool entries.
+- A crash in the window between step 6 and step 7 (`ppat/obsidian-tools#36`) — the publish placed
+  the fresh tree in iCloud, the process died before `LAST_CHECKOUT` advanced, so the next cycle
+  reads everything that commit touched as device-side drift. This is genuinely republished upstream
+  content.
+- **A wholly ordinary gated cycle.** Step 5 fetches unconditionally while step 6 is gated, so any
+  withheld cycle — including the everyday `drift_uncaptured` case above — leaves the
+  remote-tracking ref ahead of anything iCloud has seen, and further ahead every cycle the gate
+  persists. A human edit that happens to match that ref is then reported here even though it is a
+  perfectly real device-side edit.
+
+`baseline_sha != upstream_sha` does **not** separate the two: a gated cycle produces it as readily
+as a crash, and gated cycles are far more common. The trap is sharpest for **deletions and
+renames**, where no content coincidence is needed at all — a human deleting a note that an agent
+independently deleted or renamed upstream is enough.
+
+**Remedy: usually none.** In the common case the cycle self-heals: it publishes and advances the tag
+as normal, and the next cycle sees no drift. Two exceptions:
+
+- If this line appears **alongside `drift_uncaptured`**, the cycle is *not* self-healing — it is
+  gated, and it will keep re-spooling the same drift until you apply that section's remedy. Act on
+  `drift_uncaptured`; this line is a symptom of the same pause.
+- If the upstream commit that was republished carried a **binary**, the cycle is wedged rather than
+  paused: the binary reads as a device-side creation, `captures_content` refuses it, and every
+  subsequent cycle repeats identically. Remove the file from the iCloud vault directory and let the
+  next cycle run.
+
+The device does not suppress these entries, because deciding a drifted path is not a human's edit is
+a judgement reserved for the server (`docs/DESIGN.md` §1.5 R2), and because a human edit reproducing
+upstream is genuinely indistinguishable from residue here. Until `drift-processor` exists (Phase 5)
+the drainer discards everything it reads, so the only cost today is a few spool entries.
 
 ### A paused cycle re-spools the same drift every cycle until the pause clears
 

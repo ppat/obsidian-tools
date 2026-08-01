@@ -42,9 +42,15 @@ indistinguishable from residue here, so a suppressing device would silently drop
 step 3 does instead is *observe*: which baseline it compared against, which upstream revision the
 clone knew at that moment, and whether each drifted path's content is byte-identical to it
 (`_observe_upstream`, and `drift.SpoolEntry`'s own docstring). Every path is still spooled. This is
-the moment -- the only moment -- at which the iCloud tree, its baseline, and the revision that last
-published into it all exist together; nothing downstream can reconstruct it, which is why not
-recording it would be the actual loss.
+the moment -- the only moment -- at which the iCloud tree, its baseline, and the revision the clone
+knew all exist together; nothing downstream can reconstruct it, which is why not recording it would
+be the actual loss.
+
+**Recording it is not the same as explaining it, and the gap matters.** These observations narrow
+what Phase 5 has to guess at; they do not identify crash residue, and `SpoolEntry`'s docstring is
+explicit that no combination of them does. The same "upstream revision ahead of the tag" state that
+a step 6/7 crash produces is produced by every *withheld* cycle too -- step 5's fetch is
+unconditional while step 6 is gated -- and a withheld cycle is the ordinary case, not the rare one.
 
 **Idempotent from any starting state.** Step 1 does not trust that the parked clone is still
 sitting at `LAST_CHECKOUT` just because the previous cycle *should* have left it there -- a crash at
@@ -188,23 +194,24 @@ def run_cycle(config: ReplicateConfig, *, spool_writer: SpoolWriter = write_spoo
         drifted = [change.path for change in changes]
         # Read while the overlay is still staged and before the fetch below moves the
         # remote-tracking ref: this is the one moment the iCloud tree, the baseline it was compared
-        # against, and the upstream revision that last published into it all coexist
-        # (ppat/obsidian-tools#36). Nothing downstream can reconstruct it, so it is recorded on
-        # every entry rather than acted on here.
+        # against, and the upstream revision the clone knows all coexist (ppat/obsidian-tools#36).
+        # Nothing downstream can reconstruct it, so it is recorded on every entry rather than acted
+        # on here.
         upstream = _observe_upstream(runner, branch=config.branch)
         selection = select_spool_entries(changes, baseline_sha=previous_checkout, upstream=upstream)
         entries = selection.entries
-        republished = [entry.path for entry in entries if entry.matches_upstream]
-        if republished:
-            # Not a warning and not a gate: the entries were spooled like any others, and what to
-            # make of them is Phase 5's call. Logged because this is the only place an operator can
-            # ever see that a cycle died in the step 6/7 window -- `baseline_sha != upstream_sha`
-            # with content already matching upstream is that crash's whole signature.
+        matching_upstream = [entry.path for entry in entries if entry.matches_upstream]
+        if matching_upstream:
+            # Not a warning, not a gate, and deliberately not phrased as a diagnosis: the entries
+            # were spooled like any others, and what to make of them is Phase 5's call. An operator
+            # reading this line is being told what was observed, not what happened -- the same
+            # content arises from a crash in the step 6/7 window and from a wholly ordinary gated
+            # cycle, and this component cannot tell them apart (`drift.SpoolEntry`).
             logger.info(
                 "drift on paths whose content already matches the known upstream revision; spooled and annotated",
                 extra={
                     "event": "drift_matches_upstream",
-                    "paths": republished,
+                    "paths": matching_upstream,
                     "baseline_sha": previous_checkout,
                     "upstream_sha": None if upstream is None else upstream.sha,
                 },

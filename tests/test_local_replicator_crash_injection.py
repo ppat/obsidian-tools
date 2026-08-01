@@ -58,6 +58,20 @@ retiring the false half cannot quietly take the true half with it:
   the field: "the mark is there" would hold even if the mark were wrong, which is the failure mode
   worth guarding. The two shas each entry carries are checked the same way, against the refs read
   off real git immediately before the cycle that wrote it.
+- **An independent git oracle covers the entry shape neither direction can see**
+  (`delete_observations_agree_with_real_git`). Deletions are structurally invisible to both: one
+  exempts them, the other cannot fire on them at all. See that invariant, and the measurements in
+  `every_spool_entry_records_what_it_observed_about_upstream`.
+
+**How often these actually fire, measured rather than assumed.** At `max_examples=25` -- the depth
+both the `dev` and `ci` profiles run (`tests/conftest.py`) -- direction one fires **zero** times;
+it needs a crash and an upstream commit in the right order, which the generator reaches only
+deeper. At 500 (the scheduled `deep` job) it fires on the order of 150 times. So on an ordinary PR
+this invariant's first direction is close to dormant, and the deterministic
+`test_a_crash_between_publish_and_the_tag_advance_leaves_correctly_annotated_drift` below is what
+actually backstops ppat/obsidian-tools#36 every run. Direction two and the git oracle are not
+dormant: both fire in the hundreds at 25 examples. Recorded here rather than left implied, because
+"the harness covers it" reads very differently once you know which job it covers it in.
 """
 
 from __future__ import annotations
@@ -183,8 +197,9 @@ class CrashInjectionMachine(RuleBasedStateMachine):
         self.open_markers: set[str] = set()
         # Every marker a device action has *ever* minted, monotonically growing -- unlike
         # `open_markers` (which shrinks once a marker is superseded or drained), this never
-        # forgets one, because `upstream_content_never_misattributed` needs to recognize a device's
-        # own handiwork inside an *already-spooled, possibly long-drained* patch (below).
+        # forgets one, because `every_spool_entry_records_what_it_observed_about_upstream` needs to
+        # recognize a device's own handiwork inside an *already-spooled, possibly long-drained*
+        # patch (below).
         self._device_markers: set[str] = set()
         self.upstream_markers: set[str] = set()
         # Upstream markers this instance has watched a real `publish` place in the iCloud tree
@@ -345,6 +360,27 @@ class CrashInjectionMachine(RuleBasedStateMachine):
         )
         run_git("push", "-q", "origin", "main", cwd=clone)
         self.upstream_markers.add(marker)
+
+    @rule(path=st.sampled_from(_PATHS))
+    def upstream_delete(self, path: str) -> None:
+        """An agent removing a note upstream -- reorganising, archiving after a roll-up (§5 Salience
+        and consolidation), any of the ordinary reasons the vault loses a path.
+
+        Added because its absence was silently doing load-bearing work: with `upstream_commit` the
+        only upstream rule, upstream could never *lack* a path the device also lacked, so an entire
+        class of drift -- a deletion whose path is gone on both sides -- was unreachable, and the
+        delete exemption in `every_spool_entry_records_what_it_observed_about_upstream` read as a
+        structural fact about the system when it was really a fact about this alphabet."""
+        clone = self._root / f"upstream-clone-{uuid.uuid4().hex}"
+        run_git("clone", "-q", str(self.origin), str(clone), cwd=self._root)
+        if not (clone / path).exists():
+            return  # already gone upstream; nothing to commit, and an empty commit would be a lie
+        (clone / path).unlink()
+        run_git("add", "-A", cwd=clone)
+        run_git(
+            "-c", "user.name=agent", "-c", "user.email=agent@example.invalid", "commit", "-q", "-m", "delete", cwd=clone
+        )
+        run_git("push", "-q", "origin", "main", cwd=clone)
 
     # --- rules: the cycle itself, clean and crashed ----------------------------------------------
 
@@ -515,12 +551,19 @@ class CrashInjectionMachine(RuleBasedStateMachine):
         here. In the real world a human can reproduce upstream byte-for-byte by coincidence, and
         `matches_upstream: true` would then be a correct observation of that.
 
-        A delete entry's patch shows whatever content the path *had*, not what a device wrote, so
-        direction one cannot read it: it is exempt structurally rather than by inference, because
-        this rule set never gives upstream content a way to be deleted (`upstream_commit` only ever
-        writes), so a delete entry can only originate from `device_delete`/`device_rename`.
-        Direction two still applies to it, and is where a device's deletion of a note upstream
-        still holds would be caught being recorded as upstream residue."""
+        **Both directions are blind to deletions, and neither can be fixed by rewording them.**
+        Direction one cannot read a delete entry because its patch shows the content the path
+        *had* -- an upstream marker in there says which content was removed, never who removed it,
+        so a device's own deletion of a path whose last published content came from upstream would
+        trip it falsely. Direction two cannot fire on one either, and that is measured, not
+        assumed: a delete patch shows the *baseline's* content at that path, the baseline is always
+        an upstream commit, and Phase 2 never writes a device edit upstream -- so a `HUMAN-` marker
+        can never appear in a deletion's patch at all. Instrumented over 200 examples: direction
+        two fires 644 times, **zero** of them on a deletion, while 855 delete entries pass through
+        unchecked, 73 of them recording `matches_upstream: true`.
+
+        That blind spot is covered by `delete_observations_agree_with_real_git` below, which needs
+        no marker vocabulary and so is not subject to either limit."""
         for spool_file in list_spool_files(self.spool_dir):
             entry = read_spool_entry(spool_file)
             assert entry.baseline_sha is not None, f"entry for {entry.path!r} records no baseline it compared against"
@@ -547,6 +590,46 @@ class CrashInjectionMachine(RuleBasedStateMachine):
                     f"matches_upstream={entry.matches_upstream!r}. Spooling it is correct; failing to "
                     "record the one observation that lets drift-processor refuse it `authority: human` "
                     "is ppat/obsidian-tools#36"
+                )
+
+    @invariant()
+    def delete_observations_agree_with_real_git(self) -> None:
+        """The independent oracle for the one entry shape the marker-based invariant above cannot
+        see. For a deletion, `matches_upstream` reduces to a pure git question -- is this path
+        present in `upstream_sha`'s tree -- answerable straight out of the object store, with no
+        index, no patch parsing and no marker vocabulary. So it is asked of git directly, rather
+        than re-derived from the same `differing_paths` set the product computed its own answer
+        from: an oracle that recomputes the implementation is worth nothing, one that reaches the
+        same fact by a different route is worth having.
+
+        That difference in route is the point. This reads the recorded `upstream_sha` and the
+        recorded `path`, so it can fail on a wrong sha, an inverted observation, or a
+        `differing_paths` that silently dropped a path. Measured, so the claim stays honest: an
+        inverted observation is caught here within seconds, while the one real dropped-path defect
+        this suite knows about -- rename detection left on in the identity diff
+        (`vault_git/runner.py`, `_IDENTITY_DIFF_FLAGS`) -- is *not* reached by this generator at
+        `ci` depth, and is caught instead by the deterministic
+        `test_a_device_deletion_is_not_hidden_by_an_unrelated_rename_pairing_against_upstream`. This
+        invariant is capable of that class; it is not this suite's evidence for that case.
+
+        A rename gets the half of the same question that is equally pure: `matches_upstream: true`
+        claims the old path is gone upstream, so it must be. The new path's half needs the staged
+        content, which no longer exists by the time an invariant runs, and is left to the
+        marker-based invariant above."""
+        for spool_file in list_spool_files(self.spool_dir):
+            entry = read_spool_entry(spool_file)
+            if entry.upstream_sha is None:
+                continue
+            if entry.kind == "delete":
+                present_upstream = self.runner.path_exists_at(entry.upstream_sha, entry.path)
+                assert entry.matches_upstream is not present_upstream, (
+                    f"deletion of {entry.path!r} records matches_upstream={entry.matches_upstream!r}, but git "
+                    f"says the path is {'present in' if present_upstream else 'absent from'} {entry.upstream_sha}"
+                )
+            if entry.kind == "rename" and entry.old_path is not None and entry.matches_upstream is True:
+                assert not self.runner.path_exists_at(entry.upstream_sha, entry.old_path), (
+                    f"rename to {entry.path!r} records matches_upstream=True, which claims its old path "
+                    f"{entry.old_path!r} is gone upstream -- but git still finds it at {entry.upstream_sha}"
                 )
 
     @invariant()

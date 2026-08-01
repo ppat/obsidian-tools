@@ -68,10 +68,18 @@ class UpstreamComparison:
     `sha` is `refs/remotes/origin/<branch>` as the parked clone held it **before this cycle's
     fetch**, and that is the load-bearing choice. The drift enumeration runs ahead of the pull
     (docs/DESIGN.md §2 item 10, step 3 before step 5), so this is the only upstream revision
-    observable at that moment -- and it is also the correct one, because it is the revision whose
-    tree the last publish placed in iCloud. Measuring against the revision this cycle is *about* to
-    fetch would report a human's edit as upstream content whenever an agent happened to write the
-    same text upstream in between, which is the one error direction that loses an edit.
+    observable at that moment. Measuring against the revision this cycle is *about* to fetch would
+    report a human's edit as upstream content whenever an agent happened to write the same text
+    upstream in between, which loses an edit.
+
+    **It is not "the revision whose tree the last publish placed in iCloud", and an earlier version
+    of this docstring said so wrongly.** That holds only when the previous cycle both fetched and
+    published. Step 5 fetches unconditionally while step 6 is gated, so *every* withheld cycle --
+    a crash in the step 6/7 window, a spool-write failure, and, far more commonly, an ordinary gate
+    on a pasted image (`captures_content`) -- leaves this ref ahead of anything iCloud has seen,
+    and it runs further ahead every cycle the gate persists. All this field can honestly claim is
+    the revision the clone *knew*. What follows from that for `matches_upstream` is spelled out on
+    `SpoolEntry`, because the consequence is a real one, not a caveat.
 
     `differing_paths` is `git diff --cached --name-only` against `sha`
     (`GitRunner.staged_paths_differing_from`): every path where the staged overlay is not
@@ -118,13 +126,47 @@ class SpoolEntry:
       against: "not determinable" and "determined to differ" are different facts and must not be
       spelled the same way.
 
-    Deliberately not recorded: any derived claim these three already imply. `baseline_sha !=
-    upstream_sha` is exactly the signature of a previous cycle that moved origin past the tag
-    without advancing it -- a crash in the step 6/7 window, or a gate withholding it -- and a
-    consumer can read that off the two shas. Adding a `previous_cycle_incomplete` field would state
-    the same fact one interpretation further along, and distinguishing *crashed* from *gated* would
-    need durable state carried between cycles: one more thing a crash can strand, which is the
-    objection that already ruled out an intent marker and `git stash` here.
+    **What `matches_upstream: true` licenses, and what it does not.** It licenses exactly one
+    inference: these bytes are bytes `upstream_sha` already holds, so admitting this edit adds
+    nothing that is not already upstream. **It is not evidence of crash residue**, and reading it
+    that way discards real human edits. Three things have to be true at once for it to be residue
+    -- the previous cycle published, it then died before advancing the tag, and this path was in
+    what it published -- and the entry evidences none of them.
+
+    Nor does `baseline_sha != upstream_sha` rescue the inference, though it is tempting: it says
+    only that a previous cycle fetched without advancing the tag, which a gated cycle does just as
+    readily as a crashed one, and gated cycles are the common case (`captures_content`'s own
+    docstring calls a pasted image ordinary Tuesday behaviour). The pair `matches_upstream: true`
+    **and** `baseline_sha != upstream_sha` is reachable with no crash anywhere -- see
+    `test_an_ordinary_gated_cycle_also_produces_matches_upstream_on_a_real_human_edit`, where a
+    human deletes a note an agent had independently deleted upstream, and the entry is
+    indistinguishable from residue.
+
+    **Deletions and renames are where this bites hardest, and the error runs the *unsafe* way.**
+    For a modification the observation needs a byte-for-byte content coincidence, which is rare.
+    For a deletion it needs only a *path* coincidence -- the human deleted a note, upstream also no
+    longer has it -- which an agent reorganising, renaming or archiving upstream produces easily.
+    So `matches_upstream: true` on a `delete` or a `rename` carries markedly less information than
+    on a `modify`, and a consumer that treats them alike will be wrong about deletions first.
+
+    **Can the device tell the two states apart? No, and that is worth stating plainly** rather than
+    leaving Phase 5 to assume otherwise. The distinguishing physical fact is whether the previous
+    cycle's publish ran, and nothing in the tree records it: the same cycle re-derives its whole
+    world from `LAST_CHECKOUT`, iCloud and origin every time, by design. Recovering it would need
+    durable state carried between cycles -- the objection that already ruled out an intent marker
+    and `git stash` here, since a crash can strand it, and a stranded marker would mislead in
+    exactly the state it exists to describe. One cheap heuristic does exist and is deliberately not
+    recorded as a field: in a cycle that follows a real publish, every path that differs from
+    `upstream_sha` is also a drifted path, whereas after a *withheld* publish the paths upstream
+    changed are still sitting at the baseline's version in iCloud and so differ without drifting.
+    It is a strong hint, not a decision procedure -- it collapses when the human happened to touch
+    every path upstream changed, and it is contaminated by `.obsidian/` being excluded from publish
+    but not from the overlay -- so it belongs with the Phase 5 consumer that can validate it, not
+    guessed at here ahead of one. The argument is recorded in ppat/obsidian-tools#42.
+
+    Deliberately not recorded, likewise: a `previous_cycle_incomplete` field. `baseline_sha !=
+    upstream_sha` already says that much, and saying it again one interpretation further along
+    would only make the wrong reading above easier to reach.
     """
 
     kind: SpoolEntryKind
@@ -229,17 +271,20 @@ def matches_upstream(change: StagedChange, upstream: UpstreamComparison | None) 
     Phase 5 consumer cannot reconstruct from the patch alone (ppat/obsidian-tools#36).
 
     An *observation*, not a verdict: it says these bytes are the bytes upstream already holds. It
-    does not say who typed them, and deliberately cannot -- a human edit that happens to reproduce
-    upstream byte-for-byte is indistinguishable from crash residue by construction, and nothing on
-    the device can tell them apart. That is exactly why the decision belongs to `drift-processor`
-    and this stays a fact.
+    does not say who typed them, and deliberately cannot -- a human edit that reproduces upstream is
+    indistinguishable from crash residue by construction, and nothing on the device can tell them
+    apart. `SpoolEntry`'s docstring states exactly what a `True` here licenses downstream and what
+    it emphatically does not; read that before building anything on this value, because the
+    plausible reading of it is the wrong one.
 
     Every path, not just `change.path`, and that is what makes a rename honest: upstream renaming
     `a.md` to `b.md` leaves `b.md` identical *and* `a.md` gone, while a device rename onto a path
     that coincidentally matches upstream leaves `a.md` still sitting upstream. Requiring both halves
     is what keeps the second from being recorded as the first. A deletion falls out of the same
     rule with no special case: `differing_paths` lists a path present on exactly one side, so a path
-    absent from both the overlay and upstream simply never appears there.
+    absent from both the overlay and upstream simply never appears there -- but note that this makes
+    a deletion the *cheapest* shape for `True` to arise on, since it needs only a path coincidence
+    where a modification needs a byte-for-byte one.
 
     `None` rather than `False` when there is no upstream revision to measure against: "no
     observation was possible" is a different fact from "observed to differ", and a consumer that
