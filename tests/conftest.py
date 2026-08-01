@@ -115,14 +115,29 @@ def replicate_config(tmp_path: Path, origin: Path, icloud: Path) -> ReplicateCon
     )
 
 
-def push_commit(origin: Path, tmp_path: Path, files: dict[str, str], message: str) -> None:
-    """Simulates the git committer taking and pushing another cycle's commit."""
+def push_commit(
+    origin: Path,
+    tmp_path: Path,
+    files: dict[str, str],
+    message: str,
+    *,
+    binary_files: dict[str, bytes] | None = None,
+) -> None:
+    """Simulates the git committer taking and pushing another cycle's commit.
+
+    `binary_files` is how a test gets a *tracked* binary into history -- the state in which the
+    capture gate's failure modes are reachable at all, since an untracked one can be made to
+    disappear by deleting it, and a tracked one cannot."""
     clone = tmp_path / f"push-clone-{uuid.uuid4().hex}"
     run_git("clone", "-q", str(origin), str(clone), cwd=tmp_path)
     for relative, content in files.items():
         path = clone / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content)
+    for relative, blob in (binary_files or {}).items():
+        path = clone / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(blob)
     run_git("add", "-A", cwd=clone)
     run_git("-c", "user.name=x", "-c", "user.email=x@example.invalid", "commit", "-q", "-m", message, cwd=clone)
     run_git("push", "-q", "origin", "main", cwd=clone)

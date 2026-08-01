@@ -216,6 +216,40 @@ def test_prose_mentioning_binary_files_mid_hunk_still_captures_content() -> None
     assert captures_content(_change("M", "n.md", patch=patch)) is True
 
 
+def test_a_deleted_binary_captures_content_because_the_bytes_are_still_in_history() -> None:
+    """The third case the binary rule reasoned about only two of. A deletion's patch needs to carry
+    no content for exactly the reason a pure rename's doesn't: the header describes the change
+    completely, and the pre-deletion bytes are in git at `LAST_CHECKOUT`, which is the commit the
+    next cycle re-parks at. Nothing is lost, so nothing is withheld.
+
+    Withholding it is not a pause but a permanent wedge -- the baseline cannot move, so the same
+    deletion is re-detected from scratch every cycle, forever, and every upstream edit stops
+    reaching the device behind it."""
+    patch = "diff --git a/x.png b/x.png\ndeleted file mode 100644\nBinary files a/x.png and /dev/null differ\n"
+    assert captures_content(_change("D", "_attachments/x.png", patch=patch)) is True
+
+
+def test_a_modified_binary_still_does_not_capture_content() -> None:
+    """The case that looks like the deletion above and is genuinely different: the *new* bytes
+    exist only on the device, so the patch describes nothing that could reconstruct them and
+    publishing would overwrite the device's copy with git's. It stays withheld -- and it is a pause,
+    not a wedge, precisely because the deletion above is now captured: removing the file from the
+    vault is a remedy that resolves on the next cycle instead of converting one stuck state into
+    another."""
+    patch = "diff --git a/x.png b/x.png\nindex fbf5707..33c2b0b 100644\nBinary files a/x.png and b/x.png differ\n"
+    assert captures_content(_change("M", "_attachments/x.png", patch=patch)) is False
+
+
+def test_a_binary_rename_that_also_changed_the_bytes_does_not_capture_content() -> None:
+    """The rename carve-out is about a *pure* rename, where the header is the whole change. Below
+    100% similarity the header is not, and for a binary there is no hunk to carry the rest."""
+    patch = (
+        "diff --git a/a.png b/b.png\nsimilarity index 87%\nrename from a.png\nrename to b.png\n"
+        "Binary files a/a.png and b/b.png differ\n"
+    )
+    assert captures_content(_change("R087", "b.png", old_path="a.png", patch=patch)) is False
+
+
 def test_an_empty_patch_does_not_capture_content() -> None:
     """The strongest possible signal that nothing was carried, and the one an "absence of the
     binary marker" predicate reads as healthy. A real change always produces a patch; an empty one

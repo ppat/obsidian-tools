@@ -249,23 +249,74 @@ def test_a_binary_created_on_the_device_is_never_published_over(
     assert "_attachments/screenshot.png" not in _spooled_by_path(tmp_path)
 
 
-def test_a_binary_does_not_block_the_cycle_once_it_leaves_the_vault(
+_PNG_BYTES = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00original"
+
+
+def test_deleting_a_tracked_binary_on_the_device_does_not_wedge_the_cycle(
     tmp_path: Path, seeded_origin: Path, icloud_dir: Path
 ) -> None:
-    """The gate pauses the cycle; it must not wedge it. Removing the out-of-contract file -- the
-    operator's remedy -- lets the very next cycle proceed normally."""
+    """The gate pauses the cycle; it must not wedge it -- proved on the instance where it can fail.
+
+    This test replaces one that planted an *untracked* binary and then deleted it. That case cannot
+    wedge by construction: deleting an untracked file erases the drift itself, so the remedy works
+    whatever the gate does, and the test was green through a defect that made the same claim false
+    for every tracked file. A deletion is the case that matters, because `LAST_CHECKOUT` still names
+    a commit containing the file and step 1 re-parks there every cycle -- so a withheld deletion is
+    re-detected from scratch forever, and the only escape found was restoring the exact bytes the
+    human had deliberately deleted. The trap closes behind the documented remedy too: for a tracked
+    binary, "remove the file from the vault" is precisely what produces this state.
+
+    Nothing is lost by capturing it: the pre-deletion bytes are in git at the baseline."""
+    push_commit(seeded_origin, tmp_path, {}, "add diagram", binary_files={"_attachments/diagram.png": _PNG_BYTES})
     config = replicate_config(tmp_path, seeded_origin, icloud_dir)
     run_cycle(config)
-    (icloud_dir / "_attachments").mkdir(parents=True, exist_ok=True)
-    (icloud_dir / "_attachments" / "screenshot.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00")
-    assert run_cycle(config).tag_advanced is False
+    assert (icloud_dir / "_attachments" / "diagram.png").read_bytes() == _PNG_BYTES
 
-    (icloud_dir / "_attachments" / "screenshot.png").unlink()
+    (icloud_dir / "_attachments" / "diagram.png").unlink()  # deleted on the phone
+    push_commit(seeded_origin, tmp_path, {"00-index.md": "# Home (agent update)\n"}, "agent update")
 
     result = run_cycle(config)
 
     assert result.uncaptured == ()
     assert result.tag_advanced is True
+    entry = _spooled_by_path(tmp_path)["_attachments/diagram.png"]
+    assert entry.kind == "delete"
+    # The upstream edit reaches the device again -- what a wedge here holds back is not just this
+    # path but every agent edit, cycle after cycle.
+    assert (icloud_dir / "00-index.md").read_text() == "# Home (agent update)\n"
+
+    # And it settles rather than repeating: the publish restored the file from git (it is still in
+    # `main` until the server drains the spool), so the next cycle sees no drift at all.
+    assert run_cycle(config).drifted == ()
+
+
+def test_a_modified_tracked_binary_pauses_the_cycle_and_deleting_it_is_a_real_escape(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path
+) -> None:
+    """A modified binary is withheld for a reason a deletion is not: its new bytes exist only on
+    the device, and publishing would overwrite them with git's copy. So the pause is correct -- but
+    it is only a pause if the operator's remedy actually resolves. It used to convert an `M` that
+    regenerates every cycle into a `D` that regenerates every cycle."""
+    push_commit(seeded_origin, tmp_path, {}, "add diagram", binary_files={"_attachments/diagram.png": _PNG_BYTES})
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+
+    edited_on_the_phone = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00annotated-on-the-phone"
+    (icloud_dir / "_attachments" / "diagram.png").write_bytes(edited_on_the_phone)
+
+    paused = run_cycle(config)
+
+    assert paused.uncaptured == ("_attachments/diagram.png",)
+    assert paused.tag_advanced is False
+    assert (icloud_dir / "_attachments" / "diagram.png").read_bytes() == edited_on_the_phone  # not published over
+
+    (icloud_dir / "_attachments" / "diagram.png").unlink()  # the documented remedy
+
+    resolved = run_cycle(config)
+
+    assert resolved.uncaptured == ()
+    assert resolved.tag_advanced is True
+    assert _spooled_by_path(tmp_path)["_attachments/diagram.png"].kind == "delete"
 
 
 # --- the operator's own git configuration must not reach any decision this cycle makes -----------

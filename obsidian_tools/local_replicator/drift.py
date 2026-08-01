@@ -101,6 +101,22 @@ def captures_content(change: StagedChange) -> bool:
     hunk-demanding predicate would not merely be wrong about them, it would *wedge* the cycle,
     since a mode change persists in the tree and regenerates as the same drift every cycle.
 
+    **A deletion passes for the rename's reason, and withholding one wedges the cycle
+    permanently.** `Binary files a/x.png and /dev/null differ` carries nothing, and needs to carry
+    nothing: the pre-deletion bytes are in git at `LAST_CHECKOUT`, which is the very commit step 1
+    re-parks at every cycle. That last fact is also why getting this wrong is not a pause. A
+    withheld *creation* stops the cycle until the operator removes the file, and removing it ends
+    the drift. A withheld deletion cannot be ended that way: the baseline still contains the file
+    and cannot advance, so the same deletion is re-detected from scratch on every cycle, forever,
+    holding back every upstream edit behind it -- and for a tracked file, "remove it from the
+    vault" is not the escape from that state, it is the entrance to it. Measured over eight
+    consecutive cycles, three of them after the documented remedy.
+
+    A *modification* is genuinely different and stays withheld: its new bytes exist only on the
+    device, so publishing over it destroys them. That is a pause, and it is one only because the
+    deletion above is captured -- deleting the file is then a remedy that resolves on the next
+    cycle rather than trading one stuck state for another.
+
     **What it is not enough to check.** The two guards before the marker are not defensive
     padding. An empty patch is the strongest possible signal that nothing was carried, and
     "the binary marker is absent" reads it as healthy; so does a summary line from an external
@@ -117,6 +133,8 @@ def captures_content(change: StagedChange) -> bool:
     """
     if not change.patch.startswith(_PATCH_HEADER_PREFIX):
         return False
+    if _classify(change.status) == "delete":
+        return True
     return _BINARY_PATCH_MARKER not in change.patch
 
 
