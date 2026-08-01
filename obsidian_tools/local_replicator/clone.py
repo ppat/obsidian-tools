@@ -33,6 +33,14 @@ def ensure_cache_clone(runner: GitRunner, *, branch: str, origin_url: str) -> No
     runner.work_tree.mkdir(parents=True, exist_ok=True)
     runner.git_dir.mkdir(parents=True, exist_ok=True)
     runner.run(["init", "-q", f"--initial-branch={branch}"])
+    # `core.quotePath=false` is the second half of the fix the committer applied as `-z` everywhere
+    # it lists paths (ppat/obsidian-tools#3: C-quoted non-ASCII paths are what wedged its baseline).
+    # `-z` closes it wherever a NUL-separated form exists -- and `git diff`'s *patch* output has no
+    # such form, so a spool entry's `patch` header would otherwise carry an escaped path while its
+    # own `path` field carries the real bytes: one entry, two encodings, for any note titled in a
+    # non-Latin script. Set here rather than per-call because it must hold for every git invocation
+    # against this clone, and this is the one place the clone is provisioned.
+    runner.run(["config", "--local", "core.quotePath", "false"])
     _ensure_remote(runner, "origin", origin_url)
 
 

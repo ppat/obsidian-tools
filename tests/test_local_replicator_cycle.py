@@ -281,6 +281,12 @@ def test_non_ascii_filename_drift_survives_the_full_git_and_rsync_pipeline(
     assert entry.kind == "create"
     assert "非同期の下書き" in entry.patch
     assert result.tag_advanced is True
+    # The patch *header* must carry the same bytes as `path`, not git's C-quoted escaping. Without
+    # `core.quotePath=false` (clone.py) one spool entry holds two encodings of one path, and a
+    # Phase 5 consumer reading the diff header gets the escaped one. Asserted on the header
+    # specifically because every other assertion in this test passes with the quoting present.
+    assert "日本語" in entry.patch.splitlines()[0]
+    assert "\\346" not in entry.patch
 
 
 def test_filename_with_embedded_quote_survives_the_full_pipeline(
