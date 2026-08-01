@@ -44,8 +44,9 @@ jobs:
       run: mise exec -- uv sync --all-extras
     # Same path, same key prefix as test.yaml's own cache step -- deliberately: a case this deep
     # run discovers should be exactly as available to tomorrow's ordinary PR run as one that PR
-    # run finds itself, and vice versa. See test.yaml's own comment for how the key/path pairing
-    # was proven to actually restore, not just configured.
+    # run finds itself, and vice versa. See test.yaml's own comment for why this step was inert
+    # in both workflows until the "deep" profile stopped inheriting `database=None` from
+    # Hypothesis's built-in "ci" profile (tests/conftest.py).
     - name: Cache - Hypothesis example database
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:

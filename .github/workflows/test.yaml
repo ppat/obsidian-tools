@@ -70,9 +70,19 @@ jobs:
     # silently un-persisted until the key next rotated. The pattern below is the standard
     # ever-growing-cache shape instead: every run saves under its own unique key
     # (`github.run_id` never repeats), and `restore-keys` falls back to the most recent previous
-    # run's save -- proven to actually restore, not just configured, by tracing
-    # `hypothesis.database`'s own default path resolution and round-tripping a real failing
-    # example through it locally (see the session this was added in for the full trace).
+    # run's save.
+    #
+    # That round-trip was originally verified *locally*, and that verification was worthless: the
+    # thing that broke it -- Hypothesis auto-loading its own built-in, `database=None` "ci" profile
+    # as the inheritance parent for this repo's profiles -- fires only when `CI`/`GITHUB_ACTIONS` is
+    # set, so the one environment it was checked in is the one where it structurally cannot happen.
+    # In CI this step saved nothing at all from the day it was added: `Cache not found for input
+    # keys: hypothesis-examples-<id>, hypothesis-examples-` on entry (nothing had ever saved under
+    # the prefix), and `Path Validation Error: Path(s) specified in the action for caching do(es)
+    # not exist` from the post step (Hypothesis never created the directory), both in a green job.
+    # Fixed in tests/conftest.py -- see its `parent=_HYPOTHESIS_DEFAULTS` comment -- and guarded by
+    # tests/test_hypothesis_profiles.py plus an import-time check in conftest.py, because a warning
+    # line inside a passing job is not a signal anyone reads.
     - name: Cache - Hypothesis example database
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
