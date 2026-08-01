@@ -80,6 +80,30 @@ class _SimulatedCrash(RuntimeError):
     caught anywhere in `obsidian_tools` itself, only by this harness."""
 
 
+class KnownAdvanceLastCheckoutCrashDefect(Exception):
+    """Raised only for the one known, unfixed defect this harness reproduces --
+    ppat/obsidian-tools#36: a crash landing between `publish` (step 6) and `advance_last_checkout`
+    (step 7) leaves already-published upstream content sitting in iCloud while `LAST_CHECKOUT`
+    still names the pre-publish commit, so the next cycle's comparison reads that content as fresh
+    device drift and spools it, misattributed.
+
+    Deliberately a distinct exception type -- not a plain `AssertionError` caught downstream and
+    pattern-matched on its message text -- and deliberately *not* a subclass of `AssertionError`,
+    so the two can never be confused by an `isinstance`/`except` check anywhere, including in this
+    module's own tests. `upstream_content_never_misattributed` (below) raises this only for a
+    marker it can trace, via `CrashInjectionMachine._advance_crash_explained_markers`, to a real
+    crash at the `advance_last_checkout` seam -- every other misattribution it finds raises a plain
+    `AssertionError` instead, which `test_crash_injection_state_machine`'s own classifier
+    (`_is_only_the_known_advance_last_checkout_crash_defect`) does not match, so it fails the suite
+    rather than being silently absorbed alongside this one. See
+    `test_a_different_misattribution_is_not_absorbed_by_the_known_defect_xfail` and
+    `test_the_known_advance_last_checkout_crash_defect_is_classified_not_generic`, below, for the
+    two-sided proof that this actually holds -- an earlier version of this harness classified on a
+    substring of the assertion message alone (`"was spooled as device drift"`), which a genuinely
+    different defect tripping the same invariant would have matched too, silently xfailing
+    alongside the known one. Found during a rebase's own mutation-testing pass, not by design."""
+
+
 def _crash_at(seam: str) -> object:
     """Replace `seam` (a name cycle.py imported into its own namespace) with a stub that raises
     before doing any real work. Returns the original callable, which the caller must restore."""
@@ -157,6 +181,13 @@ class CrashInjectionMachine(RuleBasedStateMachine):
         # tell whether it's superseding a still-raw edit or an already-resolved one).
         self.open_markers: set[str] = set()
         self.upstream_markers: set[str] = set()
+        # Upstream markers this instance has *itself* watched reach iCloud via a real crash at the
+        # `advance_last_checkout` seam (populated in `run_cycle_crashed`, below) -- the only markers
+        # `upstream_content_never_misattributed` is allowed to explain away as the known defect
+        # (ppat/obsidian-tools#36) rather than fail loudly on. Per-marker, not time-windowed: every
+        # marker is a fresh uuid (`_marker`, above), so membership here is unambiguous regardless of
+        # how many crashes or cycles happen afterward.
+        self._advance_crash_explained_markers: set[str] = set()
         self.last_written_marker: dict[str, str | None] = dict.fromkeys(_PATHS)
         # A path whose content was removed on the device but not yet captured by a comparison --
         # tracked separately from `last_written_marker` because a deletion has no marker text of
@@ -290,6 +321,16 @@ class CrashInjectionMachine(RuleBasedStateMachine):
         # tag-advance (see this module's docstring and cycle.py's own).
         self._resolve_captured_markers(comparison_happened=seam != "overlay")
 
+        if seam == "advance_last_checkout":
+            # `publish` (step 6) already ran for real before this crash -- it's strictly earlier in
+            # cycle.py's own step order than `advance_last_checkout` (step 7), so everything it
+            # wrote to iCloud is real, not simulated. Whatever upstream content is live in iCloud
+            # right now got there via that publish, not via a device edit -- record it so
+            # `upstream_content_never_misattributed` can trace a later misattribution of it back to
+            # this exact, known defect (ppat/obsidian-tools#36) rather than treat it as a new one.
+            icloud_text = "".join((self.icloud / p).read_text() for p in _PATHS if (self.icloud / p).exists())
+            self._advance_crash_explained_markers |= {m for m in self.upstream_markers if m in icloud_text}
+
         # Invariant 3, checked here rather than as a standalone @invariant: "the next cycle after
         # any crash completes normally" is a statement about the step immediately following a
         # crash, not about every point in the run -- a gate that pauses the cycle must never wedge
@@ -356,10 +397,32 @@ class CrashInjectionMachine(RuleBasedStateMachine):
         iCloud purely via `publish` -- never typed on a device -- must never be spooled as if a
         human wrote it. Present in iCloud is fine and expected (that's what publish is for); present
         in the *spool* would mean a later cycle re-diffed already-published content as fresh
-        device drift."""
+        device drift.
+
+        Raises `KnownAdvanceLastCheckoutCrashDefect`, not a plain `AssertionError`, when (and only
+        when) the misattributed marker is one this instance itself watched reach iCloud via a real
+        crash at the `advance_last_checkout` seam (`_advance_crash_explained_markers`, populated in
+        `run_cycle_crashed`) -- ppat/obsidian-tools#36, the one known, unfixed defect this harness
+        reproduces. Any *other* misattribution -- a marker never seen leaving via that seam -- is a
+        different defect and raises a plain `AssertionError`, which
+        `test_crash_injection_state_machine`'s classifier does not match, so it fails the suite
+        rather than xfailing."""
         spool_text = self._spool_text()
         for marker in self.upstream_markers:
-            assert marker not in spool_text, f"upstream content {marker!r} was spooled as device drift"
+            if marker not in spool_text:
+                continue
+            if marker in self._advance_crash_explained_markers:
+                raise KnownAdvanceLastCheckoutCrashDefect(
+                    f"upstream content {marker!r} was spooled as device drift -- explained by "
+                    "ppat/obsidian-tools#36 (a crash at the advance_last_checkout seam left this "
+                    "marker published in iCloud while LAST_CHECKOUT still named the pre-publish "
+                    "commit)"
+                )
+            raise AssertionError(
+                f"upstream content {marker!r} was spooled as device drift, and is NOT explained by "
+                "the known advance_last_checkout-seam crash defect (ppat/obsidian-tools#36) -- this "
+                "is a different, previously-unseen defect"
+            )
 
     @invariant()
     def tag_never_names_unpublished_content(self) -> None:
@@ -383,29 +446,28 @@ class CrashInjectionMachine(RuleBasedStateMachine):
             )
 
 
-# The specific, narrow signature of the one known-and-not-yet-fixed defect this harness currently
-# reproduces (see this module's docstring below, and the session report this test shipped with):
-# a crash landing between `publish` (step 6) and `advance_last_checkout` (step 7) leaves already-
-# published upstream content sitting in iCloud while LAST_CHECKOUT still names the pre-publish
-# commit, so the next cycle's comparison reads that content as fresh device drift and spools it,
-# misattributed. Matched on the exact assertion message from `upstream_content_never_misattributed`
-# above, not on "any failure" -- a blanket xfail on this test would just as happily swallow a
-# genuinely new defect or a harness bug, which is exactly the "green result read as evidence it
-# didn't earn" shape the doctrine warns against. Reported, not fixed here, per this task's own
-# brief: a fix is new code and needs its own independent pass.
-_KNOWN_TAG_ADVANCE_CRASH_DEFECT_SIGNATURE = "was spooled as device drift"
-
-
-def _is_only_the_known_tag_advance_crash_defect(exc: BaseException) -> bool:
+def _is_only_the_known_advance_last_checkout_crash_defect(exc: BaseException) -> bool:
+    """Classifies on exception *type* (`KnownAdvanceLastCheckoutCrashDefect`,
+    ppat/obsidian-tools#36), not on a substring of the assertion message. A prior version of this
+    function matched any exception whose message contained `"was spooled as device drift"` --
+    that string is `upstream_content_never_misattributed`'s own wording for *any* misattribution,
+    known cause or not, so a genuinely different defect tripping the same invariant would have
+    matched it too and been silently xfailed alongside the known one. Type-based dispatch can't
+    make that mistake: `upstream_content_never_misattributed` (above) only ever constructs
+    `KnownAdvanceLastCheckoutCrashDefect` for a marker it can trace to a real crash at the
+    `advance_last_checkout` seam; everything else it raises is a plain `AssertionError`, which this
+    function does not match. See `test_a_different_misattribution_is_not_absorbed_by_the_known_defect_xfail`
+    and `test_the_known_advance_last_checkout_crash_defect_is_classified_not_generic`, below, for
+    the two-sided proof."""
     # Bare `ExceptionGroup` (no type parameter) narrows `.exceptions` to `tuple[Unknown, ...]`
     # under strict pyright -- there's no narrower type to give it here, since Hypothesis's own
     # multi-bug reporting groups arbitrary, heterogeneous exception types together.
     if isinstance(exc, ExceptionGroup):
         return all(
-            _is_only_the_known_tag_advance_crash_defect(sub)  # pyright: ignore[reportUnknownArgumentType]
+            _is_only_the_known_advance_last_checkout_crash_defect(sub)  # pyright: ignore[reportUnknownArgumentType]
             for sub in exc.exceptions  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
         )
-    return _KNOWN_TAG_ADVANCE_CRASH_DEFECT_SIGNATURE in str(exc)
+    return isinstance(exc, KnownAdvanceLastCheckoutCrashDefect)
 
 
 @pytest.mark.slow  # real git/rsync per step; see .github/workflows/test.yaml for where this runs
@@ -416,6 +478,60 @@ def test_crash_injection_state_machine() -> None:
             settings=hypothesis_settings(deadline=None, stateful_step_count=12),
         )
     except BaseException as exc:  # deliberately broad; re-raised below unless matched
-        if _is_only_the_known_tag_advance_crash_defect(exc):
-            pytest.xfail(f"known, unfixed defect (see session report): {exc}")
+        if _is_only_the_known_advance_last_checkout_crash_defect(exc):
+            pytest.xfail(f"known, unfixed defect, ppat/obsidian-tools#36: {exc}")
         raise
+
+
+# --- the two-sided proof that the classification above doesn't over- or under-generalize --------
+#
+# Both drive `CrashInjectionMachine`'s own real rules and invariant directly (not a reimplementation
+# of the classification logic, and not the full Hypothesis search, which would make either an
+# unreliable, slow way to pin down one specific case) -- constructed by hand precisely because each
+# is checking a single, specific scenario, the same reason the two crash-recovery examples in
+# `test_local_replicator_cycle.py` predate that property's own generalization.
+
+
+def test_the_known_advance_last_checkout_crash_defect_is_classified_not_generic() -> None:
+    """The positive half: a misattribution actually caused by a real crash at the
+    `advance_last_checkout` seam -- driven through the harness's own `run_cycle_crashed` rule, not
+    hand-simulated -- is classified as `KnownAdvanceLastCheckoutCrashDefect` (ppat/obsidian-tools#36),
+    not a plain `AssertionError`."""
+    machine = CrashInjectionMachine()
+    try:
+        machine.upstream_commit("alpha.md")
+        machine.run_cycle_crashed("advance_last_checkout")
+
+        with pytest.raises(KnownAdvanceLastCheckoutCrashDefect):
+            machine.upstream_content_never_misattributed()
+    finally:
+        machine.teardown()
+
+
+def test_a_different_misattribution_is_not_absorbed_by_the_known_defect_xfail() -> None:
+    """The negative half, and the one that actually matters: a misattribution caused by something
+    *other* than a crash at the `advance_last_checkout` seam must not be classified as the known
+    defect, so `test_crash_injection_state_machine`'s own except-clause would re-raise it rather
+    than xfail it.
+
+    Simulates a hypothetical, different bug -- upstream content reaching iCloud by some path this
+    harness's sanctioned crash mechanism never touched -- by writing the upstream commit's own
+    content directly into iCloud, bypassing `run_cycle_crashed` entirely. `run_cycle_clean` then
+    diffs it as ordinary drift and spools it, exactly like the real defect's symptom, but reached
+    by a different route that `_advance_crash_explained_markers` never recorded."""
+    machine = CrashInjectionMachine()
+    try:
+        machine.upstream_commit("alpha.md")
+        marker = next(iter(machine.upstream_markers))
+        explained = machine._advance_crash_explained_markers  # pyright: ignore[reportPrivateUsage]
+        assert marker not in explained  # never crashed at that seam yet
+
+        (machine.icloud / "alpha.md").write_text(f"{marker}\n")
+        machine.run_cycle_clean()
+
+        with pytest.raises(AssertionError) as excinfo:
+            machine.upstream_content_never_misattributed()
+        assert not isinstance(excinfo.value, KnownAdvanceLastCheckoutCrashDefect)
+        assert not _is_only_the_known_advance_last_checkout_crash_defect(excinfo.value)
+    finally:
+        machine.teardown()
