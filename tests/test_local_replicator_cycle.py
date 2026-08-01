@@ -645,7 +645,7 @@ def test_a_repository_local_color_config_cannot_corrupt_the_patch_header(
 
 
 def test_an_in_tree_textconv_driver_cannot_report_a_binary_modification_as_captured(
-    tmp_path: Path, seeded_origin: Path, icloud_dir: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path
 ) -> None:
     """The route neutralising the *environment* deliberately cannot close (see the section comment
     above `test_a_repository_local_diff_external_cannot_replace_the_patch_either`), applied to the
@@ -663,18 +663,22 @@ def test_an_in_tree_textconv_driver_cannot_report_a_binary_modification_as_captu
     `captures_content`'s header check regardless of `--no-textconv`. Content-dependent-but-lossy
     output is what actually needs the flag.)
 
-    `monkeypatch.chdir(tmp_path)`: git's attribute lookup also consults a `.gitattributes` sitting
-    in the *invoking process's* current directory, not just the ones under `--work-tree` -- verified
-    directly, including against this very suite's own repo root (this project's own top-level
-    `.gitattributes`, for `linguist-detectable`, is unrelated to `*.png` but its mere presence at
-    cwd is enough to make git fall back to binary detection regardless of `--no-textconv` or the
-    `core.attributesFile` pin, which silently defeats this test -- and the pre-existing global
-    textconv test above it -- if pytest's own cwd is left as this repo's root). `GitRunner` never
-    sets `cwd` on the subprocess it runs (by design: it addresses the vault and its git directory
-    entirely through `--git-dir`/`--work-tree`), so nothing in production pins the daemon's cwd
-    away from a directory that happens to hold an unrelated `.gitattributes` either -- this is not
-    only a test-hygiene fix."""
-    monkeypatch.chdir(tmp_path)
+    No `monkeypatch.chdir` here: earlier drafts needed one, because git's attribute lookup also
+    consults a `.gitattributes` sitting in the *invoking process's* cwd, not just the ones under
+    `--work-tree` (verified directly, including against this very suite's own repo root -- its
+    top-level `.gitattributes`, for `linguist-detectable`, is unrelated to `*.png` but its mere
+    presence was enough to make git fall back to binary detection regardless of `--no-textconv` or
+    the `core.attributesFile` pin, silently defeating this test and the pre-existing global
+    textconv test above it). `vault_git/runner.py`'s `GitRunner.run` now pins the subprocess's
+    `cwd` to `work_tree`, which fixes that -- but does not, on its own, make *this* test evidence
+    of the fix: with `--no-textconv` present, a same-directory-level `.gitattributes` collision
+    just makes git fall back to ordinary binary detection instead of the vault's `diff=img`, which
+    is indistinguishable from `--no-textconv` doing its own job (verified directly: this test
+    stays green with the `cwd` pin removed, precisely because both routes land on the same
+    `Binary files ... differ` output).
+    `test_the_vaults_own_gitattributes_is_not_overridden_by_the_launching_directory`, below, is the
+    one that actually isolates the `cwd` pin -- see its docstring for why it needed a mechanism
+    `--no-textconv` cannot also explain away."""
     push_commit(
         seeded_origin,
         tmp_path,
@@ -698,6 +702,69 @@ def test_an_in_tree_textconv_driver_cannot_report_a_binary_modification_as_captu
     assert result.uncaptured == ("_attachments/diagram.png",)
     assert result.tag_advanced is False
     assert (icloud_dir / "_attachments" / "diagram.png").read_bytes() == edited_on_the_phone
+
+
+def test_the_vaults_own_gitattributes_is_not_overridden_by_the_launching_directory(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path
+) -> None:
+    """`vault_git/runner.py` pins `GitRunner.run`'s subprocess `cwd` to `work_tree` because git's
+    per-directory `.gitattributes` lookup does a filesystem probe relative to the *launching
+    process's* cwd, not to `--work-tree`, even though `--work-tree` is always given explicitly --
+    verified directly (`strace` on a real invocation). Left unpinned, a `.gitattributes` sitting
+    wherever this process happens to start -- matching only by name, never by content -- silently
+    overrides whatever the vault's own tracked `.gitattributes` says for that directory level. That
+    is real for this suite specifically: this project's own top-level `.gitattributes` (an
+    unrelated `linguist-detectable` rule) sits exactly where pytest's cwd already is.
+
+    A `diff=<driver>` assignment is the wrong mechanism to prove this with, and the test above this
+    one is the record of finding that out: with `--no-textconv` present, an overridden `diff=img`
+    just falls back to ordinary content-sniffed binary detection -- the *same* `Binary files ...
+    differ` output `--no-textconv` itself produces for a real driver, so the two causes are
+    indistinguishable from the outcome alone. What isolates the `cwd` pin is an attribute that
+    changes *whether* something is treated as binary in the first place, with no driver involved at
+    all: `*.md -diff` on an ordinary, non-binary markdown file. Correctly resolved (against the
+    vault's own tracked `.gitattributes`), it forces git to treat prose as binary and withhold it
+    (`captures_content`'s job, working as intended on content the vault itself opted out of
+    diffing) -- overridden by an unrelated file at cwd, the assignment vanishes and the very same
+    edit diffs normally instead. Two different, unambiguous outcomes for a plain text change, with
+    every `_DECISION_DIFF_FLAGS` flag held constant -- nothing here depends on any of them."""
+    push_commit(seeded_origin, tmp_path, {".gitattributes": "*.md -diff\n"}, "opt markdown out of diffing")
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+
+    (icloud_dir / "00-index.md").write_text("a thought typed on the phone\n")
+
+    result = run_cycle(config)
+
+    assert result.uncaptured == ("00-index.md",)
+    assert result.tag_advanced is False
+    assert (icloud_dir / "00-index.md").read_text() == "a thought typed on the phone\n"
+
+
+def test_a_device_path_literally_named_head_does_not_break_the_reset_step(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path
+) -> None:
+    """The one bit of collateral the `cwd` pin above reintroduces, one directory level up from
+    where the identical shape of bug was first caught and rejected (see `vault_git/runner.py`'s
+    comment: a *subdirectory* of `git_dir` was tried first and broke every pathspec-bearing call in
+    this suite outright). `work_tree`'s own top level is no longer just where paths *live*, it is
+    also cwd for every invocation -- so a device-created path with no extension that happens to be
+    spelled exactly `HEAD` collides with the bare `HEAD` argument `cycle.py`'s step 5 passes to
+    `git reset --hard`, the same "ambiguous argument 'HEAD': both revision and filename" this suite
+    hit immediately while the `cwd` pin was still landing on `git_dir` itself. `cycle.py` closes it
+    with the trailing `--` git's own error message recommends. Real device content, a real cycle,
+    checking the cycle completes and captures the file rather than raising."""
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+
+    (icloud_dir / "HEAD").write_text("a device-created path that happens to be spelled like a git ref\n")
+
+    result = run_cycle(config)
+
+    assert result.tag_advanced is True
+    entry = _spooled_by_path(tmp_path)["HEAD"]
+    assert entry.kind == "create"
+    assert "a device-created path that happens to be spelled like a git ref" in entry.patch
 
 
 def test_a_repository_local_diff_renames_config_falsely_withholds_a_renamed_binary(
