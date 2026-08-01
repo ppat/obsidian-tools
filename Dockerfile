@@ -24,6 +24,20 @@ COPY --from=ghcr.io/astral-sh/uv:0.12.0@sha256:606e70c71c852d03f611b1e56a195d086
 COPY pyproject.toml uv.lock README.md ./
 COPY obsidian_tools ./obsidian_tools
 
+# Build the virtualenv at the exact absolute path it will occupy in the final stage, NOT at
+# ${WORKDIR}/.venv. This is load-bearing, not tidiness: a virtualenv's console scripts carry an
+# absolute shebang naming their interpreter, so a venv created at /build/.venv gets
+# `#!/build/.venv/bin/python` baked into bin/obsidian-tools. Copying that venv to a different
+# path leaves the shebang pointing at an interpreter that does not exist in the final image, and
+# the container dies at startup with
+#
+#     exec /opt/obsidian-tools/.venv/bin/obsidian-tools failed: No such file or directory
+#
+# which names the *script* — the file that does exist — rather than the missing interpreter, and
+# so reads as though the entrypoint were never installed. Building at the destination path means
+# the shebangs are already correct and nothing has to be rewritten afterwards.
+ENV UV_PROJECT_ENVIRONMENT=/opt/obsidian-tools/.venv
+
 # `--frozen` refuses to silently re-resolve against a stale uv.lock (a mismatch fails the build
 # instead of shipping different versions than CI validated). `--no-dev` excludes the dev
 # dependency group (pytest, ruff, pyright, hypothesis) — none of it belongs in a runtime image.
@@ -81,7 +95,9 @@ RUN groupadd -g "${OBSIDIAN_TOOLS_GID}" -r obsidian-tools && \
         --shell /usr/sbin/nologin \
         obsidian-tools
 
-COPY --from=builder --chown=root:root /build/.venv /opt/obsidian-tools/.venv
+# Source and destination paths must be identical — see the builder stage's UV_PROJECT_ENVIRONMENT
+# comment. Changing either side alone reintroduces the broken-shebang failure.
+COPY --from=builder --chown=root:root /opt/obsidian-tools/.venv /opt/obsidian-tools/.venv
 
 ENV PATH="/opt/obsidian-tools/.venv/bin:${PATH}" \
     PYTHONDONTWRITEBYTECODE=1 \
