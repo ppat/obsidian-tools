@@ -38,6 +38,7 @@ import logging
 import os
 import shutil
 from pathlib import Path
+from stat import S_ISLNK, S_ISREG
 
 from obsidian_tools.vault_git.baseline_selector import PathInfo, select_baseline_paths
 
@@ -75,6 +76,25 @@ def _iter_obsidian_candidates(source: Path) -> tuple[list[PathInfo], list[str]]:
     wrong" (independent review of this module, ppat/obsidian-tools). Reporting every failure instead
     lets `seed_baseline` withhold the marker and actually retry — see it for the rest of this
     argument, including what a withheld marker versus a fully-refused seed each cost the device.
+
+    **`onerror` covers only the directories this walk cannot open; each entry is therefore stat'ed
+    explicitly** (ppat/obsidian-tools#35). An earlier revision wrapped `is_file()`/`is_symlink()` in a
+    `try`/`except OSError` that could never fire: those delegate to `os.path.isfile`/`islink`, which
+    catch `OSError` themselves and return `False`. An entry that cannot be stat'ed therefore reached
+    the selector as `is_file=False`, indistinguishable from a directory or a socket, and was dropped
+    with `unreadable` left empty — so `seed_baseline` wrote the completion marker over the gap and
+    `is_baselined` gated this walk off permanently. `onerror` does not fill it: that fires on
+    `scandir`, and a directory with read but no execute permission enumerates perfectly well
+    (`readdir` needs `r`) while every `stat` on its entries fails with `EACCES` (which needs `x`).
+    One `lstat()`, which does raise, is what actually detects it, and it is one syscall rather than
+    two. `is_file` for a symlink still follows the link (`PathInfo.is_file`'s documented meaning) via
+    the swallowing predicate, deliberately: a dangling symlink is a legible state of the clone, not a
+    read failure, and must not be able to withhold the marker forever.
+
+    Note what `onerror` *does* still cover, so this is not mistaken for the wider hole it looks like:
+    an unreadable subdirectory is still reported, because `readdir` answers "is this a directory"
+    from `d_type` without a `stat`, so `os.walk` descends and fails at that directory's own
+    `scandir` — verified, not assumed. The silent case was entries, not subtrees.
     """
     candidates: list[PathInfo] = []
     unreadable: list[str] = []
@@ -87,11 +107,12 @@ def _iter_obsidian_candidates(source: Path) -> tuple[list[PathInfo], list[str]]:
         for filename in filenames:
             entry = current_directory / filename
             try:
-                is_file = entry.is_file()
-                is_symlink = entry.is_symlink()
+                entry_stat = entry.lstat()
             except OSError:
                 unreadable.append(str(entry))
                 continue
+            is_symlink = S_ISLNK(entry_stat.st_mode)
+            is_file = entry.is_file() if is_symlink else S_ISREG(entry_stat.st_mode)
             candidates.append(
                 PathInfo(relative_path=entry.relative_to(source).as_posix(), is_file=is_file, is_symlink=is_symlink)
             )
