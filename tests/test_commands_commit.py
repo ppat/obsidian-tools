@@ -19,10 +19,14 @@ from conftest import commit_count
 
 import obsidian_tools.retry as retry_module
 from obsidian_tools.commands import commit as commit_command
-from obsidian_tools.commands.commit import is_index_lock_error
+from obsidian_tools.commands.commit import (
+    _STAGING_FAILURE_LOG,  # pyright: ignore[reportPrivateUsage]
+    is_index_lock_error,
+)
 from obsidian_tools.config import CommitConfig
 from obsidian_tools.retry import RetryExhaustedError
 from obsidian_tools.vault_git.commit import DEFAULT_MAX_DELETION_FRACTION
+from obsidian_tools.vault_git.git_errors import ErrorKind
 from obsidian_tools.vault_git.known_hosts import KnownHostsError
 from obsidian_tools.vault_git.runner import GitCommandError
 
@@ -228,6 +232,65 @@ def test_transient_read_failure_recovers_and_still_commits(
     assert commit_count(seeded_origin) == 2
 
 
+def test_a_vault_directory_absent_from_the_volume_degrades_instead_of_dying_at_the_first_git_call(
+    tmp_path: Path,
+    seeded_origin: Path,
+    make_bare_repo: Callable[[], Path],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The committer's work tree is `/vault/brain` (`config.py`), which is *not* the mount: the
+    CronJob mounts the vault PVC at `/vault` and keeps the vault one directory down, because the
+    mount root carries an ext4 `lost+found` this uid cannot read. `/vault/brain` is therefore an
+    ordinary directory *inside* a volume this workload mounts `readOnly: true` — it can never
+    create it, and on a freshly provisioned or restored `vault-data` PVC (disaster recovery, a new
+    cluster, the window before Obsidian has seeded the volume) it simply isn't there yet.
+
+    That must degrade, not wedge, because the run repeats every 15 minutes and self-heals the
+    moment the directory appears. Every behaviour asserted below is one the run had before
+    `GitRunner` pinned its subprocess `cwd` to the work tree, and each is load-bearing on its own:
+    provisioning still completes (so the git-dir cache is recovered/fetched rather than left
+    half-built), the baseline step reaches its own "not there yet" branch, staging fails as a
+    *classified* staging failure after real retries rather than as a raw traceback, and `push_all`
+    still runs so a previous run's stuck-unpushed commit catches up regardless.
+    """
+    monkeypatch.setattr(retry_module, "DEFAULT_RETRIES", 2)
+    monkeypatch.setattr(retry_module, "DEFAULT_BASE_DELAY_SECONDS", 0.01)
+
+    nas = make_bare_repo()
+    git_dir = tmp_path / "git-dir"
+    mount_root = tmp_path / "vault-mount"  # stands in for /vault, the volume mount itself
+    mount_root.mkdir()
+    vault_dir = mount_root / "brain"  # deliberately never created: the vault directory isn't there yet
+
+    with caplog.at_level(logging.INFO):
+        exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas)))
+
+    assert exit_code == 1
+    events = [getattr(record, "event", None) for record in caplog.records]
+
+    # Provisioning ran to completion: origin's history is in the recovered cache.
+    assert commit_count(git_dir) == 1
+    assert "provision_failed" not in events
+
+    assert "baseline_skip_no_obsidian_dir" in events
+
+    # A classified staging failure, reached through the real retry-then-fail path -- not an
+    # unhandled exception, and not a generic "unrecognized" line either.
+    assert "retry" in events
+    assert [event for event in events if event is not None and event.startswith("stage_failed_")] == [
+        "stage_failed_work_tree_unusable"
+    ]
+    [record] = [r for r in caplog.records if getattr(r, "event", None) == "stage_failed_work_tree_unusable"]
+    assert "git-dir cache volume" not in record.getMessage().split("not the")[0]  # points at the vault volume
+
+    # push_all still ran, against both remotes.
+    assert [getattr(r, "remote", None) for r in caplog.records if getattr(r, "event", None) == "push_succeeded"] == [
+        "origin",
+        "nas",
+    ]
+
+
 def test_stale_index_lock_from_a_killed_run_is_cleared_and_the_next_run_recovers(
     tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
 ) -> None:
@@ -345,6 +408,17 @@ def test_emptied_vault_refuses_to_commit_a_mass_deletion(
     assert exit_code == 1
     assert commit_count(seeded_origin) == commits_before  # the deletion was never pushed
     assert commit_count(git_dir) == commits_before  # nor committed locally
+
+
+def test_every_error_kind_has_its_own_staging_log_line() -> None:
+    """`_log_staging_failure` indexes `_STAGING_FAILURE_LOG` directly, so a kind added to
+    `ErrorKind` without an entry here raises `KeyError` *inside the handler that exists to keep a
+    failed run legible* — turning an attributable failure back into the bare traceback the whole
+    split exists to prevent, and only on the failure path, where nothing else would notice. Assert
+    totality rather than trusting that whoever grows the enum next also grows the table."""
+    assert set(_STAGING_FAILURE_LOG) == set(ErrorKind)
+    events = [event for _message, event in _STAGING_FAILURE_LOG.values()]
+    assert len(set(events)) == len(events)  # and each kind is distinguishable in the log
 
 
 def _git_command_error(stderr: str) -> GitCommandError:

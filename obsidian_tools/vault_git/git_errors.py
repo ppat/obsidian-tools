@@ -27,6 +27,12 @@ class ErrorKind(Enum):
     NO_SPACE = "no_space"  # the git-dir cache volume is full
     PERMISSION_DENIED = "permission_denied"  # the git-dir cache volume itself is unwritable
     VAULT_READ_FAILURE = "vault_read_failure"  # a work-tree file under the vault couldn't be read
+    WORK_TREE_UNUSABLE = "work_tree_unusable"  # the work tree itself is absent or can't be entered
+    # git never started at all — an OSError out of the invocation, not a git exit. Assigned by the
+    # exception-unwrapping half in `commands/commit.py` (from the exception's own type, which is
+    # `vault_git/runner.py`'s `GitInvocationError`), never by `classify_git_error` below: there is
+    # no git stderr to classify when there was no git process.
+    INVOCATION_FAILED = "invocation_failed"
     UNKNOWN = "unknown"
 
 
@@ -47,6 +53,16 @@ def classify_git_error(stderr: str) -> ErrorKind:
         if "Permission denied" in stderr:
             return ErrorKind.PERMISSION_DENIED
         return ErrorKind.UNKNOWN
+
+    if "must be run in a work tree" in stderr:
+        # git's own wording when it cannot use the work tree it was given *at all* -- measured
+        # identical for a `--work-tree` that is absent, is a plain file, and is a directory this uid
+        # cannot enter, so this kind covers the directory itself rather than any one errno. Distinct
+        # from VAULT_READ_FAILURE below, which is a *file* under an otherwise-fine work tree: the
+        # committer's work tree is `/vault/brain`, a directory *inside* the read-only vault volume
+        # that this workload can never create, so on a freshly provisioned or restored PVC this is
+        # what every staging attempt says until the vault directory appears.
+        return ErrorKind.WORK_TREE_UNUSABLE
 
     if 'open("' in stderr and "Permission denied" in stderr:
         # git's own wording for a work-tree file `git add` couldn't read, e.g.

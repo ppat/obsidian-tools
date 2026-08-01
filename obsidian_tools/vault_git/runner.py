@@ -12,7 +12,9 @@ once rather than working around them (see docs/DESIGN.md §1.3 P4 and ppat/obsid
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
+import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -22,7 +24,11 @@ from obsidian_tools.vault_git.name_status import NameStatusEntry, parse_name_sta
 # Re-exported: every existing call site in this codebase imports NameStatusEntry from here, and
 # `vault_git/name_status.py` (the pure parsing module this runner delegates to — see
 # `staged_name_status` below) is where it's actually defined.
-__all__ = ["GitCommandError", "GitRunner", "NameStatusEntry"]
+__all__ = ["GitCommandError", "GitInvocationError", "GitRunner", "NameStatusEntry"]
+
+# Prefix for the stand-in working directory `_spawn_with_cwd_fallback` creates when the OS refuses
+# `work_tree` — named so an operator finding one stranded after a SIGKILL knows what left it.
+_FALLBACK_CWD_PREFIX = "obsidian-tools-git-cwd-"
 
 # --- keeping the environment out of git's output -------------------------------------------------
 #
@@ -154,22 +160,82 @@ _DECISION_DIFF_FLAGS = ("--no-ext-diff", "--no-textconv", "--no-color", "--find-
 # none of those commands accept a pathspec in the same argument position, so `HEAD` cannot mean two
 # things to them the way it can to `reset`/`checkout`/`diff`. Only `cycle.py`'s
 # `reset -q --hard HEAD` needed the trailing `--` git's own error message recommends; see that call
-# site. Not defensively created here the way the rejected `git_dir` anchor was: `work_tree` is
-# guaranteed to exist by the time any call reaches this point regardless -- `ensure_cache_clone`
-# creates local-replicator's before its own first `run()` call, and the committer's is a
-# read-only-mounted volume present from container start, never something this codebase creates.
+# site.
+#
+# **`work_tree` is not guaranteed to exist, and pinning cwd to it unconditionally is therefore not
+# safe on its own** -- `_FALLBACK_CWD_PREFIX`/`_spawn_with_cwd_fallback` below are what make it so.
+# The committer's `work_tree` is `/vault/brain`, which is *not* its mount: the CronJob mounts the
+# vault PVC at `/vault` and keeps the vault one directory down, because the mount root carries an
+# ext4 `lost+found` that uid cannot read (`config.py`'s `OBSIDIAN_VAULT_DIR`, and the Obsidian
+# Deployment for the same reason). `/vault/brain` is an ordinary directory *inside* a volume this
+# workload mounts `readOnly: true`, so it cannot create it, and on a freshly provisioned or restored
+# `vault-data` PVC it is simply absent. A `cwd` naming a directory that does not exist fails in
+# `subprocess.run` -- an `OSError` raised *before* git is executed at all, which is neither a
+# `GitCommandError` nor anything else this codebase's handlers name. Unpinned, that run degraded:
+# every git call that does not need a work tree (all of provisioning) still succeeded, and the ones
+# that do failed as ordinary non-zero git exits, retried and classified. Pinned naively, the very
+# first call died instead -- raw traceback, no structured event, no push catch-up, every 15 minutes.
+#
+# So the pin is attempted, not asserted: if the OS refuses `work_tree` as a working directory --
+# ENOENT, ENOTDIR, EACCES, or (this being a soft-mounted NFS export -- see `obsidian_tools/retry.py`)
+# ETIMEDOUT/ESTALE/EIO -- the same invocation is retried once from a freshly created, empty,
+# private temporary directory. Driven by the failure that actually occurred rather than by an
+# `is_dir()` check beforehand: an existence check races the mount and covers only one errno, and
+# `subprocess` reports the chdir failure before `exec`, so nothing has run and re-spawning is safe.
+#
+# An empty temporary directory is a *security-equivalent* anchor for the reason the pin exists at
+# all, which is the only reason it may stand in: git's cwd-relative probe finds no `.gitattributes`
+# there (it is freshly created and private, unlike the launching directory or any shared `/tmp`), so
+# git falls back to the index's own copy -- verified directly to produce output identical to
+# cwd=`work_tree` for a decision diff, and the hostile-file case still resolves to the launching
+# directory's file when the pin is dropped. It is also outside the work tree, so relative pathspecs
+# keep resolving against the work-tree root rather than picking up a prefix (the trap that sank the
+# rejected `git_dir` subdirectory anchor above), and it holds no `HEAD`-shaped filename.
 
 
 class GitCommandError(RuntimeError):
     """A git invocation exited non-zero."""
 
-    def __init__(self, git_args: Sequence[str], result: subprocess.CompletedProcess[str]) -> None:
+    def __init__(
+        self, git_args: Sequence[str], result: subprocess.CompletedProcess[str], *, message: str | None = None
+    ) -> None:
         # Not named `self.args` — BaseException already defines that attribute (as a tuple), and
         # shadowing it with a list trips strict type checking for no benefit.
         self.git_args = list(git_args)
         self.result = result
-        detail = result.stderr.strip() or result.stdout.strip()
-        super().__init__(f"git {' '.join(git_args)} exited {result.returncode}: {detail}")
+        if message is None:
+            detail = result.stderr.strip() or result.stdout.strip()
+            message = f"git {' '.join(git_args)} exited {result.returncode}: {detail}"
+        # `message` exists for `GitInvocationError` below, whose whole point is that git never ran:
+        # the default wording asserts an exit status there is none of.
+        super().__init__(message)
+
+
+class GitInvocationError(GitCommandError):
+    """git never ran: the OS refused the invocation itself (an `OSError` out of `subprocess.run`,
+    raised before `exec`) rather than git starting and exiting non-zero.
+
+    **A subclass of `GitCommandError` deliberately, not a sibling.** Every handler in this codebase
+    is written against `GitCommandError` — `run`'s own `retry_on`, `commands/commit.py`'s
+    `_STAGING_FAILURES`, its provisioning/commit `except` clauses, `vault_git/commit.py`'s
+    `push_all` — and an `OSError` escaping all of them, unretried and unclassified, is exactly the
+    hole this exists to close. Subclassing closes it at every one of those sites at once, including
+    ones added later, rather than by enumerating them here and hoping the list stays complete.
+
+    `result` is synthesized so the attribute stays present and typed for the one consumer that
+    reads it (`commands/commit.py`'s `_staging_error_kind`, which short-circuits on this type
+    before it gets there). `returncode` is `-1`: there is no exit status, because there was no
+    process. The errno and the directory the OS refused are on `os_error`/`cwd` and in the message.
+    """
+
+    def __init__(self, git_args: Sequence[str], cwd: Path, error: OSError) -> None:
+        self.cwd = cwd
+        self.os_error = error
+        super().__init__(
+            git_args,
+            subprocess.CompletedProcess(args=["git", *git_args], returncode=-1, stdout="", stderr=str(error)),
+            message=f"git {' '.join(git_args)} could not be started in {cwd}: {error}",
+        )
 
 
 class GitRunner:
@@ -202,27 +268,7 @@ class GitRunner:
             env["GIT_SSH_COMMAND"] = self._ssh_command
 
         def _invoke() -> subprocess.CompletedProcess[str]:
-            # `encoding="utf-8", errors="surrogateescape"` rather than the plain `text=True` this
-            # used to be: a filename that is not valid UTF-8 (`b"caf\xe9.md"`, legal on the volume)
-            # is staged fine by `git add -A` — the failure was always in *decoding it back*, in
-            # every call site downstream that lists paths (`ls-tree`, `diff --name-status`,
-            # `diff --name-only`). Strict decoding raised a bare `UnicodeDecodeError` there — not a
-            # `GitCommandError`, so nothing in commands/commit.py's exception handling ever caught
-            # it, and the same file wedges every later run identically since nothing removes it.
-            # `surrogateescape` (PEP 383) round-trips an undecodable byte through a lone surrogate
-            # codepoint losslessly; passing that same string back into a later argv (e.g.
-            # `update-index --skip-worktree --`) re-encodes it via the identical mechanism, since
-            # subprocess already encodes str argv elements with `os.fsencode` (also surrogateescape
-            # on POSIX) independent of this method's stdout/stderr decoding.
-            result = subprocess.run(
-                command,
-                capture_output=True,
-                encoding="utf-8",
-                errors="surrogateescape",
-                env=env,
-                check=False,
-                cwd=self.work_tree,
-            )
+            result = self._spawn_with_cwd_fallback(args, command, env)
             if check and result.returncode != 0:
                 raise GitCommandError(args, result)
             return result
@@ -241,6 +287,60 @@ class GitRunner:
                 retry_on=(GitCommandError,),
             )
         return _invoke()
+
+    def _spawn(self, command: Sequence[str], env: dict[str, str], cwd: Path | str) -> subprocess.CompletedProcess[str]:
+        # `encoding="utf-8", errors="surrogateescape"` rather than the plain `text=True` this used
+        # to be: a filename that is not valid UTF-8 (`b"caf\xe9.md"`, legal on the volume) is staged
+        # fine by `git add -A` — the failure was always in *decoding it back*, in every call site
+        # downstream that lists paths (`ls-tree`, `diff --name-status`, `diff --name-only`). Strict
+        # decoding raised a bare `UnicodeDecodeError` there — not a `GitCommandError`, so nothing in
+        # commands/commit.py's exception handling ever caught it, and the same file wedges every
+        # later run identically since nothing removes it. `surrogateescape` (PEP 383) round-trips an
+        # undecodable byte through a lone surrogate codepoint losslessly; passing that same string
+        # back into a later argv (e.g. `update-index --skip-worktree --`) re-encodes it via the
+        # identical mechanism, since subprocess already encodes str argv elements with `os.fsencode`
+        # (also surrogateescape on POSIX) independent of this method's stdout/stderr decoding.
+        return subprocess.run(
+            command,
+            capture_output=True,
+            encoding="utf-8",
+            errors="surrogateescape",
+            env=env,
+            check=False,
+            cwd=cwd,
+        )
+
+    def _spawn_with_cwd_fallback(
+        self, args: Sequence[str], command: Sequence[str], env: dict[str, str]
+    ) -> subprocess.CompletedProcess[str]:
+        """Run `command` with cwd pinned to `work_tree`, falling back to an empty private directory
+        if the OS refuses that one — see the `work_tree`-is-not-guaranteed section of this module's
+        header comment for why both halves are load-bearing.
+
+        Any `OSError` that survives both attempts is translated into `GitInvocationError`, so it
+        joins the classified vocabulary the rest of this codebase already handles instead of
+        escaping every handler as a raw `OSError`. Translated rather than swallowed: it is a real
+        failure of this invocation, just not one git itself produced."""
+        try:
+            return self._spawn(command, env, self.work_tree)
+        except OSError as work_tree_error:
+            try:
+                # `mkdtemp`, not a fixed path under the system temp directory: that directory is
+                # world-writable, and a `.gitattributes` planted in it by anything else on the host
+                # would reopen the very hole the cwd pin closes. `mkdtemp` creates a fresh 0700
+                # directory nobody else can write into or predict.
+                fallback_cwd = tempfile.mkdtemp(prefix=_FALLBACK_CWD_PREFIX)
+            except OSError as fallback_error:
+                raise GitInvocationError(args, self.work_tree, work_tree_error) from fallback_error
+            try:
+                return self._spawn(command, env, fallback_cwd)
+            except OSError as fallback_error:
+                # Not the work tree's fault at this point (a plain `git --version` would fail the
+                # same way): the executable or the process environment itself is what the OS
+                # refused. Chained to the original so the traceback still names the work tree.
+                raise GitInvocationError(args, Path(fallback_cwd), fallback_error) from work_tree_error
+            finally:
+                shutil.rmtree(fallback_cwd, ignore_errors=True)
 
     def rev_parse_or_none(self, ref: str) -> str | None:
         result = self.run(["rev-parse", "--verify", "--quiet", ref], check=False)

@@ -26,7 +26,7 @@ from obsidian_tools.vault_git.git_errors import ErrorKind, classify_git_error
 from obsidian_tools.vault_git.known_hosts import KnownHostsError, assemble_known_hosts
 from obsidian_tools.vault_git.provisioning import GitDivergenceError, provision_repository
 from obsidian_tools.vault_git.push_outcome import summarize_push_results
-from obsidian_tools.vault_git.runner import GitCommandError, GitRunner
+from obsidian_tools.vault_git.runner import GitCommandError, GitInvocationError, GitRunner
 from obsidian_tools.vault_git.ssh import build_ssh_command
 
 # Both raised by staging: GitCommandError from a single failed git invocation (check=True, no
@@ -160,6 +160,11 @@ def _staging_error_kind(exc: BaseException) -> ErrorKind:
     denied vs. a vault read failure) lives in `classify_git_error` (`vault_git/git_errors.py`) —
     pure, over the stderr text alone."""
     git_error = exc if isinstance(exc, GitCommandError) else exc.__cause__
+    if isinstance(git_error, GitInvocationError):
+        # The one kind that is settled by the exception's *type* rather than by any text: git never
+        # ran, so there is no stderr of git's to classify — `GitInvocationError.result.stderr`
+        # carries the `OSError`'s own text, which `classify_git_error` has no business reading.
+        return ErrorKind.INVOCATION_FAILED
     if not isinstance(git_error, GitCommandError):
         return ErrorKind.UNKNOWN
     stderr = git_error.result.stderr or ""
@@ -193,6 +198,18 @@ _STAGING_FAILURE_LOG: dict[ErrorKind, tuple[str, str]] = {
         "staging failed: a vault file could not be read — check the NFS mount and share-manager, not the "
         "git-dir cache volume",
         "stage_failed_vault_read_failure",
+    ),
+    ErrorKind.WORK_TREE_UNUSABLE: (
+        "staging failed: the vault directory itself is missing or cannot be entered — check that the vault "
+        "volume actually carries it (a freshly provisioned or restored PVC does not until Obsidian seeds it), "
+        "not the git-dir cache volume",
+        "stage_failed_work_tree_unusable",
+    ),
+    ErrorKind.INVOCATION_FAILED: (
+        "staging failed: git could not be started at all — the OS refused the invocation before git ran; see the "
+        "exception traceback for the errno and the directory, and check this container's own filesystem rather "
+        "than the vault content or the git-dir cache",
+        "stage_failed_invocation",
     ),
     ErrorKind.UNKNOWN: (
         "staging failed for an unrecognized reason; see the exception traceback for the underlying git stderr",
