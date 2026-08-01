@@ -79,3 +79,25 @@ jobs:
       private_registry: ${{ secrets.CONTAINER_REGISTRY }}
       tailscale_oauth_client_id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
       tailscale_oauth_secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
+
+  # Pull the image that was actually published and run its entrypoint. Deliberately a separate job
+  # against the artifact, not a RUN inside the Dockerfile: a build-stage check bakes a pointless
+  # layer into what ships, forces the arm64 final stage through QEMU emulation just to print help
+  # text, and tests the build context rather than the thing a cluster pulls.
+  #
+  # This exists because 0.3.0 built, published, passed every check and deployed while shipping an
+  # entrypoint that could not exec -- a virtualenv shebang naming the builder's interpreter path.
+  # Unit tests import the package in the runner's own environment; the build proves the image
+  # builds; the consuming repo's chainsaw suite asserts the CronJob object's shape without ever
+  # scheduling a pod. Three green signals, none of which answered "does it start".
+  smoke-test:
+    needs: build-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+    # By digest, not tag: this pins the test to exactly what this run produced rather than to a
+    # moving tag another build could have overwritten in between.
+    - name: Run the published entrypoint
+      run: docker run --rm "docker.io/ppatlabs/obsidian-tools@${{ needs.build-image.outputs.digest }}" --help
