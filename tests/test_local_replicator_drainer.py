@@ -13,7 +13,15 @@ from obsidian_tools.local_replicator.spool import list_spool_files, write_spool_
 
 
 def _entry(path: str) -> SpoolEntry:
-    return SpoolEntry(kind="modify", path=path, old_path=None, patch="diff\n")
+    return SpoolEntry(
+        kind="modify",
+        path=path,
+        old_path=None,
+        patch="diff\n",
+        baseline_sha="1111111111111111111111111111111111111111",
+        upstream_sha="2222222222222222222222222222222222222222",
+        matches_upstream=False,
+    )
 
 
 def _recording_sink(record: list[str]) -> DrainSink:
