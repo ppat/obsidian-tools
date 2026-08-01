@@ -207,3 +207,76 @@ def test_an_unreadable_subdirectory_withholds_the_marker_but_keeps_what_was_reac
         assert (icloud / ".obsidian" / "plugins" / "broken-plugin" / "main.js").exists()
     finally:
         broken_plugin_dir.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)  # tmp_path cleanup
+
+
+def test_entries_that_cannot_be_stat_ed_withhold_the_marker_too(tmp_path: Path) -> None:
+    """BROKEN, reproduced: the same dead `except OSError` this repository's committer-side walker
+    carried (ppat/obsidian-tools#35), and here it defeats the completion marker rather than merely
+    losing a log field.
+
+    `Path.is_file()` and `Path.is_dir()` delegate to `os.path.isfile`/`isdir`, and
+    `Path.is_symlink()` to `os.path.islink`; all three catch `OSError` themselves and return False.
+    So the `try`/`except OSError` those calls sat inside could never fire, and an entry that cannot
+    be stat'ed reached the selector as `is_file=False` — dropped as though it were a directory or a
+    socket, with `unreadable` left empty. `os.walk`'s `onerror` does not cover it either: that fires
+    on `scandir`, and a directory with read but no execute permission enumerates perfectly well
+    (`readdir` needs `r`) while every `stat` on its entries fails with `EACCES` (which needs `x`) —
+    the shape an NFS/iCloud `ESTALE` on individual entries takes.
+
+    The consequence here is worse than on the committer side, because this module's `unreadable` list
+    is *consumed*: with it empty, `seed_baseline` writes `.local-replicator-baseline-complete`,
+    `is_baselined()` returns True forever after, and the walk never runs again. Measured against the
+    pre-fix module with `.obsidian/plugins/dataview` at mode 0600: the device received `app.json` and
+    the marker, nothing else, permanently. Silent and permanent — exactly what the marker exists to
+    prevent.
+    """
+    clone = tmp_path / "clone"
+    icloud = tmp_path / "icloud"
+    _write(clone / ".obsidian" / "app.json", "{}\n")
+    plugin_dir = clone / ".obsidian" / "plugins" / "dataview"
+    _write(plugin_dir / "main.js", "// plugin code\n")
+    _write(plugin_dir / "manifest.json", '{"id": "dataview"}\n')
+    plugin_dir.chmod(stat.S_IRUSR | stat.S_IWUSR)  # listable, but its entries cannot be stat'ed
+    icloud.mkdir()
+
+    try:
+        seed_baseline(clone, icloud)
+
+        assert is_baselined(icloud) is False, (
+            "the marker was written over an incomplete copy; the device keeps this gap forever"
+        )
+        assert (icloud / ".obsidian" / "app.json").exists()  # still copied -- reachable, additive
+        assert not (icloud / ".obsidian" / "plugins" / "dataview" / "main.js").exists()
+
+        # The read error clears; the next cycle re-walks and only now completes the baseline.
+        plugin_dir.chmod(stat.S_IRWXU)
+        seed_baseline(clone, icloud)
+
+        assert is_baselined(icloud) is True
+        assert (icloud / ".obsidian" / "plugins" / "dataview" / "main.js").exists()
+        assert (icloud / ".obsidian" / "plugins" / "dataview" / "manifest.json").exists()
+    finally:
+        plugin_dir.chmod(stat.S_IRWXU)  # tmp_path cleanup
+
+
+def test_a_dangling_symlink_does_not_withhold_the_marker(tmp_path: Path) -> None:
+    """The risk the explicit stat introduces, pinned so a later "tighten it" change cannot reopen it.
+    A symlink whose target is gone is a legible state of the parked clone, not an I/O failure, and it
+    is already handled by being excluded from the copy. Had the walk stat'ed *through* each link
+    (`stat()` rather than `lstat()`), a dangling one would raise `ENOENT`, land in `unreadable`, and
+    withhold the completion marker forever on a condition no cycle can clear — a device stuck
+    unseeded, which is strictly worse than the partial copy the marker exists to prevent."""
+    clone = tmp_path / "clone"
+    icloud = tmp_path / "icloud"
+    _write(clone / ".obsidian" / "app.json", "{}\n")
+    plugin_dir = clone / ".obsidian" / "plugins" / "dataview"
+    _write(plugin_dir / "manifest.json", '{"id": "dataview"}\n')
+    (plugin_dir / "main.js").symlink_to(tmp_path / "never-existed")
+    icloud.mkdir()
+
+    seed_baseline(clone, icloud)
+
+    assert is_baselined(icloud) is True
+    assert (icloud / ".obsidian" / "app.json").exists()
+    assert (icloud / ".obsidian" / "plugins" / "dataview" / "manifest.json").exists()
+    assert not (icloud / ".obsidian" / "plugins" / "dataview" / "main.js").exists()
