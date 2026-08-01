@@ -1069,3 +1069,73 @@ def test_a_dangling_symlink_is_not_treated_as_a_read_failure(
     assert ".obsidian/snippets/gone.css" not in staged
     diagnostic = _one_record_with_event(caplog, "baseline_unselected_paths")
     assert "snippets/gone.css" in getattr(diagnostic, "unselected_paths")  # noqa: B009 -- LogRecord attr
+
+
+def _walk_log_payload(record: logging.LogRecord) -> dict[str, object]:
+    return {
+        field: getattr(record, field)
+        for field in ("unselected_count", "unselected_paths", "unreadable_count", "unreadable_paths")
+    }
+
+
+def test_an_unreadable_subtree_is_reported_on_the_reapply_branch_too(
+    tmp_path: Path,
+    seeded_origin: Path,
+    make_bare_repo: Callable[[], Path],
+    vault_dir: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """BROKEN, reproduced (independent review of this change): the diagnostic reported only
+    `unselected`, and dropped the walk's `unreadable` list on the floor. On a vault that already has
+    a baseline — every deployed vault — the reapply branch is the *only* branch that ever runs, so
+    this record is the only thing the committer says about `.obsidian/` at all. With a subtree
+    unreadable, it read `unselected_count: 0, unselected_paths: []`: byte-identical to the healthy
+    "everything is captured" answer, with the unreadable subtree and everything under it invisible.
+
+    That is the same failure shape this change exists to remove — a mechanism reporting a complete
+    answer while having dropped data — reintroduced in the mechanism that removes it. Nothing else
+    covers the gap either: `.obsidian` is pruned by the git-dir exclude rule, so `git add -A` never
+    descends into it and `commands/commit.py`'s `VAULT_READ_FAILURE` classification is unreachable
+    for these paths.
+
+    So the two answers must be distinguishable, which is what this asserts directly rather than by
+    checking fields one at a time. The level differs too: on a baselined vault this warning is the
+    only signal that will ever exist for an unreadable `.obsidian/`, and an operator scanning for
+    something wrong must not have to read every `info` line to find it."""
+    nas = make_bare_repo()
+    git_dir = tmp_path / "git-dir"
+    _write_obsidian_dir(vault_dir)
+    obsidian = vault_dir / ".obsidian"
+    plugin_dir = _write_plugin(obsidian, "dataview")
+    (plugin_dir / "data.json").write_text('{"never": "selected"}\n')
+
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    assert ensure_obsidian_baseline(runner, vault_dir) is True
+    stage_all(runner)
+    create_commit(runner, cycle_time=datetime.now(UTC))
+
+    caplog.clear()
+    runner_healthy = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    with caplog.at_level(logging.INFO):
+        assert ensure_obsidian_baseline(runner_healthy, vault_dir) is False
+    healthy = _one_record_with_event(caplog, "baseline_unselected_paths")
+
+    plugins_dir = obsidian / "plugins"
+    plugins_dir.chmod(0)
+    try:
+        caplog.clear()
+        runner_degraded = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+        with caplog.at_level(logging.INFO):
+            assert ensure_obsidian_baseline(runner_degraded, vault_dir) is False
+        degraded = _one_record_with_event(caplog, "baseline_unselected_paths")
+
+        assert _walk_log_payload(degraded) != _walk_log_payload(healthy), (
+            "the degraded walk reported the same thing as the healthy one; an unreadable subtree is invisible"
+        )
+        assert getattr(degraded, "unreadable_paths") == [str(plugins_dir)]  # noqa: B009 -- LogRecord attr
+        assert getattr(degraded, "unreadable_count") == 1  # noqa: B009 -- LogRecord attr
+        assert degraded.levelno == logging.WARNING
+        assert healthy.levelno == logging.INFO
+        assert getattr(healthy, "unreadable_count") == 0  # noqa: B009 -- LogRecord attr
+    finally:
+        plugins_dir.chmod(stat.S_IRWXU)  # tmp_path cleanup

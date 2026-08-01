@@ -245,9 +245,39 @@ def _walk_obsidian(work_tree: Path) -> _ObsidianWalk:
     )
 
 
-def _log_unselected_paths(walk: _ObsidianWalk) -> None:
+def _walk_log_fields(walk: _ObsidianWalk) -> dict[str, object]:
+    """The complete account of one walk, as structured log fields — used by *every* line this module
+    emits about a walk, so no caller can report a subset by omission.
+
+    Built in one place deliberately. The first revision of the diagnostic below took the whole
+    `_ObsidianWalk` and logged only `unselected` from it, which on a baselined vault (the reapply
+    branch, the only branch that ever runs there) made an unreadable subtree read exactly like a
+    healthy one — the same "complete-looking answer over dropped data" shape this module's refusal
+    exists to prevent, reintroduced in the mechanism meant to reveal it. A caller that cannot choose
+    which fields to include cannot make that mistake again.
+
+    Both samples are capped at `_LOG_PATH_SAMPLE_LIMIT` here, which is also the only place either cap
+    is applied.
+    """
+    return {
+        "unselected_count": len(walk.unselected),
+        "unselected_paths": walk.unselected[:_LOG_PATH_SAMPLE_LIMIT],
+        "unreadable_count": len(walk.unreadable),
+        "unreadable_paths": walk.unreadable[:_LOG_PATH_SAMPLE_LIMIT],
+    }
+
+
+def _log_walk_observations(walk: _ObsidianWalk) -> None:
     """Report what the walk enumerated and the allowlist did not take — the direction the allowlist
-    has never been validated in.
+    has never been validated in — together with anything the walk could not read at all.
+
+    **`warning` when the walk was incomplete, `info` otherwise**, with the same event and the same
+    fields either way. The level tracks the data, never which branch called this: on a vault that
+    already has a baseline the capture branch never runs again, so `baseline_refused_incomplete_walk`
+    can never fire and this line is the *only* signal that will ever exist for an unreadable
+    `.obsidian/` — `git add -A` never descends into `.obsidian` either, since the git-dir exclude
+    rule prunes it, so nothing downstream reports it as a vault read failure. An operator scanning
+    for something wrong must not have to read every `info` line to find that.
 
     `baseline_selector.py`'s allowlist was arrived at by reasoning about what a device baseline
     needs, never by inspecting what is actually on the PVC. That validates it one way only: a file
@@ -263,15 +293,21 @@ def _log_unselected_paths(walk: _ObsidianWalk) -> None:
     few dozen `stat`s per 15-minute run, against a run that already walks the entire vault through
     `git add -A`; `info` rather than `warning` because an unselected path is the ordinary, expected
     state of most of `.obsidian/` (`workspace.json` is on this list every single run, correctly) —
-    this is a question an operator comes to the logs to ask, not an event that should interrupt one.
+    an unselected path on its own is the ordinary, expected state of most of `.obsidian/`
+    (`workspace.json` is on this list every single run, correctly) — that is a question an operator
+    comes to the logs to ask, not an event that should interrupt one.
     """
+    if walk.unreadable:
+        logger.warning(
+            "part of .obsidian/ could not be read this cycle, so this enumeration is incomplete and the baseline "
+            "may be missing whatever sits under the unreadable paths",
+            extra={"event": "baseline_unselected_paths", **_walk_log_fields(walk)},
+        )
+        return
+
     logger.info(
         "enumerated .obsidian/ entries the baseline allowlist did not select",
-        extra={
-            "event": "baseline_unselected_paths",
-            "unselected_count": len(walk.unselected),
-            "unselected_paths": walk.unselected[:_LOG_PATH_SAMPLE_LIMIT],
-        },
+        extra={"event": "baseline_unselected_paths", **_walk_log_fields(walk)},
     )
 
 
@@ -288,7 +324,7 @@ def ensure_obsidian_baseline(runner: GitRunner, work_tree: Path) -> bool:
         # check, `.obsidian -> /somewhere/else` would make this enumerate an arbitrary external
         # directory and print its contents into the committer's logs (ppat/obsidian-tools#22).
         if not obsidian_path.is_symlink() and obsidian_path.is_dir():
-            _log_unselected_paths(_walk_obsidian(work_tree))
+            _log_walk_observations(_walk_obsidian(work_tree))
         return False
 
     if obsidian_path.is_symlink():
@@ -320,7 +356,7 @@ def ensure_obsidian_baseline(runner: GitRunner, work_tree: Path) -> bool:
         return False
 
     walk = _walk_obsidian(work_tree)
-    _log_unselected_paths(walk)
+    _log_walk_observations(walk)
 
     if walk.unreadable:
         # **The capture is all-or-nothing** (ppat/obsidian-tools#35). Anything staged here becomes a
@@ -353,8 +389,7 @@ def ensure_obsidian_baseline(runner: GitRunner, work_tree: Path) -> bool:
             "capture would be silently incomplete and permanent; nothing staged, the next run retries the whole walk",
             extra={
                 "event": "baseline_refused_incomplete_walk",
-                "unreadable_count": len(walk.unreadable),
-                "unreadable_paths": walk.unreadable[:_LOG_PATH_SAMPLE_LIMIT],
+                **_walk_log_fields(walk),
                 "readable_selected_count": len(walk.selected),
             },
         )
