@@ -83,6 +83,13 @@ jobs:
     # Fixed in tests/conftest.py -- see its `parent=_HYPOTHESIS_DEFAULTS` comment -- and guarded by
     # tests/test_hypothesis_profiles.py plus an import-time check in conftest.py, because a warning
     # line inside a passing job is not a signal anyone reads.
+    #
+    # That warning does still appear on an all-green run, and it is correct there: Hypothesis
+    # creates `.hypothesis/examples` only when it has a failing example to record, so a run that
+    # finds nothing has nothing to save. It is no longer evidence of anything -- the fix is visible
+    # in the profile line the run itself prints (`hypothesis profile 'ci' -> ...` with no
+    # `database=None`), not in this step's output. Do not read the surviving warning as a
+    # regression; read the profile line, which the guards above assert on directly.
     - name: Cache - Hypothesis example database
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
