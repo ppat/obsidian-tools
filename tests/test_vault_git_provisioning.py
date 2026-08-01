@@ -11,6 +11,7 @@ silently forked).
 from __future__ import annotations
 
 import shutil
+import subprocess
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -23,7 +24,7 @@ from obsidian_tools.vault_git.provisioning import GitDivergenceError, provision_
 from obsidian_tools.vault_git.runner import GitRunner
 
 
-def _provision(git_dir: Path, work_tree: Path, *, origin_url: str, nas_url: str) -> GitRunner:
+def _provision(git_dir: Path, work_tree: Path, *, origin_url: str, nas_url: str | None) -> GitRunner:
     runner = make_runner(git_dir, work_tree)
     provision_repository(
         runner,
@@ -168,3 +169,25 @@ def test_diverged_local_and_origin_history_raises(
 
     with pytest.raises(GitDivergenceError):
         _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+
+
+def test_no_nas_url_never_creates_a_nas_remote(tmp_path: Path, seeded_origin: Path, vault_dir: Path) -> None:
+    """The NAS remote is optional (config.py's `CommitConfig.nas_url`) -- provisioning must not
+    merely fail to push to a "nas" remote when it's unconfigured, it must never create one at all."""
+    git_dir = tmp_path / "git-dir"
+
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=None)
+    _add_vault_file(vault_dir, "10-areas/homelab.md", "# Homelab\n")
+    stage_all(runner)
+    create_commit(runner, cycle_time=datetime.now(UTC))
+    results = push_all(runner, branch="main", remotes=("origin",))  # only what's actually configured
+
+    assert [result.remote for result in results] == ["origin"]
+    assert all(result.ok for result in results)
+    result = subprocess.run(
+        ["git", f"--git-dir={git_dir}", "config", "--local", "--get", "remote.nas.url"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0  # never created, not merely unpushed

@@ -11,6 +11,8 @@ def test_from_env_applies_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("OBSIDIAN_VAULT_DIR", raising=False)
     monkeypatch.delenv("GIT_COMMIT_BRANCH", raising=False)
     monkeypatch.delenv("GIT_COMMIT_MAX_DELETION_FRACTION", raising=False)
+    monkeypatch.delenv("GIT_SSH_KNOWN_HOSTS_PATH", raising=False)
+    monkeypatch.delenv("GIT_SSH_KNOWN_HOSTS_EXTRA", raising=False)
     monkeypatch.setenv("GIT_REMOTE_ORIGIN_URL", "git@github.com:ppat/obsidian-vault.git")
     monkeypatch.setenv("GIT_REMOTE_NAS_URL", "git@nas:vault.git")
 
@@ -21,6 +23,41 @@ def test_from_env_applies_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert config.branch == "main"
     assert config.author_name == "brain-committer"
     assert config.max_deletion_fraction == DEFAULT_MAX_DELETION_FRACTION
+    assert config.nas_url == "git@nas:vault.git"
+    assert config.ssh_known_hosts_path.endswith("/.ssh/known_hosts")
+    assert config.ssh_known_hosts_extra == ""
+
+
+def test_from_env_nas_url_is_optional_and_defaults_to_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The NAS is a second push target for independence insurance, not required for the committer
+    to do its primary job (docs/DESIGN.md §2 item 5) -- an operator without the NAS's SSH access,
+    authorized_keys entry, bare repo and host key set up yet must still be able to run this
+    component. Regression test for `GIT_REMOTE_NAS_URL` going from `require_env` to optional."""
+    monkeypatch.setenv("GIT_REMOTE_ORIGIN_URL", "git@github.com:ppat/obsidian-vault.git")
+    monkeypatch.delenv("GIT_REMOTE_NAS_URL", raising=False)
+
+    config = CommitConfig.from_env()
+
+    assert config.nas_url is None
+
+
+def test_from_env_treats_an_empty_nas_url_the_same_as_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GIT_REMOTE_ORIGIN_URL", "git@github.com:ppat/obsidian-vault.git")
+    monkeypatch.setenv("GIT_REMOTE_NAS_URL", "")
+
+    config = CommitConfig.from_env()
+
+    assert config.nas_url is None
+
+
+def test_from_env_ssh_known_hosts_extra_is_overridable_via_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GIT_REMOTE_ORIGIN_URL", "git@github.com:ppat/obsidian-vault.git")
+    monkeypatch.delenv("GIT_REMOTE_NAS_URL", raising=False)
+    monkeypatch.setenv("GIT_SSH_KNOWN_HOSTS_EXTRA", "nas.example.invalid ssh-ed25519 AAAA...\n")
+
+    config = CommitConfig.from_env()
+
+    assert config.ssh_known_hosts_extra == "nas.example.invalid ssh-ed25519 AAAA...\n"
 
 
 def test_max_deletion_fraction_is_overridable_via_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -65,12 +102,4 @@ def test_from_env_requires_origin_url(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GIT_REMOTE_NAS_URL", "git@nas:vault.git")
 
     with pytest.raises(ConfigError, match="GIT_REMOTE_ORIGIN_URL"):
-        CommitConfig.from_env()
-
-
-def test_from_env_requires_nas_url(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GIT_REMOTE_ORIGIN_URL", "git@github.com:ppat/obsidian-vault.git")
-    monkeypatch.delenv("GIT_REMOTE_NAS_URL", raising=False)
-
-    with pytest.raises(ConfigError, match="GIT_REMOTE_NAS_URL"):
         CommitConfig.from_env()
