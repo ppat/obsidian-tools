@@ -283,7 +283,12 @@ Linter or date-stamping plugin is installed for this job; see `CLAUDE.md` sectio
       inline-field format ratified in `CLAUDE.md` section 11. The plugin defaults to
       the emoji format, so leaving this alone *is* a choice, and a device where it is
       unset writes the other format silently. Mixed-format vaults cannot be read back
-      and there is no converter, so set it on every device or none.
+      and there is no converter, so set it on every device or none. Setting it here does
+      not carry it to the other devices: the plugin keeps it in its own `data.json`, which
+      the `.obsidian/` baseline below never captures for any plugin, so a seeded device
+      arrives without it. The per-device step is in
+      [`local-replicator.md`](./local-replicator.md), "Prerequisites this component
+      depends on and cannot enforce".
 - [ ] Record the Obsidian version on every device that opens this vault, including iOS.
       **1.11.4 or newer is a hard prerequisite** on all of them: below it, alternating
       bracket fields render underlined or invisible. This is a reading-integrity
