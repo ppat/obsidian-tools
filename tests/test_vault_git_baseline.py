@@ -833,6 +833,146 @@ def test_a_persistently_unreadable_directory_never_wedges_the_rest_of_the_run(
         denied.chmod(stat.S_IRWXU)  # tmp_path cleanup
 
 
+# --- the dropped-set diagnostic -------------------------------------------------------------------
+#
+# The allowlist in `baseline_selector.py` was arrived at by reasoning about what a device baseline
+# needs, never by inspecting what is actually on the PVC — validated in one direction only. An
+# expected file going missing would have been noticed; a file that *is* there, *does* matter and
+# nobody thought of is dropped with no error and no warning. These tests pin the other direction.
+
+
+def test_the_walk_logs_every_enumerated_path_the_allowlist_did_not_select(
+    tmp_path: Path,
+    seeded_origin: Path,
+    make_bare_repo: Callable[[], Path],
+    vault_dir: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The dropped set is reported as the set difference against `select_baseline_paths`' own
+    output, never by re-deriving "what would the allowlist have taken" here -- so it cannot drift
+    from the selector, and it deliberately does not separate an allowlist miss from a safety
+    exclusion (a symlink), since telling those apart would need exactly that re-derivation."""
+    nas = make_bare_repo()
+    git_dir = tmp_path / "git-dir"
+    _write_obsidian_dir(vault_dir)  # app.json (selected) + workspace.json/workspaces.json (not)
+    obsidian = vault_dir / ".obsidian"
+    plugin_dir = _write_plugin(obsidian, "obsidian-local-rest-api")
+    (plugin_dir / "data.json").write_text('{"apiKey": "never baselined"}\n')
+
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    with caplog.at_level(logging.INFO):
+        took_baseline = ensure_obsidian_baseline(runner, vault_dir)
+
+    assert took_baseline is True
+    record = _one_record_with_event(caplog, "baseline_unselected_paths")
+    assert set(getattr(record, "unselected_paths")) == {  # noqa: B009 -- LogRecord attr
+        "workspace.json",
+        "workspaces.json",
+        "plugins/obsidian-local-rest-api/data.json",
+    }
+    assert getattr(record, "unselected_count") == 3  # noqa: B009 -- LogRecord attr
+
+
+def test_the_dropped_set_is_still_reported_after_the_baseline_has_been_taken(
+    tmp_path: Path,
+    seeded_origin: Path,
+    make_bare_repo: Callable[[], Path],
+    vault_dir: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The whole point of the diagnostic, and the reason it does not live inside the capture branch:
+    the capture branch runs only until a baseline exists, which for the live vault already happened
+    -- a diagnostic gated on it would never emit again, and could never answer the question for the
+    deployment that actually has the question. Enumerating on every run instead means a plugin
+    installed a year from now shows up in the next run's own logs, with no cluster access needed."""
+    nas = make_bare_repo()
+    git_dir = tmp_path / "git-dir"
+    _write_obsidian_dir(vault_dir)
+    obsidian = vault_dir / ".obsidian"
+
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    assert ensure_obsidian_baseline(runner, vault_dir) is True
+    stage_all(runner)
+    create_commit(runner, cycle_time=datetime.now(UTC))
+
+    # A plugin is installed later, through the GUI, carrying a file nobody writing the allowlist
+    # thought about.
+    late_plugin = _write_plugin(obsidian, "some-new-plugin")
+    (late_plugin / "keybindings.json").write_text('{"binding": "value"}\n')
+
+    caplog.clear()
+    runner_2 = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    with caplog.at_level(logging.INFO):
+        took_baseline_again = ensure_obsidian_baseline(runner_2, vault_dir)
+
+    assert took_baseline_again is False  # the reapply branch, i.e. the guard is already satisfied
+    record = _one_record_with_event(caplog, "baseline_unselected_paths")
+    assert "plugins/some-new-plugin/keybindings.json" in getattr(record, "unselected_paths")  # noqa: B009
+
+
+def test_the_diagnostic_never_enumerates_through_a_symlinked_obsidian_root(
+    tmp_path: Path,
+    seeded_origin: Path,
+    make_bare_repo: Callable[[], Path],
+    vault_dir: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The diagnostic runs on the reapply branch too, which is the one branch that previously never
+    touched the work tree at all -- so it needs the same root guard the capture branch has
+    (`ppat/obsidian-tools#22`). Without it, `.obsidian -> /somewhere/else` would make this walk
+    enumerate an arbitrary external directory and print its contents into the committer's logs."""
+    nas = make_bare_repo()
+    git_dir = tmp_path / "git-dir"
+    _write_obsidian_dir(vault_dir)
+
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    assert ensure_obsidian_baseline(runner, vault_dir) is True
+    stage_all(runner)
+    create_commit(runner, cycle_time=datetime.now(UTC))
+
+    shutil.rmtree(vault_dir / ".obsidian")
+    external_target = tmp_path / "elsewhere"
+    external_target.mkdir()
+    (external_target / "private-outside-the-vault.json").write_text('{"secret": "never logged"}\n')
+    (vault_dir / ".obsidian").symlink_to(external_target, target_is_directory=True)
+
+    caplog.clear()
+    runner_2 = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    with caplog.at_level(logging.INFO):
+        assert ensure_obsidian_baseline(runner_2, vault_dir) is False
+
+    assert _records_with_event(caplog, "baseline_unselected_paths") == []
+    for record in caplog.records:
+        assert "private-outside-the-vault.json" not in str(record.__dict__)
+
+
+def test_the_logged_path_lists_are_capped(
+    tmp_path: Path,
+    seeded_origin: Path,
+    make_bare_repo: Callable[[], Path],
+    vault_dir: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The list is built from whatever is on the volume, so its length is not this code's to choose.
+    Loki drops a log line over its max line size outright rather than truncating it, which would
+    lose the count as well as the sample exactly when the dropped set is most interesting -- so the
+    sample is capped and the full count is carried separately."""
+    nas = make_bare_repo()
+    git_dir = tmp_path / "git-dir"
+    _write_obsidian_dir(vault_dir)  # workspace.json + workspaces.json are unselected too
+    extra = _LOG_PATH_SAMPLE_LIMIT + 20
+    for index in range(extra):
+        (vault_dir / ".obsidian" / f"unknown-{index:04d}.json").write_text("{}\n")
+
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    with caplog.at_level(logging.INFO):
+        ensure_obsidian_baseline(runner, vault_dir)
+
+    record = _one_record_with_event(caplog, "baseline_unselected_paths")
+    assert getattr(record, "unselected_count") == extra + 2  # noqa: B009 -- LogRecord attr
+    assert len(getattr(record, "unselected_paths")) == _LOG_PATH_SAMPLE_LIMIT  # noqa: B009
+
+
 def test_an_unreadable_walk_is_reported_as_such_even_when_nothing_allowlisted_was_found(
     tmp_path: Path,
     seeded_origin: Path,
@@ -927,3 +1067,5 @@ def test_a_dangling_symlink_is_not_treated_as_a_read_failure(
     staged = runner.run(["diff", "--cached", "--name-only"]).stdout.splitlines()
     assert ".obsidian/app.json" in staged
     assert ".obsidian/snippets/gone.css" not in staged
+    diagnostic = _one_record_with_event(caplog, "baseline_unselected_paths")
+    assert "snippets/gone.css" in getattr(diagnostic, "unselected_paths")  # noqa: B009 -- LogRecord attr

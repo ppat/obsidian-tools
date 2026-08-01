@@ -66,13 +66,13 @@ logger = logging.getLogger(__name__)
 
 OBSIDIAN_DIR = ".obsidian"
 
-# How many paths the refusal's `unreadable_paths` field carries. That list is built from whatever
-# happens to be on the volume, so its length is not this code's to choose: one unreadable directory
-# contributes a single entry, but a directory whose entries cannot be stat'ed individually
-# contributes one per entry. A log pipeline's line-size limit rejects an oversized line outright
+# How many paths either of this module's two path-list log fields carries. Both lists are built from
+# whatever happens to be on the volume, so neither length is this code's to choose: a plugin that
+# ships a source tree makes the unselected list arbitrarily long, and a whole unreadable subtree does
+# the same to the unreadable one. A log pipeline's line-size limit rejects an oversized line outright
 # rather than truncating it (Loki's `max_line_size` does exactly this unless it is explicitly
-# configured to truncate), which would lose the *count* along with the sample at the moment the list
-# is most interesting — so the sample is capped here and the full count is logged beside it.
+# configured to truncate), which would lose the *count* along with the sample at the moment either
+# list is most interesting — so the sample is capped here and the full count is logged beside it.
 _LOG_PATH_SAMPLE_LIMIT = 100
 
 _IGNORE_RULE_CONTENTS = """\
@@ -119,6 +119,9 @@ class _ObsidianWalk:
 
     # `.obsidian/`-prefixed, work-tree-relative — ready to hand to `git add` as pathspecs.
     selected: list[str]
+    # `.obsidian/`-relative (the form `baseline_selector.py`'s allowlist itself is written in, which
+    # is what makes this list directly comparable to it), sorted.
+    unselected: list[str]
     # Real filesystem paths, in walk order — an operator reading this is going to go and look at the
     # thing, so this is the one list that names where it actually is rather than what it is called.
     unreadable: list[str]
@@ -209,8 +212,15 @@ def _iter_obsidian_candidates(directory: Path, prefix: str = "") -> tuple[list[P
 
 
 def _walk_obsidian(work_tree: Path) -> _ObsidianWalk:
-    """One walk of `.obsidian/`, split into what the allowlist takes and what could not be read —
-    the walk-and-decide split described in the module docstring.
+    """One walk of `.obsidian/`, split into what the allowlist takes, what it leaves, and what could
+    not be read — the walk-and-decide split described in the module docstring.
+
+    `unselected` is computed as the set difference against `select_baseline_paths`' own output, never
+    by asking "what would the allowlist have taken" a second time here. That is the same rule the
+    selector's docstring states for the capture itself, and for the same reason: a second copy of the
+    allowlist logic is a copy that can fall out of sync. It follows that `unselected` mixes entries
+    the allowlist simply does not name with entries excluded for safety (a symlink, a directory that
+    is not a plain file) — telling those apart would need exactly the re-derivation this avoids.
 
     Every path in `selected` existed at enumeration time, so it was a valid pathspec then — but this
     process does not hold any lock on the (read-only, NFS-backed) work tree between here and the
@@ -224,20 +234,63 @@ def _walk_obsidian(work_tree: Path) -> _ObsidianWalk:
     """
     obsidian_dir = work_tree / OBSIDIAN_DIR
     candidates, unreadable = _iter_obsidian_candidates(obsidian_dir)
+    selected = select_baseline_paths(candidates)
+    selected_paths = set(selected)
     return _ObsidianWalk(
-        selected=[f"{OBSIDIAN_DIR}/{path}" for path in select_baseline_paths(candidates)],
+        selected=[f"{OBSIDIAN_DIR}/{path}" for path in selected],
+        unselected=sorted(
+            candidate.relative_path for candidate in candidates if candidate.relative_path not in selected_paths
+        ),
         unreadable=unreadable,
+    )
+
+
+def _log_unselected_paths(walk: _ObsidianWalk) -> None:
+    """Report what the walk enumerated and the allowlist did not take — the direction the allowlist
+    has never been validated in.
+
+    `baseline_selector.py`'s allowlist was arrived at by reasoning about what a device baseline
+    needs, never by inspecting what is actually on the PVC. That validates it one way only: a file
+    the allowlist names and the vault lacks would have been noticed, but a file that *is* there,
+    *does* matter, and nobody thought of is dropped with no error and no warning. This line is the
+    other direction, answerable from the committer's own logs with no cluster access.
+
+    Emitted on every run rather than only when a capture is attempted, and that is the whole point:
+    the capture branch runs only until a baseline exists, so for any vault that already has one —
+    every deployed vault — a diagnostic gated on it would never emit again, and could never answer
+    the question for the deployment that has it. Running it unconditionally also means a plugin
+    installed a year from now shows up in the next run's logs by itself. The cost is one line and a
+    few dozen `stat`s per 15-minute run, against a run that already walks the entire vault through
+    `git add -A`; `info` rather than `warning` because an unselected path is the ordinary, expected
+    state of most of `.obsidian/` (`workspace.json` is on this list every single run, correctly) —
+    this is a question an operator comes to the logs to ask, not an event that should interrupt one.
+    """
+    logger.info(
+        "enumerated .obsidian/ entries the baseline allowlist did not select",
+        extra={
+            "event": "baseline_unselected_paths",
+            "unselected_count": len(walk.unselected),
+            "unselected_paths": walk.unselected[:_LOG_PATH_SAMPLE_LIMIT],
+        },
     )
 
 
 def ensure_obsidian_baseline(runner: GitRunner, work_tree: Path) -> bool:
     """Idempotent baseline step. Returns True if this call staged the (one-time) baseline capture."""
+    obsidian_path = work_tree / OBSIDIAN_DIR
+
     if runner.rev_parse_or_none("HEAD") is not None and runner.path_exists_at("HEAD", OBSIDIAN_DIR):
         for path in runner.list_tree_paths("HEAD", OBSIDIAN_DIR):
             runner.run(["update-index", "--skip-worktree", "--", path])
+        # Diagnostic only, and deliberately after the reapply loop above: the freeze is this
+        # branch's actual job, and nothing added for observability should be able to run before it.
+        # Guarded exactly as the capture branch below guards its own walk — without the symlink
+        # check, `.obsidian -> /somewhere/else` would make this enumerate an arbitrary external
+        # directory and print its contents into the committer's logs (ppat/obsidian-tools#22).
+        if not obsidian_path.is_symlink() and obsidian_path.is_dir():
+            _log_unselected_paths(_walk_obsidian(work_tree))
         return False
 
-    obsidian_path = work_tree / OBSIDIAN_DIR
     if obsidian_path.is_symlink():
         # Checked before `is_dir()` below, and separately from it, because `is_dir()` follows
         # symlinks and would otherwise read a symlinked `.obsidian` as "present" — this is the one
@@ -267,6 +320,7 @@ def ensure_obsidian_baseline(runner: GitRunner, work_tree: Path) -> bool:
         return False
 
     walk = _walk_obsidian(work_tree)
+    _log_unselected_paths(walk)
 
     if walk.unreadable:
         # **The capture is all-or-nothing** (ppat/obsidian-tools#35). Anything staged here becomes a
