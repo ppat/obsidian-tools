@@ -705,16 +705,14 @@ def test_an_in_tree_textconv_driver_cannot_report_a_binary_modification_as_captu
 
 
 def test_the_vaults_own_gitattributes_is_not_overridden_by_the_launching_directory(
-    tmp_path: Path, seeded_origin: Path, icloud_dir: Path
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`vault_git/runner.py` pins `GitRunner.run`'s subprocess `cwd` to `work_tree` because git's
     per-directory `.gitattributes` lookup does a filesystem probe relative to the *launching
     process's* cwd, not to `--work-tree`, even though `--work-tree` is always given explicitly --
     verified directly (`strace` on a real invocation). Left unpinned, a `.gitattributes` sitting
     wherever this process happens to start -- matching only by name, never by content -- silently
-    overrides whatever the vault's own tracked `.gitattributes` says for that directory level. That
-    is real for this suite specifically: this project's own top-level `.gitattributes` (an
-    unrelated `linguist-detectable` rule) sits exactly where pytest's cwd already is.
+    overrides whatever the vault's own tracked `.gitattributes` says for that directory level.
 
     A `diff=<driver>` assignment is the wrong mechanism to prove this with, and the test above this
     one is the record of finding that out: with `--no-textconv` present, an overridden `diff=img`
@@ -727,7 +725,27 @@ def test_the_vaults_own_gitattributes_is_not_overridden_by_the_launching_directo
     (`captures_content`'s job, working as intended on content the vault itself opted out of
     diffing) -- overridden by an unrelated file at cwd, the assignment vanishes and the very same
     edit diffs normally instead. Two different, unambiguous outcomes for a plain text change, with
-    every `_DECISION_DIFF_FLAGS` flag held constant -- nothing here depends on any of them."""
+    every `_DECISION_DIFF_FLAGS` flag held constant -- nothing here depends on any of them.
+
+    **`monkeypatch.chdir` into a directory this test creates, holding a `.gitattributes` this test
+    writes to contradict the vault's.** An earlier revision took the opposite approach and ran under
+    pytest's ordinary cwd, on the reasoning that this checkout's own top-level `.gitattributes` (an
+    unrelated `linguist-detectable` rule) supplies the hostile file for free and that leaving cwd
+    alone is therefore the more faithful reproduction. It is not, because that precondition is
+    external and unasserted: measured with the `cwd` pin removed, this test failed when run from the
+    checkout root and *passed* -- mutation undetected -- when run from a directory with no
+    `.gitattributes`, so a one-line change to a file kept for an unrelated linguist tweak silently
+    retires the only test isolating a production fix. The `chdir` the previous commit removed was
+    one into a *safe* directory, dodging the bug; this one is into a deliberately *hostile* one,
+    which is the direction that makes the outcome evidence rather than luck."""
+    hostile_launch_directory = tmp_path / "hostile-launch-directory"
+    hostile_launch_directory.mkdir()
+    (hostile_launch_directory / ".gitattributes").write_text("*.md diff\n")
+    monkeypatch.chdir(hostile_launch_directory)
+    # The precondition, owned and asserted rather than inherited: an unrelated file, matching the
+    # vault's own only by name, saying the opposite of what the vault says.
+    assert (hostile_launch_directory / ".gitattributes").read_text() == "*.md diff\n"
+
     push_commit(seeded_origin, tmp_path, {".gitattributes": "*.md -diff\n"}, "opt markdown out of diffing")
     config = replicate_config(tmp_path, seeded_origin, icloud_dir)
     run_cycle(config)
