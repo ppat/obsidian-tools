@@ -59,6 +59,22 @@ def _hostile_global_git_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, 
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config_path))
 
 
+def _hostile_local_git_config(cache_clone_dir: Path, *pairs: tuple[str, str]) -> None:
+    """The repository-local analogue of `_hostile_global_git_config`: `git config --local key
+    value` against the cache clone's own `.git/config`, standing in for what an operator debugging
+    a diff in that clone -- or a `.gitattributes` shipped inside the vault itself -- leaves behind.
+
+    This is not the same route as the global helper above, and the distinction matters: repo-local
+    configuration is deliberately left readable by `vault_git/runner.py`'s scrub (it is where this
+    codebase's own pins live -- identity, `core.quotePath`, `core.fileMode`), so nothing about the
+    scrub or the `-c` config pins helps here. Only the explicit flags on the decision diff
+    invocations (`_DECISION_DIFF_FLAGS`) close this route, which is exactly why those flags are not
+    redundant with the environment scrub.
+    """
+    for key, value in pairs:
+        run_git("config", "--local", key, value, cwd=cache_clone_dir)
+
+
 def _executable_script(path: Path, body: str) -> Path:
     path.write_text(body)
     path.chmod(0o755)
@@ -598,6 +614,175 @@ def test_the_default_user_ignore_file_cannot_hide_a_device_creation_either(
 
     assert result.drifted == ("phone-draft.md",)
     assert "hidden by the default ignore file" in _spooled_by_path(tmp_path)["phone-draft.md"].patch
+
+
+def test_a_repository_local_color_config_cannot_corrupt_the_patch_header(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path
+) -> None:
+    """`captures_content` now requires git's `diff --git ` header as *positive* evidence a patch
+    arrived (see that predicate's own docstring, "the two guards before the marker"), which changed
+    what `--no-color` is for: colour used to be a fidelity nuisance, now it is a hard reject. A
+    repo-local `color.diff = always` -- a plausible operator leftover from debugging a diff by eye
+    in that clone, exactly like the `diff.external` case above -- wraps the header in an ANSI escape
+    (`\x1b[1mdiff --git a/x b/x\x1b[m`), so `captures_content` reads an ordinary markdown edit as
+    `uncaptured`. And because the gate holds back the *whole* cycle on any uncaptured path, not just
+    that one, this is a liveness failure rather than a fidelity one: the cycle never publishes, and
+    the drift regenerates every cycle from a `LAST_CHECKOUT` that cannot move."""
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+    _hostile_local_git_config(tmp_path / "cache-clone", ("color.diff", "always"))
+
+    (icloud_dir / "00-index.md").write_text("a thought typed on the phone\n")
+
+    result = run_cycle(config)
+
+    assert result.drifted == ("00-index.md",)
+    assert result.uncaptured == ()
+    assert result.tag_advanced is True
+    spooled = _spooled_by_path(tmp_path)
+    assert "a thought typed on the phone" in spooled["00-index.md"].patch
+    assert "\x1b[" not in spooled["00-index.md"].patch
+
+
+def test_an_in_tree_textconv_driver_cannot_report_a_binary_modification_as_captured(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The route neutralising the *environment* deliberately cannot close (see the section comment
+    above `test_a_repository_local_diff_external_cannot_replace_the_patch_either`), applied to the
+    quieter half of the same defect: a `.gitattributes` committed *into the vault itself*
+    (`*.png diff=img`) naming a textconv driver defined in the cache clone's own `.git/config`. Both
+    are read regardless of the environment scrub -- one is in-tree, the other repo-local -- so only
+    `--no-textconv` on the decision diff invocations closes this. A driver that reports size rather
+    than content (`PNG image data, %s bytes`) produces an ordinary-looking hunk with two different,
+    plausible strings and no binary marker anywhere -- `captures_content` reads that as a genuine
+    capture of a change that in fact carries none of the actual bytes pasted on the phone.
+
+    (A driver that reports the *same* string for both sides, which is the more obvious thing to
+    reach for, does not exercise this at all -- verified directly: git omits the diff entirely when
+    the textconv'd sides are identical, and an empty patch is already rejected by
+    `captures_content`'s header check regardless of `--no-textconv`. Content-dependent-but-lossy
+    output is what actually needs the flag.)
+
+    `monkeypatch.chdir(tmp_path)`: git's attribute lookup also consults a `.gitattributes` sitting
+    in the *invoking process's* current directory, not just the ones under `--work-tree` -- verified
+    directly, including against this very suite's own repo root (this project's own top-level
+    `.gitattributes`, for `linguist-detectable`, is unrelated to `*.png` but its mere presence at
+    cwd is enough to make git fall back to binary detection regardless of `--no-textconv` or the
+    `core.attributesFile` pin, which silently defeats this test -- and the pre-existing global
+    textconv test above it -- if pytest's own cwd is left as this repo's root). `GitRunner` never
+    sets `cwd` on the subprocess it runs (by design: it addresses the vault and its git directory
+    entirely through `--git-dir`/`--work-tree`), so nothing in production pins the daemon's cwd
+    away from a directory that happens to hold an unrelated `.gitattributes` either -- this is not
+    only a test-hygiene fix."""
+    monkeypatch.chdir(tmp_path)
+    push_commit(
+        seeded_origin,
+        tmp_path,
+        {".gitattributes": "*.png diff=img\n"},
+        "add gitattributes",
+        binary_files={"_attachments/diagram.png": _PNG_BYTES},
+    )
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+    textconv = _executable_script(
+        tmp_path / "hostile-textconv.sh",
+        '#!/bin/sh\nprintf \'PNG image data, %s bytes\\n\' "$(wc -c < "$1")"\n',
+    )
+    _hostile_local_git_config(tmp_path / "cache-clone", ("diff.img.textconv", str(textconv)))
+
+    edited_on_the_phone = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00annotated-on-the-phone"
+    (icloud_dir / "_attachments" / "diagram.png").write_bytes(edited_on_the_phone)
+
+    result = run_cycle(config)
+
+    assert result.uncaptured == ("_attachments/diagram.png",)
+    assert result.tag_advanced is False
+    assert (icloud_dir / "_attachments" / "diagram.png").read_bytes() == edited_on_the_phone
+
+
+def test_a_repository_local_diff_renames_config_falsely_withholds_a_renamed_binary(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path
+) -> None:
+    """Rename detection is not cosmetic for a binary: `captures_content` deliberately passes a pure
+    rename with no hunk at all ("the header describes the change completely" -- see that
+    predicate's own docstring), which is exactly the shape that lets a renamed image through
+    without needing to carry its bytes a second time. A repo-local `diff.renames = false` -- the
+    config an operator debugging a large rename-heavy diff plausibly leaves behind -- is what
+    `--find-renames` on the decision diff invocations exists to override.
+
+    Without detection, `R100` decomposes into a `D` (old path) and an `A` (new path). The `D` is
+    captured regardless -- a deletion always passes, since the pre-deletion bytes are still at
+    `LAST_CHECKOUT` (`captures_content`'s docstring, "a deletion passes for the rename's reason").
+    The `A` is a binary creation with no textual content, which `captures_content` correctly
+    withholds -- exactly `test_a_binary_created_on_the_device_is_never_published_over`'s case,
+    except nothing was actually created here: the same bytes just moved. So losing
+    `--find-renames` does not lose any bytes for a *binary* rename -- it wrongly reports one as
+    uncaptured and stalls the whole cycle behind it, a liveness failure rather than a data-loss
+    one. (A *text* rename in the same scenario is not even wrong: the decomposed `A` still carries
+    the new path's full text content in its patch, so `select_spool_entries` just spools two
+    entries -- delete, then create -- in place of one rename. That is why this test targets a
+    binary specifically, and asserts liveness rather than the R100/D+A distinction itself.)"""
+    push_commit(seeded_origin, tmp_path, {}, "add diagram", binary_files={"_attachments/diagram.png": _PNG_BYTES})
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+    _hostile_local_git_config(tmp_path / "cache-clone", ("diff.renames", "false"))
+
+    (icloud_dir / "_attachments" / "diagram.png").rename(icloud_dir / "_attachments" / "diagram-renamed.png")
+
+    result = run_cycle(config)
+
+    assert result.uncaptured == ()
+    assert result.tag_advanced is True
+    entry = _spooled_by_path(tmp_path)["_attachments/diagram-renamed.png"]
+    assert entry.kind == "rename"
+    assert entry.old_path == "_attachments/diagram.png"
+    assert "similarity index 100%" in entry.patch
+
+
+def test_the_default_user_attributes_file_can_smuggle_a_content_filter_past_a_markdown_edit(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same hole `test_the_default_user_ignore_file_cannot_hide_a_device_creation_either` proves
+    for `core.excludesFile`, which `core.attributesFile` shares the identical justification with
+    (`vault_git/runner.py`'s own comment: both are pinned because their *defaults* point into the
+    operator's home directory, and unsetting the config that names them does not stop git reading
+    them) but had no test of its own.
+
+    Not exercised through a textconv driver -- verified directly that a textconv-driver route here
+    is already fully closed by `--no-textconv` regardless of whether this pin is present, since
+    that flag disables textconv outright rather than only where the attribute assignment was
+    found; a test built that way would not go red for removing this pin at all. What actually
+    needs this pin specifically is a route none of the decision diff flags touch, because it does
+    not run at diff time: a `clean` filter, which git applies while *staging* content
+    (`git add -A`), before any diff is ever taken. A `.gitattributes` at the default
+    `core.attributesFile` location (`$XDG_CONFIG_HOME/git/attributes`, unreached by the
+    `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_NOSYSTEM` scrub for the same reason `core.excludesFile`'s
+    default is) assigns a filter to `00-index.md`; the filter itself is defined repo-locally (a
+    route left open on purpose). The result is a text-for-text substitution with no binary marker
+    anywhere to catch, ordinary in every way `captures_content` checks -- the thought typed on the
+    phone is replaced before git ever sees it, and the gate reports the cycle healthy."""
+    xdg_config_home = tmp_path / "xdg-config"
+    (xdg_config_home / "git").mkdir(parents=True)
+    (xdg_config_home / "git" / "attributes").write_text("00-index.md filter=mangle\n")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_config_home))
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+    clean_filter = _executable_script(
+        tmp_path / "hostile-clean-filter.sh",
+        "#!/bin/sh\necho 'placeholder content, not the real edit'\n",
+    )
+    _hostile_local_git_config(tmp_path / "cache-clone", ("filter.mangle.clean", str(clean_filter)))
+
+    (icloud_dir / "00-index.md").write_text("a thought typed on the phone\n")
+
+    result = run_cycle(config)
+
+    assert result.drifted == ("00-index.md",)
+    assert result.uncaptured == ()
+    assert result.tag_advanced is True
+    spooled = _spooled_by_path(tmp_path)
+    assert "a thought typed on the phone" in spooled["00-index.md"].patch
+    assert "placeholder content, not the real edit" not in spooled["00-index.md"].patch
 
 
 # --- idempotency from an arbitrary starting state ------------------------------------------------
