@@ -52,7 +52,7 @@ def provision_repository(
     author_name: str,
     author_email: str,
     origin_url: str,
-    nas_url: str,
+    nas_url: str | None,
 ) -> None:
     """Bring `runner`'s git-dir to a valid, up-to-date-with-origin state. Safe to call every run."""
     runner.git_dir.mkdir(parents=True, exist_ok=True)
@@ -80,7 +80,8 @@ def provision_repository(
     runner.run(["config", "user.email", author_email])
 
     _ensure_remote(runner, "origin", origin_url)
-    _ensure_remote(runner, "nas", nas_url)
+    if nas_url is not None:  # the NAS remote is optional (config.py's CommitConfig.nas_url)
+        _ensure_remote(runner, "nas", nas_url)
 
     ref_advanced = _sync_branch_from_origin(runner, branch)
 

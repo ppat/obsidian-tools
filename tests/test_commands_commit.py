@@ -23,6 +23,7 @@ from obsidian_tools.commands.commit import is_index_lock_error
 from obsidian_tools.config import CommitConfig
 from obsidian_tools.retry import RetryExhaustedError
 from obsidian_tools.vault_git.commit import DEFAULT_MAX_DELETION_FRACTION
+from obsidian_tools.vault_git.known_hosts import KnownHostsError
 from obsidian_tools.vault_git.runner import GitCommandError
 
 
@@ -31,7 +32,7 @@ def _config(
     vault_dir: Path,
     *,
     origin_url: str,
-    nas_url: str,
+    nas_url: str | None,
     max_deletion_fraction: float = DEFAULT_MAX_DELETION_FRACTION,
 ) -> CommitConfig:
     return CommitConfig(
@@ -42,12 +43,51 @@ def _config(
         author_email="test-committer@example.invalid",
         origin_url=origin_url,
         nas_url=nas_url,
-        # Local file-path remotes in these tests never actually shell out over SSH, so these paths
-        # are never opened; they only need to exist as strings for build_ssh_command to format.
+        # Local file-path remotes in these tests never actually shell out over SSH, so this path is
+        # never opened as a key; it only needs to exist as a string for build_ssh_command to format.
         ssh_key_path="/dev/null",
-        ssh_known_hosts_path="/dev/null",
+        # A real path known_hosts.assemble_known_hosts can write to -- these tests' remotes are
+        # local filesystem paths, never github.com, so no network fetch ever happens (see
+        # test_vault_git_known_hosts.py for that seam); this only has to be writable.
+        ssh_known_hosts_path=str(vault_dir.parent / "known_hosts"),
+        ssh_known_hosts_extra="",
         max_deletion_fraction=max_deletion_fraction,
     )
+
+
+def test_known_hosts_fetch_failure_fails_the_run_without_touching_git_at_all(
+    tmp_path: Path,
+    seeded_origin: Path,
+    make_bare_repo: Callable[[], Path],
+    vault_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The behaviour this whole feature exists for, exercised at the same seam a CronJob run
+    actually takes: a GitHub host-key fetch failure must fail the run loudly rather than proceed
+    with an unverified connection (obsidian_tools/vault_git/known_hosts.py's module docstring).
+    `test_vault_git_known_hosts.py` proves `assemble_known_hosts` itself raises and writes nothing;
+    this proves `run()` catches that, logs it, and returns non-zero *before* provisioning ever
+    touches git -- not merely that some later git call then fails."""
+    nas = make_bare_repo()
+    git_dir = tmp_path / "git-dir"
+    (vault_dir / "10-areas").mkdir()
+    (vault_dir / "10-areas" / "note.md").write_text("# Note\n")
+    commits_before = commit_count(seeded_origin)
+
+    def _raise(**_kwargs: object) -> Path:
+        raise KnownHostsError("simulated GitHub outage")
+
+    monkeypatch.setattr(commit_command, "assemble_known_hosts", _raise)
+
+    with caplog.at_level(logging.ERROR):
+        exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas)))
+
+    assert exit_code == 1
+    assert commit_count(seeded_origin) == commits_before  # nothing pushed
+    assert not git_dir.exists()  # provisioning never ran -- the git-dir cache was never even created
+    events = [getattr(record, "event", None) for record in caplog.records]
+    assert "known_hosts_failed" in events
 
 
 def test_full_cycle_commits_and_pushes_to_both_remotes(
@@ -423,6 +463,64 @@ def test_push_failure_on_one_remote_still_attempts_the_other_and_run_exits_nonze
     assert commit_count(seeded_origin) == 2  # origin still received the commit despite nas failing
 
 
+def test_no_nas_configured_pushes_to_origin_only_and_exits_zero(
+    tmp_path: Path, seeded_origin: Path, vault_dir: Path
+) -> None:
+    """The NAS is a second push target for independence insurance, not something the committer
+    needs to do its primary job (docs/DESIGN.md §2 item 5) -- an operator who hasn't set up the
+    NAS's SSH access, authorized_keys entry, bare repo, and host key yet must still be able to run
+    this component against GitHub alone. Regression test for `GIT_REMOTE_NAS_URL` going from
+    `require_env` to optional (config.py's `CommitConfig.nas_url`)."""
+    git_dir = tmp_path / "git-dir"
+    (vault_dir / "10-areas").mkdir()
+    (vault_dir / "10-areas" / "note.md").write_text("# Note\n")
+
+    exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=None))
+
+    assert exit_code == 0
+    assert commit_count(seeded_origin) == 2
+    # No remote named "nas" was ever added to the cache git-dir -- provisioning must not have
+    # attempted one, not merely have failed to push to one.
+    result = subprocess.run(
+        ["git", f"--git-dir={git_dir}", "config", "--local", "--get", "remote.nas.url"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+
+
+def test_configured_remotes_are_logged_plainly_not_as_a_degraded_warning(
+    tmp_path: Path,
+    seeded_origin: Path,
+    make_bare_repo: Callable[[], Path],
+    vault_dir: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Running with only `origin` configured is the ordinary shape, not a fallback -- the log line
+    must be a plain INFO statement of what's configured, not a WARNING about degraded operation."""
+    git_dir = tmp_path / "git-dir"
+    (vault_dir / "10-areas").mkdir()
+    (vault_dir / "10-areas" / "note.md").write_text("# Note\n")
+
+    with caplog.at_level(logging.INFO):
+        commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=None))
+
+    [record] = [r for r in caplog.records if getattr(r, "event", None) == "remotes_configured"]
+    assert record.levelno == logging.INFO
+    assert tuple(record.remotes) == ("origin",)  # type: ignore[attr-defined]
+    assert "degraded" not in record.getMessage().lower()
+    assert "warn" not in record.getMessage().lower()
+
+    caplog.clear()
+    nas = make_bare_repo()
+    with caplog.at_level(logging.INFO):
+        commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas)))
+
+    [record] = [r for r in caplog.records if getattr(r, "event", None) == "remotes_configured"]
+    assert tuple(record.remotes) == ("origin", "nas")  # type: ignore[attr-defined]
+
+
 def test_non_utf8_filename_does_not_wedge_the_committer(
     tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
 ) -> None:
@@ -480,6 +578,10 @@ def test_max_deletion_fraction_env_var_actually_reaches_the_mass_deletion_guard(
     monkeypatch.setenv("GIT_REMOTE_ORIGIN_URL", str(seeded_origin))
     monkeypatch.setenv("GIT_REMOTE_NAS_URL", str(nas))
     monkeypatch.setenv("GIT_COMMIT_MAX_DELETION_FRACTION", "1.0")  # the operator escape hatch
+    # CommitConfig.ssh_known_hosts_path defaults to ~/.ssh/known_hosts -- pointed at tmp_path here
+    # so this test (going through the real CommitConfig.from_env(), not the _config() helper above)
+    # never writes into this machine's actual SSH known_hosts file.
+    monkeypatch.setenv("GIT_SSH_KNOWN_HOSTS_PATH", str(tmp_path / "known_hosts"))
 
     assert commit_command.run(CommitConfig.from_env()) == 0
     commits_before = commit_count(seeded_origin)

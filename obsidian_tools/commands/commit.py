@@ -23,6 +23,7 @@ from obsidian_tools.vault_git.commit import (
     stage_all,
 )
 from obsidian_tools.vault_git.git_errors import ErrorKind, classify_git_error
+from obsidian_tools.vault_git.known_hosts import KnownHostsError, assemble_known_hosts
 from obsidian_tools.vault_git.provisioning import GitDivergenceError, provision_repository
 from obsidian_tools.vault_git.push_outcome import summarize_push_results
 from obsidian_tools.vault_git.runner import GitCommandError, GitRunner
@@ -39,7 +40,37 @@ logger = logging.getLogger(__name__)
 def run(config: CommitConfig) -> int:
     git_dir = Path(config.git_dir)
     work_tree = Path(config.vault_dir)
-    ssh_command = build_ssh_command(config.ssh_key_path, config.ssh_known_hosts_path)
+
+    # The NAS is optional (config.py's CommitConfig.nas_url) -- push to whatever's configured, and
+    # say so plainly rather than warning about a "degraded" run: an origin-only run is the ordinary
+    # shape, not a fallback.
+    remote_urls = [config.origin_url]
+    remotes: tuple[str, ...] = ("origin",)
+    if config.nas_url is not None:
+        remote_urls.append(config.nas_url)
+        remotes = ("origin", "nas")
+    logger.info(
+        "configured remotes",
+        extra={"event": "remotes_configured", "remotes": remotes},
+    )
+
+    try:
+        known_hosts_path = assemble_known_hosts(
+            remote_urls=remote_urls,
+            extra_lines=config.ssh_known_hosts_extra,
+            destination=Path(config.ssh_known_hosts_path),
+        )
+    except KnownHostsError:
+        # Fetch failure must fail the run loudly, never fall back to an unverified connection
+        # (obsidian_tools/vault_git/known_hosts.py's module docstring) -- nothing below this may
+        # run, since every git network operation from here on depends on a trustworthy known_hosts.
+        logger.exception(
+            "could not establish SSH host keys; refusing to proceed without verified host trust",
+            extra={"event": "known_hosts_failed"},
+        )
+        return 1
+
+    ssh_command = build_ssh_command(config.ssh_key_path, str(known_hosts_path))
     runner = GitRunner(git_dir, work_tree, ssh_command=ssh_command)
 
     try:
@@ -79,7 +110,7 @@ def run(config: CommitConfig) -> int:
         # the current work tree rather than applying incrementally. Still give a previous run's
         # stuck-unpushed commit a chance to catch up before failing.
         _log_staging_failure(exc)
-        push_all(runner, branch=config.branch)
+        push_all(runner, branch=config.branch, remotes=remotes)
         return 1
 
     try:
@@ -89,7 +120,7 @@ def run(config: CommitConfig) -> int:
             "refusing to commit: staged deletions look like data loss, not an edit",
             extra={"event": "mass_deletion_refused"},
         )
-        push_all(runner, branch=config.branch)
+        push_all(runner, branch=config.branch, remotes=remotes)
         return 1
 
     cycle_time = datetime.now(UTC)
@@ -105,13 +136,13 @@ def run(config: CommitConfig) -> int:
             logger.exception(
                 "commit failed; the git-dir may be locked or otherwise wedged", extra={"event": "commit_failed"}
             )
-            push_all(runner, branch=config.branch)  # still let a prior run's stuck commit catch up
+            push_all(runner, branch=config.branch, remotes=remotes)  # still let a prior run's stuck commit catch up
             return 1
         committed = True
     else:
         logger.info("nothing to commit this cycle", extra={"event": "nothing_to_commit"})
 
-    push_results = push_all(runner, branch=config.branch)
+    push_results = push_all(runner, branch=config.branch, remotes=remotes)
     outcome = summarize_push_results(push_results)
 
     logger.info(
