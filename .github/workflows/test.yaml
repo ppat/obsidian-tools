@@ -2,11 +2,37 @@
 # yamllint disable rule:line-length
 name: test
 
+# Scoped to what the suite can actually exercise. Without this, every release-please PR runs
+# the full suite against a changelog edit -- release-please uses `release-type: simple` here,
+# so its PRs touch only CHANGELOG.md and .release-please-manifest.json, neither of which any
+# test reads. build-image.yaml already filters this way; test.yaml did not, which is the
+# inconsistency this fixes rather than a new convention.
+#
+# Safe because `main` carries no required status checks and no rulesets (verified, not
+# assumed): a filtered-out run reports nothing rather than leaving a required check pending
+# forever, which is the usual reason paths filters get left off.
+#
+# lint.yaml is deliberately NOT filtered the same way -- it markdownlints CHANGELOG.md, so a
+# release PR is exactly when it has something to say.
 on:
   pull_request:
+    paths:
+    - obsidian_tools/**
+    - tests/**
+    - pyproject.toml
+    - uv.lock
+    - mise.toml
+    - .github/workflows/test.yaml
   push:
     branches:
     - main
+    paths:
+    - obsidian_tools/**
+    - tests/**
+    - pyproject.toml
+    - uv.lock
+    - mise.toml
+    - .github/workflows/test.yaml
   workflow_dispatch:
 
 concurrency:
