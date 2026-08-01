@@ -20,11 +20,15 @@ Covers every scenario named in the brief for this component:
 from __future__ import annotations
 
 import logging
+import uuid
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 from conftest import push_commit, replicate_config, run_git
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
 from obsidian_tools.local_replicator.cycle import run_cycle
 from obsidian_tools.local_replicator.drift import SpoolEntry
@@ -934,6 +938,156 @@ def test_cycle_recovers_from_a_working_tree_left_on_main_by_a_prior_crash(
     assert _spooled_by_path(tmp_path) == {}
     assert result.tag_advanced is True
     assert (icloud_dir / "00-index.md").read_text() == "# Home (agent update)\n"
+
+
+# --- idempotence property: arbitrary crash residue ------------------------------------------------
+#
+# The two tests above are one residue shape each -- stray files plus a staged modification; a clone
+# left checked out on `main` ahead of the tag -- chosen by a human because they're the two crash
+# points the design doc's own history called out (§4 Plane B, "Why the gate moved, not
+# disappeared"). `cycle.py`'s own docstring commits to a broader claim: "idempotent from any
+# starting state", recovered by step 1 forcing the tree back to `LAST_CHECKOUT` rather than by
+# bookkeeping how a prior cycle ended. This property generalizes to a generated combination of both
+# residue shapes (and their absence), rather than only the two hand-picked ones.
+#
+# **Why not "running the cycle twice equals running it once."** That statement is false on its own
+# terms: a second run legitimately reports fresh drift the first didn't, if a device edit lands
+# between the two -- equality of outcome was never the actual claim. What step 1 *is* a commitment
+# to is narrower and does hold unconditionally: crash residue -- bytes nobody on the device ever
+# typed, left behind by an interrupted prior cycle -- must never surface as spooled drift or reach
+# the published iCloud tree, and a genuine, concurrent device edit must still be captured correctly
+# no matter how much residue sits alongside it. That's the invariant checked below, phrased as a
+# statement about the spool and iCloud's contents from outside cycle.py, not as a restatement of
+# what checkout -f/clean -fd do.
+#
+# Every environment below is built fresh per generated example, not reused via a shared fixture:
+# pytest resolves function-scoped fixtures once per test *invocation*, not once per Hypothesis
+# draw, so a shared `tmp_path`/`seeded_origin` would let one example's residue bleed into the next.
+# `_push_commit`, above, already relies on the same per-call uniqueness (`uuid.uuid4().hex`) for the
+# same reason.
+
+_RESIDUE_MARKER = "CRASH-RESIDUE-CONTENT-NEVER-TYPED-BY-A-HUMAN"
+
+_residue_body = st.text(
+    alphabet=st.characters(min_codepoint=0x20, max_codepoint=0x7A, exclude_characters="/\\"), min_size=1, max_size=24
+)
+_stray_name = st.text(alphabet="abcdefghijklmnopqrstuvwxyz-", min_size=3, max_size=10).map(
+    lambda s: f"crash-residue-{s}.md"
+)
+
+
+@dataclass(frozen=True)
+class _CrashResidue:
+    # The residue shape of test_cycle_recovers_from_a_working_tree_left_on_main_by_a_prior_crash:
+    # a crash after step 5 (reset, checkout main, pull) leaves the clone on `main`, not back on the
+    # parked tag.
+    left_on_main: bool
+    # Whether a new upstream commit exists before the residue is applied -- without this,
+    # `left_on_main` alone re-checks-out the same content the tag already names, and never actually
+    # diverges from it.
+    push_upstream_first: bool
+    # The residue shape of test_cycle_recovers_from_a_working_tree_left_mid_overlay_by_a_prior_crash:
+    # a staged, uncommitted mutation on a path that already exists at the baseline.
+    tracked_mutation: str  # "none" | "modify" | "delete"
+    # Stray untracked files, at paths a device edit could never produce by construction (see
+    # `_stray_name`), standing in for whatever an interrupted overlay/stage left lying around.
+    strays: tuple[tuple[str, str], ...]
+    # A real, concurrent device edit, alongside whatever residue this example also generated --
+    # the property's job is this combination, not residue in isolation (see this section's own
+    # docstring, "the property's job is the space between and around them").
+    genuine_device_edit: bool
+
+
+@st.composite
+def _crash_residue(draw: st.DrawFn) -> _CrashResidue:
+    stray_count = draw(st.integers(min_value=0, max_value=2))
+    names = draw(st.lists(_stray_name, min_size=stray_count, max_size=stray_count, unique=True))
+    strays = tuple((name, draw(_residue_body)) for name in names)
+    return _CrashResidue(
+        left_on_main=draw(st.booleans()),
+        push_upstream_first=draw(st.booleans()),
+        tracked_mutation=draw(st.sampled_from(("none", "modify", "delete"))),
+        strays=strays,
+        genuine_device_edit=draw(st.booleans()),
+    )
+
+
+def _apply_crash_residue(cache_clone_dir: Path, residue: _CrashResidue) -> None:
+    """Simulate the on-disk state a crash could leave, applied directly against the parked clone --
+    the same way the two hand-written crash tests above do, generalized to an arbitrary
+    combination."""
+    if residue.left_on_main:
+        run_git("fetch", "-q", "origin", "main", cwd=cache_clone_dir)
+        run_git("checkout", "-q", "-B", "main", "FETCH_HEAD", cwd=cache_clone_dir)
+
+    if residue.tracked_mutation == "modify":
+        (cache_clone_dir / "00-index.md").write_text(f"{_RESIDUE_MARKER}\n")
+    elif residue.tracked_mutation == "delete":
+        (cache_clone_dir / "00-index.md").unlink(missing_ok=True)
+
+    for name, body in residue.strays:
+        (cache_clone_dir / name).write_text(f"{_RESIDUE_MARKER} {body}\n")
+
+    if residue.tracked_mutation != "none" or residue.strays:
+        run_git("add", "-A", cwd=cache_clone_dir)
+
+
+@settings(deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture])
+@given(residue=_crash_residue())
+def test_cycle_recovers_from_arbitrary_generated_crash_residue(tmp_path: Path, residue: _CrashResidue) -> None:
+    unique = uuid.uuid4().hex
+    origin = tmp_path / f"prop-origin-{unique}.git"
+    origin.mkdir()
+    run_git("init", "--bare", "-q", "--initial-branch=main", cwd=origin)
+    seed_clone = tmp_path / f"prop-seed-{unique}"
+    run_git("clone", "-q", str(origin), str(seed_clone), cwd=tmp_path)
+    (seed_clone / "00-index.md").write_text("# Home\n")
+    run_git("add", "-A", cwd=seed_clone)
+    run_git(
+        "-c", "user.name=seed", "-c", "user.email=seed@example.invalid", "commit", "-q", "-m", "seed", cwd=seed_clone
+    )
+    run_git("push", "-q", "origin", "main", cwd=seed_clone)
+
+    icloud = tmp_path / f"prop-icloud-{unique}"
+    icloud.mkdir()
+    config = replicate_config(tmp_path / f"prop-work-{unique}", origin, icloud)
+
+    run_cycle(config)  # bootstrap: establishes the parked clone and LAST_CHECKOUT
+
+    if residue.push_upstream_first:
+        push_commit(origin, tmp_path, {"00-index.md": "# Home (agent update)\n"}, "agent update")
+
+    cache_clone_dir = Path(config.cache_clone_dir)
+    _apply_crash_residue(cache_clone_dir, residue)
+
+    if residue.genuine_device_edit:
+        (icloud / "genuine-drift.md").write_text("a real device edit typed by a human\n")
+
+    result = run_cycle(config)
+
+    # The cycle completes normally regardless of the residue -- no wedge, whatever shape a crash
+    # left behind.
+    assert result.tag_advanced is True
+
+    # Crash residue never surfaces as spooled drift, whatever shape it took -- only the genuine
+    # device edit (if any) does.
+    expected_drift = ("genuine-drift.md",) if residue.genuine_device_edit else ()
+    assert result.drifted == expected_drift
+
+    spool_dir = Path(config.spool_dir)
+    spooled_text = "".join(f.read_text() for f in spool_dir.glob("*.json")) if spool_dir.is_dir() else ""
+    assert _RESIDUE_MARKER not in spooled_text
+
+    # The residue never reaches the working tree it was recovered into...
+    for name, _body in residue.strays:
+        assert not (cache_clone_dir / name).exists()
+    assert (cache_clone_dir / "00-index.md").read_text() != f"{_RESIDUE_MARKER}\n"
+
+    # ...nor the published iCloud tree.
+    for name, _body in residue.strays:
+        assert not (icloud / name).exists()
+    expected_index = "# Home (agent update)\n" if residue.push_upstream_first else "# Home\n"
+    assert (icloud / "00-index.md").read_text() == expected_index
 
 
 # --- non-ASCII and quoted filenames, end to end --------------------------------------------------
