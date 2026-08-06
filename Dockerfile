@@ -6,7 +6,7 @@
 # second time under arm64 QEMU emulation just to produce byte-identical output. If a future
 # subcommand (e.g. `replicate`) ever adds a dependency with compiled extensions, this stage is the
 # one that would need revisiting; nothing else in this file assumes pure Python.
-FROM --platform=$BUILDPLATFORM python:3.14.6-slim-bookworm@sha256:86f975aca15cf04a40b399eebede9aea7c82eae084d1f1a0a6ef6bcaae871a30 AS builder
+FROM --platform=$BUILDPLATFORM python:3.14.6-slim-bookworm@sha256:4c92ffcde4dd6f1ff72a24518f49fd4990b27134987dfa31a733badde66df9f8 AS builder
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG TARGETARCH
 WORKDIR /build
@@ -48,7 +48,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,id=obsidian-tools-cache-uv-${TARGE
 
 # =======================================================================================================================================
 # Final stage. Runs once per requested target platform (the default; no --platform override here).
-FROM python:3.14.6-slim-bookworm@sha256:86f975aca15cf04a40b399eebede9aea7c82eae084d1f1a0a6ef6bcaae871a30
+FROM python:3.14.6-slim-bookworm@sha256:4c92ffcde4dd6f1ff72a24518f49fd4990b27134987dfa31a733badde66df9f8
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG TARGETARCH
 WORKDIR /
