@@ -35,13 +35,13 @@ repos:
   hooks:
   - id: shellcheck
 - repo: https://github.com/hadolint/hadolint
-  rev: v2.14.0
+  rev: v2.15.1
   hooks:
   - id: hadolint
     args:
     - --failure-threshold=warning
 - repo: https://github.com/astral-sh/ruff-pre-commit
-  rev: v0.16.1
+  rev: v0.16.3
   hooks:
   - id: ruff
     args: [--fix]
