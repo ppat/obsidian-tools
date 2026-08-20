@@ -42,13 +42,14 @@ concurrency:
 
 permissions:
   contents: read
+  packages: write
 
 jobs:
   build-image:
     # Calls the shared reusable workflow directly rather than routing through ppat/images: this
     # repo builds its own image (the ppat/coder precedent) because it COPYs and installs its own
     # source, not a published artifact from anywhere else — see the Dockerfile's own comments.
-    uses: ppat/github-workflows/.github/workflows/build-docker-image.yaml@667d20d10c8756b11feeab1ee691825ccea8f991 # v5.0.1
+    uses: ppat/github-workflows/.github/workflows/build-docker-image.yaml@a6829b4b819f7c39adabf277c7d87a1e663c186d # v6.0.0 (unmerged PR #615 -- repoint to the v6.0.0 tag before merge)
     with:
       image_context_path: .
       label_title: "obsidian-tools"
@@ -56,7 +57,7 @@ jobs:
       platforms: linux/amd64,linux/arm64
       private_registry_repository: ${{ vars.CONTAINER_REGISTRY_PATH }}/obsidian-tools
       private_registry_build_cache: ${{ vars.CONTAINER_REGISTRY_CACHE_PATH }}/obsidian-tools
-      source_git_ref: ${{ github.head_ref || github.ref }}
+      git_ref: ${{ github.head_ref || github.ref }}
       timeout_minutes: 20
       # Published on EVERY build, branch and PR included — deliberately, and unlike ppat/images,
       # which keeps PR builds off Docker Hub by splitting into two workflows.
@@ -71,6 +72,12 @@ jobs:
       # Accepted cost: branch tags accumulate on a public repository and are not garbage-collected.
       # `latest` is unaffected — the shared workflow only sets it when a semver tag is present.
       dockerhub_repository: ppatlabs/obsidian-tools
+      # Same "every build, PRs included" policy as the private registry and Docker Hub targets
+      # above -- unlike ppat/images, this repo does not split PR and release builds. Unconditional
+      # by deliberate choice, not oversight: see this PR's description for the storage-quota
+      # tradeoff that choice carries on THIS repo specifically, because it (unlike the other two
+      # GHCR targets) is private.
+      ghcr_repository: ppat/obsidian-tools
     secrets:
       dockerhub_username: ${{ secrets.DOCKERHUB_USERNAME }}
       dockerhub_token: ${{ secrets.DOCKERHUB_TOKEN }}
