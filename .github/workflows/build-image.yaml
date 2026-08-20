@@ -42,13 +42,21 @@ concurrency:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   build-image:
     # Calls the shared reusable workflow directly rather than routing through ppat/images: this
     # repo builds its own image (the ppat/coder precedent) because it COPYs and installs its own
     # source, not a published artifact from anywhere else — see the Dockerfile's own comments.
+    #
+    # packages: write is scoped to this job specifically, not hoisted to the workflow-level
+    # `permissions:` block above: zizmor's excessive-permissions check flags a workflow-level grant
+    # as overly broad when not every job needs it (smoke-test below does not), and job-level
+    # `permissions:` is exactly the mechanism GitHub Actions provides to avoid that -- it replaces
+    # the workflow-level default for this job rather than adding to it.
+    permissions:
+      contents: read
+      packages: write
     uses: ppat/github-workflows/.github/workflows/build-docker-image.yaml@a6829b4b819f7c39adabf277c7d87a1e663c186d # v6.0.0 (unmerged PR #615 -- repoint to the v6.0.0 tag before merge)
     with:
       image_context_path: .
