@@ -48,7 +48,7 @@ jobs:
     # Calls the shared reusable workflow directly rather than routing through ppat/images: this
     # repo builds its own image (the ppat/coder precedent) because it COPYs and installs its own
     # source, not a published artifact from anywhere else — see the Dockerfile's own comments.
-    uses: ppat/github-workflows/.github/workflows/build-docker-image.yaml@1e8ca1b00b6e69bdf5aef8b33111c594c051ff65 # v4.4.0
+    uses: ppat/github-workflows/.github/workflows/build-docker-image.yaml@667d20d10c8756b11feeab1ee691825ccea8f991 # v5.0.1
     with:
       image_context_path: .
       label_title: "obsidian-tools"
