@@ -57,16 +57,55 @@ message pointing back here.
    only ever fetches — it never pushes (`obsidian_tools/local_replicator/clone.py` has no push
    call anywhere) — so a write-capable key here would be unused privilege, not a convenience.
 
-4. **`obsidian-tools` on `PATH` for a non-interactive launchd job**, or its full absolute path
-   known ahead of the install step below — launchd does not run inside a login shell, so it does
-   not read `~/.zshrc`/`~/.zprofile` and will not find a `uv tool`/`pipx`-installed script unless
-   the plist's `PATH` or `ProgramArguments` names it explicitly. Find it once with:
+4. **`~/.ssh/known_hosts` must already trust `github.com`.** `build_ssh_command`
+   (`obsidian_tools/vault_git/ssh.py`) sets `StrictHostKeyChecking=yes` and `BatchMode=yes` against
+   whatever's already in that file — unlike the in-cluster git committer, `replicate` never
+   assembles its own `known_hosts` (`obsidian_tools/vault_git/known_hosts.py`'s
+   `assemble_known_hosts` runs only from `commands/commit.py`); this process trusts the file as it
+   finds it, and `BatchMode=yes` means it can never fall back to an interactive prompt to fix that
+   itself. Populate it once, ahead of the install step below, verifying the fingerprint against
+   [GitHub's own published SSH key fingerprints](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints)
+   rather than trusting it blind:
+
+   ```sh
+   ssh-keyscan github.com >> ~/.ssh/known_hosts
+   ```
+
+   Getting this wrong doesn't fail loudly. The first fetch exhausts its retries
+   (`obsidian_tools/retry.py`) and raises `RetryExhaustedError`, which is not one of the exceptions
+   `commands/replicate.py`'s `run()` catches (`_CYCLE_FAILURES` is `(GitCommandError, RsyncError)`
+   only) — so it surfaces as an uncaught Python traceback in `local-replicator.err.log`, not as a
+   `"cycle_failed"` line in the structured JSON log. `local-replicator.log` looks like nothing ran
+   at all; the actual failure is only in the `.err.log` file beside it.
+
+5. **`obsidian-tools` installed from a released tag, and on `PATH` (or its full absolute path known
+   ahead of the install step below)** — launchd does not run inside a login shell, so it does not
+   read `~/.zshrc`/`~/.zprofile` and will not find a `uv tool`/`pipx`-installed script unless the
+   plist's `PATH` or `ProgramArguments` names it explicitly.
+
+   Any of `pip install`, `pipx install`, or `uv tool install` against a released tag of this
+   repository works — this Mac is running the tool, not developing it, so a tagged release rather
+   than an editable checkout. With [`mise`](https://mise.jdx.dev/)'s `pipx` backend (shells out to
+   `uv` when the operator's global `mise` config sets `[settings.pipx] uvx = true`, to `pipx`
+   itself otherwise):
+
+   ```sh
+   mise use pipx:ppat/obsidian-tools@v0.4.0
+   ```
+
+   Whichever method installs it, the resulting binary path is **version-scoped** — mise's `pipx`
+   backend, for example, resolves to
+   `~/.local/share/mise/installs/pipx-ppat-obsidian-tools/<version>/bin/obsidian-tools`, not a
+   path that stays stable across an upgrade. That matters for the plist below: `ProgramArguments`
+   takes a literal absolute path, so upgrading `obsidian-tools` later means updating both plists
+   with the new version's path, not just re-running the install command. Find the path actually in
+   use with:
 
    ```sh
    command -v obsidian-tools
    ```
 
-5. **Set the Tasks plugin's task format, by hand, on every device this vault reaches** — Obsidian
+6. **Set the Tasks plugin's task format, by hand, on every device this vault reaches** — Obsidian
    Settings → Tasks → Task format = **Dataview** (`taskFormat: "dataview"`), on this Mac and on
    every iPhone/iPad that opens the vault. This one cannot ride in on the `.obsidian/` baseline the
    way the vault's other locked settings do: the Tasks plugin stores it in
@@ -114,7 +153,7 @@ changes); it is still real, running code, not something you can skip installing.
    | Token | Replace with | Which file(s) |
    | --- | --- | --- |
    | `__HOME_DIR__` | Absolute path to your home directory (`echo $HOME`) — plists cannot expand `$HOME` or `~` themselves; every occurrence must be the literal path. | both |
-   | `__OBSIDIAN_TOOLS_BIN__` | Absolute path from `command -v obsidian-tools` (Prerequisites, item 4). | both |
+   | `__OBSIDIAN_TOOLS_BIN__` | Absolute path from `command -v obsidian-tools` (Prerequisites, item 5). | both |
    | `__ICLOUD_VAULT_DIR__` | The full path from Prerequisites item 2, e.g. `/Users/<you>/Library/Mobile Documents/com~apple~CloudDocs/Obsidian/BRAIN`. | `local-replicator.plist` only |
    | `__GIT_REMOTE_ORIGIN_URL__` | The vault's git SSH remote, e.g. `git@github.com:ppat/obsidian-vault.git`. | `local-replicator.plist` only |
 
@@ -165,6 +204,24 @@ changes); it is still real, running code, not something you can skip installing.
    rules for untracked paths. So only the handful of `.obsidian/` files the bootstrap commit
    actually tracked can ever show as drift, and only when genuinely changed — which is exactly the
    signal wanted, a human having altered a setting on a device.
+
+## Running a cycle by hand
+
+`obsidian-tools replicate` and `obsidian-tools drain` are ordinary commands — running either
+directly from a shell (to force a cycle ahead of `StartInterval`, or while debugging) works exactly
+like the launchd-triggered run, with one difference worth knowing about: an interactive shell has
+an environment, and launchd's doesn't.
+
+If this operator's shell exports its own `GIT_SSH_COMMAND` — say, one built around a personal,
+read-write SSH key for other git work — a manually-run cycle inherits it. That is **not** a
+problem here: `GitRunner.run` (`obsidian_tools/vault_git/runner.py:281`) sets `GIT_SSH_COMMAND`
+into the subprocess environment unconditionally whenever the caller passed one, which `replicate`
+always does (`build_ssh_command` in `cycle.py`), so this component's own read-only deploy key wins
+regardless of what the shell had exported. Worth knowing anyway, because a green cycle looks
+identical either way — there is no log line that names which key was actually used — and because
+launchd inherits none of this: a LaunchAgent's `EnvironmentVariables` dict is the entire
+environment its job sees, so this hazard is specific to running the command by hand and never
+affects the scheduled job.
 
 ## Troubleshooting
 
@@ -256,6 +313,46 @@ spool itself is deliberately not built here: there is no consumer of the spool u
 `drift-processor` on receipt — is a decision that belongs with that consumer, not guessed at ahead
 of it.
 
+### A device-edited `.obsidian/` file redrifts every cycle and never resolves on its own
+
+"Install" step 5 above already rules out plugin-cache/index-state `.obsidian/` churn as a source of
+drift, because it's untracked and `.gitignore`d. A genuine edit to one of the handful of
+`.obsidian/` files the bootstrap commit *did* track (a locked setting — see the vault's own
+`CLAUDE.md` section 11, `docs/settings-lock.md`) is different, and not in the direction this
+component's other drift handling would suggest. `overlay` (`rsync_ops.py`) does not exclude
+`.obsidian/` from the device-side comparison — only `.git/` and the narrow
+`SHARED_EXCLUDE_LIST` (`exclude.py`) are excluded there — so the edit is picked up, diffed, and
+spooled like any other drift. But `publish` (the same module) *does* exclude `.obsidian/` from what
+it writes back to the device, once `device_baseline.py` considers the device baselined — that
+exclusion is what lets a device keep its own configuration indefinitely (Prerequisites, item 6, and
+"Resetting a device" → "The `.obsidian/` baseline only" below both depend on it). Publish therefore never
+reconciles the device's copy with the parked baseline, so the same unchanged content is read as
+fresh drift again on the very next cycle, and every cycle after that — at the default 900-second
+interval, roughly 96 identical spool entries a day, indefinitely, not just for one unlucky run.
+
+Both halves are correct by design on their own terms — `overlay` staying unfiltered is the
+device-side detector's deliberate breadth (`docs/DESIGN.md` §1.5 R2), and `publish` excluding
+`.obsidian/` is what makes a device's settings sticky once seeded. The pair's asymmetry is tracked
+as [`ppat/obsidian-tools#46`](https://github.com/ppat/obsidian-tools/issues/46); it is not something
+to work around by hand-editing either function.
+
+**Symptom:** `cycle_complete`'s `"drifted"` count stays non-zero across consecutive cycles for the
+same path(s) under `.obsidian/`, with neither `drift_uncaptured` nor `drift_matches_upstream`
+alongside it — check the `"drifted"` list itself, not just the count, since a real, changing vault
+note drifting on every cycle would look identical from the count alone.
+
+**Remedy:** this is a locked setting, not one the device owns — restore it from the parked
+baseline rather than accepting the device's edit. Quit Obsidian on the device first (same hazard as
+the `.obsidian/` reset below: Obsidian can write its in-memory state back over a file replaced out
+from under it), then copy the file back from `$OBSIDIAN_CACHE_CLONE_DIR`, which stays checked out
+at the baseline `publish` last used:
+
+```sh
+cp "$OBSIDIAN_CACHE_CLONE_DIR/.obsidian/<path>" "$ICLOUD_VAULT_DIR/.obsidian/<path>"
+```
+
+The next cycle reports `drifted=0` for that path once the copy matches again.
+
 ## Uninstall
 
 ```sh
@@ -282,7 +379,9 @@ This stops both schedules only. It does not touch:
   settings if it's no longer needed, and delete the local key files
   (`~/.ssh/obsidian_vault_readonly*`) by hand.
 
-## Resetting the device's `.obsidian/` baseline
+## Resetting a device
+
+### The `.obsidian/` baseline only
 
 `.obsidian/` is copied once, then left alone permanently — a setting changed later at the cluster
 GUI does not reach an already-seeded device (`docs/DESIGN.md` §8a D3). The only reset path is
@@ -302,6 +401,45 @@ rm -rf "$ICLOUD_VAULT_DIR/.obsidian"
 The next scheduled (or manually triggered, `obsidian-tools replicate`) cycle detects the absent
 completion marker and reseeds from whatever `.obsidian/` baseline the parked clone currently holds
 (`obsidian_tools/local_replicator/device_baseline.py`).
+
+### The whole vault
+
+Wiping `.obsidian/` only resets locked settings. Reprovisioning a device from scratch, or
+discarding a device copy that's diverged too far to trust, means clearing the whole vault directory
+— and that needs one more step than the `.obsidian/`-only reset above, or the vault simply comes
+back exactly as it was.
+
+**Clearing `$ICLOUD_VAULT_DIR` alone does not reset anything — it looks like it worked, and then
+undoes itself on the next cycle.** `LAST_CHECKOUT` (the parked clone's own tag,
+`obsidian_tools/local_replicator/tag.py`) survives independently of whatever's on disk in iCloud,
+and `run_cycle` (`obsidian_tools/local_replicator/cycle.py`) still finds it set on the next cycle:
+step 1 parks the clone back at that tag; step 2's `overlay` then rsyncs the now-empty
+`$ICLOUD_VAULT_DIR` onto it **with `--delete`**, so every file the baseline held reads as deleted;
+`git diff` captures that as ordinary, real drift — the whole vault, spooled as a device-side
+deletion — and step 5's `git reset --hard` immediately restores the working tree from git,
+unaffected by any of it. The very next `publish` rsyncs that intact tree straight back into the
+now-empty `$ICLOUD_VAULT_DIR`. The device gets its files back within one cycle, `.obsidian/`'s
+completion marker was never touched, and nothing was actually reset — harmless in Phase 2 only
+because the drainer discards what it read (`drainer.py`'s `discard_sink`) rather than acting on a
+vault's worth of deletion entries that were never really deletions.
+
+**Quit Obsidian first** — same reason as the `.obsidian/`-only reset above.
+
+```sh
+rm -rf "$ICLOUD_VAULT_DIR"
+rm -rf "$OBSIDIAN_CACHE_CLONE_DIR"
+```
+
+Clearing `$OBSIDIAN_CACHE_CLONE_DIR` (default `~/.cache/obsidian-vault`, the same directory
+"Uninstall" above already treats as disposable) takes `LAST_CHECKOUT` with it — the tag lives
+inside that clone, not anywhere else — so the next cycle finds no previous checkout at all and
+takes the same no-baseline branch a first-ever run does: no overlay, no diff, no spool, straight to
+a fresh clone and an unconditional republish, `.obsidian/` reseeded from the frozen baseline
+included (`docs/DESIGN.md` §4 Plane B, "Losing the Mac clone loses the baseline" describes the same
+branch). Deleting the tag itself (`git -C "$OBSIDIAN_CACHE_CLONE_DIR" tag -d LAST_CHECKOUT`) without
+removing the rest of the clone reaches the same branch and works just as well, if keeping the
+clone's other state around is useful for some reason — either way, the tag is what has to go, not
+just the iCloud directory.
 
 ## What isn't verified here
 
