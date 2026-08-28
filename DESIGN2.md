@@ -2,9 +2,13 @@
 
 The high-level design of BRAIN: the pillars and invariants that hold the platform together, and the
 reasoning behind them. It states what the system *is*; it deliberately does not re-argue every
-decision that had alternatives. Those live as decision records under `docs/adr/` — the split is that
-this document holds **what would still be true if any individual reversible decision had gone the
-other way**, and an ADR holds one such decision: its context, alternatives, and consequences.
+decision that had alternatives. Those live as decision records, indexed at
+[`docs/adr/README.md`](./docs/adr/README.md) — the split is that this document holds **what would
+still be true if any individual reversible decision had gone the other way**, and an ADR holds one
+such decision: its context, alternatives, and consequences. The three top-level documents link only
+to that index, never to individual records: ADRs are the fluid layer and may move, split, or be
+superseded, while a record's *number* is stable — so a specific decision is cited by number in
+prose, resolved through the index.
 Together, this document and the ADR set are the entire design — the parts already built and
 running as much as the parts still to come. Build state is a roadmap fact, not a design fact: a
 pillar binds identically whether its mechanisms are live or unbuilt, and the component table below
@@ -359,6 +363,20 @@ Two planes, deliberately asymmetric:
   directory holds the actual vault both devices open; the Mac's clone is only the replication
   source, and git's own metadata stays outside iCloud (its conflict handling corrupts refs).
 
+What must be up for what — the availability contract the two planes buy:
+
+| Capability | Requires |
+| --- | --- |
+| Any agent write; ingest, lint, promotion | Cluster only |
+| Bulk restructuring | Cluster + the Coder workspace — i.e. a human started it |
+| Conversational read, any device, anywhere | Cluster + internet + the chat surface |
+| Native Obsidian read on macOS or iOS | Nothing — the local iCloud copy, offline |
+| *Freshness* of the native copies | The Mac awake, plus cluster and network |
+| Disaster recovery | Either git remote, or volume snapshots |
+
+No capability of the cluster, and no conversational capability, requires any device to be awake;
+the one thing that does is native-copy freshness.
+
 The NAS holds a bare git repository as a second push target — independence insurance: a
 plain-markdown copy readable with zero tooling, no cluster, no third party. Because replicas are
 one-way and lag, the vault must stay readable without any query engine — plain markdown, plain YAML,
@@ -385,7 +403,9 @@ flowchart TB
 
 ## 5. Known limits and open verifications
 
-Held here so they are not rediscovered; the roadmap carries their disposition.
+Held here so they are not rediscovered; the roadmap carries their disposition, and the decision
+records behind them (ADR-0006, ADR-0012, ADR-0022, ADR-0033 among others) are resolved through the
+[decision-record index](./docs/adr/README.md).
 
 - **NetworkPolicy enforcement on the platform has config-level evidence, not packet-level proof** —
   and it is a sole control (see "Authority is carried by capability"). The definitive two-pod test has never been run. Parked by decision;
@@ -410,6 +430,10 @@ different name, the retired synonym is noted.
 
 ### System and repos
 
+- **ADR / decision record** — one reversible decision with its context, alternatives, and
+  consequences, under `docs/adr/` and resolved through
+  [its index](./docs/adr/README.md). Statuses: accepted, proposed (adopted by the documents,
+  awaiting owner ratification). Together with this document, the records capture the entire design.
 - **BRAIN** — the project codename for the whole platform. Infrastructure is named by function, not
   codename: the namespace is `obsidian-vault`, the volume `vault-data`.
 - **The vault** — the Obsidian vault itself: markdown notes with YAML frontmatter at `/vault/brain`
@@ -429,9 +453,12 @@ different name, the retired synonym is noted.
 - **The raw layer** (`05-raw/`) — write-once immutable imported sources; exempt from validation;
   create-only, enforced by `batch-processor`.
 - **Curated space** — `10-areas/` and `20-projects/`; mutable only through the admission gate.
-- **The finance overlay** — the strictest per-domain rules (`10-areas/finance/`): a numeric claim
-  needs `authority: import`, inline provenance, and `confidence:`. Overlays are strictness dials on
-  shared axes (provenance demanded, staleness cadence), not different rules per domain.
+- **Domain overlays** — per-domain strictness dials on two shared axes (how much provenance is
+  demanded; how fast a claim goes stale), never different rules per domain. Distinct from the
+  replication cycle's *overlay* step below. **The finance overlay** is the strictest
+  (`10-areas/finance/`): a numeric claim needs `authority: import`, inline provenance, and
+  `confidence:`; travel and dining require recency markers on perishable facts; homelab is
+  loosest.
 - **The archive** (`90-archive/`) — terminal destination for rolled-up or retired notes; lint owns it.
 - **Promotion** — relocating a note out of the inbox into its curated home upon admission. There is
   no move primitive: promotion is write-to-new-path then delete-at-old-path, in that order.
@@ -480,6 +507,8 @@ different name, the retired synonym is noted.
   OpenClaw, n8n, Claude Code) drained by `promotion-processor`; the **drift stream**
   (content-carrying, fixed destination; sole producer: `local-replicator`) drained by
   `drift-processor`.
+- **Chunk** — one message on the batch stream: a logically-split piece of a git patch, and the
+  transaction and redelivery unit — atomicity is per chunk, never per batch.
 - **The batch watchdog** — the mechanism that re-enables the agent handle if `batch-processor` dies
   mid-run; with the maximum window and post-disable drain, it must exist before the batch stream
   runs unattended.
@@ -492,8 +521,9 @@ different name, the retired synonym is noted.
   produces history and never authors content.
 - **`local-replicator`** — the Mac-side launchd job running the replication cycle; the only
   component outside the cluster, watched by nothing.
-- **The overlay** — the cycle step that copies the device-facing iCloud tree onto the parked
-  baseline checkout so `git diff` can enumerate drift.
+- **The overlay (replication step)** — the cycle step that copies the device-facing iCloud tree
+  onto the parked baseline checkout so `git diff` can enumerate drift. Distinct from the domain
+  overlays above.
 - **Drift** — a change in the device-facing copy relative to the baseline. Not necessarily human:
   the stream carries the system's own re-read content after a crash between publish and tag advance,
   and anything any editor wrote into the iCloud directory.
