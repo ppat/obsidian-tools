@@ -33,8 +33,14 @@ The convention is Nygard-derived, with two deliberate additions and one delibera
   never an edit-in-place of the old decision). A superseded decision from *before* this set exists
   only inside the record that replaced it, and only where it carries a gotcha that would otherwise
   be repeated — this initial set deliberately contains no standalone superseded records.
-- **One decision per record.** A record found to be carrying two separable decisions is split at
-  the next substantive touch, each half keeping or taking a number per the rule above.
+- **One decision per record — where "one decision" is cut by the re-argue test.** Decisions merge
+  into a single record when they share one review context and would be re-argued together: reversing
+  one forces re-arguing the others (the batch stream's FIFO, backpressure and watchdog live in one
+  record; the credential choices live with the instances-and-handles decision they ride on). They
+  stay separate records when independently reversible — one can flip while its neighbours stand.
+  A record found to be carrying two separable decisions is split at the next substantive touch,
+  each half keeping or taking a number per the rule above; two records found to always travel
+  together merge the same way.
 
 Records state decisions; the [roadmap](../../ROADMAP.md) tracks what is built versus pending —
 build state never lives here.
