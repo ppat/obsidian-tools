@@ -96,14 +96,24 @@ git-to-volume path anywhere in the system. Nothing anywhere merges: a stale batc
 back to its producer to regenerate; a divergent device edit is captured and re-enters as new input.
 Every mechanism that would have needed a merge engine was deleted or reshaped so it doesn't.
 
-### Humans are sources and readers, not writers
+### Humans originate; agents act
 
-The human feeds requests in at the top (through agents) and consumes curated content at the bottom.
-Direct human writes are rare edits, almost never creation — an owner ruling, load-bearing: any
-reasoning that assumes meaningful human-originated content volume is wrong. A device edit is not
-prevented and not discarded; it is captured as drift and re-enters the funnel as an ordinary ingest
-event, stamped as human-authored. The devices are read replicas plus a capture surface — if editing
-on a device becomes the draw, the design has failed on its own terms.
+The platform exists to store the owner's knowledge, ideas, work and research, to share it between
+agents and/or the human, and to have agents *work on* the ideas captured there — the important ones
+bubbling up by salience or prominence, so that work happens on the owner's behalf without the owner
+driving every step. On both the write and the read axis, the human is the originator while an agent
+is almost always the actor. A voice note, a dropped document, tasked research: human-originated, arriving as agent
+writes. "What do these ideas have in common", "read the prior work behind this task":
+human-originated, performed as agent reads. **Direct** human writes are rare edits, almost never
+creation — an owner ruling, load-bearing: any reasoning that assumes meaningful volume of *direct*
+human writes is wrong. Direct human reads (the device apps, the conversational surface) are real
+and more common than direct writes, and still the minority of human-motivated reading. A device
+edit is not prevented and not discarded; it is captured as drift and re-enters the funnel as an
+ordinary ingest event, stamped as human-authored — `authority:` records whose claim content is,
+never whose hands typed it, which is how human-originated content and agent actors coexist without
+lying. The devices are read replicas plus a capture surface, and the GUI is a configuration-and-
+repair path, not an authoring one — if direct editing becomes the draw, the design has failed on
+its own terms.
 
 ### Layered content, one ownership contract
 
@@ -226,6 +236,22 @@ history is in hand. Device settings (`.obsidian/`) are outside the loop entirely
 committed baseline that is deliberately a **seed, not a mirror**, then owned by the device, with
 divergence reported but never spooled as drift.
 
+The cycle's ordering, which is the safety property:
+
+```mermaid
+flowchart TB
+    S1c["1 · park the clone at the LAST_CHECKOUT tag —<br/>byte-identical to what was last published to the device"]
+    S2c["2 · overlay the device-facing iCloud tree onto it"]
+    S3c["3 · git diff against the baseline =<br/>the drift enumeration, as patches"]
+    S4c["4 · spool every drift patch durably to local disk"]
+    S5c["5 · pull upstream and publish it over the device copy"]
+    S6c["6 · advance LAST_CHECKOUT to what was just published"]
+    S1c --> S2c --> S3c --> S4c
+    S4c -->|"only if every patch spooled AND actually captured its<br/>content — a binary's content-free patch withholds the cycle"| S5c
+    S5c -->|"only once the publish completed"| S6c
+    S4c -.->|"any capture or spool failure: publish nothing,<br/>advance nothing, retry the whole cycle next tick"| S1c
+```
+
 ### Prove controls by violation injection; keep claims falsifiable
 
 A control is proven by making it fire — writing where writing is forbidden, publishing to a subject
@@ -249,20 +275,62 @@ not fix.
 
 ## 3. The write path, end to end
 
-A write from an interactive agent passes, in order: the gateway handle (who may call, which tools —
-delete is withheld from the agent handle entirely); the MCP instance's path scope (where it may
-land — prefix-based, path-granular); the editing primitives (append/patch preferred, optimistic
-concurrency on modify); serialisation at the editor's single event loop; and — for anything crossing
-into curated space — the admission validator. Path scope is *path*-granular only: it does not
-distinguish create from overwrite, so per-operation rules (the raw layer's create-only, the log's
-append-only) are enforced by the component positioned to see both sides — `batch-processor` for
-raw — or held by scope discipline where no backstop exists yet.
+Every route to the vault's bytes, and what sits on it:
+
+```mermaid
+flowchart TB
+    OC["OpenClaw (WhatsApp)"] -->|"writes via the agent handle:<br/>agent zone only"| GW
+    N8N["n8n"] -->|"writes via the agent handle:<br/>agent zone only"| GW
+    CC["Claude Code, incremental"] -->|"writes via the agent handle:<br/>agent zone only"| GW
+    CW["Coder workspace (Claude Code, bulk)"] -->|"enqueues git patches — sole holder<br/>of the batch credential"| BS["batch stream<br/>(patch-carrying)"]
+    OC -.->|"after writing: pointer into 00-inbox/"| PS["promotion stream<br/>(pointer-carrying)"]
+    N8N -.->|"after writing: pointer into 00-inbox/"| PS
+    CC -.->|"after writing: pointer into 00-inbox/"| PS
+    LR["local-replicator's drainer (Mac)"] -->|"publishes captured device drift — sole<br/>holder of the drift credential"| DS["drift stream (content-carrying;<br/>destination fixed by the processor)"]
+    BS -->|"drained in strict FIFO by"| BP["batch-processor"]
+    PS -->|"drained in real time by"| PP["promotion-processor"]
+    DS -->|"classified (intentional or not), then drained by"| DP["drift-processor"]
+    BP -->|"writes via the ingestor handle: wide scope"| GW
+    PP -->|"writes via the ingestor handle: wide scope"| GW
+    LINT["lint pass (scheduled)"] -->|"writes via the ingestor handle: wide scope"| GW
+    DP -->|"dispatches surviving edits via the<br/>agent handle into 00-inbox/"| GW
+    BP -.->|"invokes at every curated-boundary crossing"| AV["admission validator:<br/>admits or quarantines, never deletes"]
+    PP -.->|"invokes at every curated-boundary crossing"| AV
+    LINT -.->|"invokes at every curated-boundary crossing"| AV
+    GW["LiteLLM gateway (who may call, which tools)<br/>→ MCP instance (where a write may land)"] -->|"REST API"| OBS["headless Obsidian — the only process<br/>that ever mutates vault content"]
+    LINT -.->|"reads the whole vault directly,<br/>read-only mount"| VOL
+    OBS -->|"the only write path to"| VOL[("vault volume —<br/>the authoritative bytes")]
+    HUM["human at the headless GUI<br/>(the ungated exception: configuration and repair)"] -.->|"writes directly; observed only<br/>by the next lint pass"| OBS
+```
+
+The ordered controls on a write, named as gates throughout the tickets and this document:
+
+| Gate | Control | The question it answers | Character |
+| --- | --- | --- | --- |
+| 0 | Runner-level pre-write hook (exists for Claude Code's runner only) | should this write have happened | Detective, after the fact |
+| 1 | Gateway handle: per-caller tool visibility; delete withheld from the agent handle entirely | who may call, with which tools | Preventive |
+| 2 | MCP instance path scope (`OBSIDIAN_WRITE_PATHS`) | where may this write land | Preventive — path-granular only |
+| 3 | Editing primitives: anti-clobber create, append/patch preferred, optimistic concurrency on modify | does this write silently clobber a concurrent one | Preventive |
+| 4 | Serialisation at the editor's single event loop | do concurrent writes tear a file | Structural side-effect, never relied on as a guarantee |
+| 5 | The admission validator | does content meet the schema and provenance bar | **Preventive at the curated boundary — the decisive gate** |
+| 6 | Network isolation of the REST surface | can anything reach the editor around the door | Preventive; the *sole* control on the built-in second endpoint |
+
+Gate 2 is *path*-granular only: it does not distinguish create from overwrite, so per-operation
+rules (the raw layer's create-only, the log's append-only) are enforced by the component positioned
+to see both sides — `batch-processor` for raw — or held by scope discipline where no backstop
+exists yet.
 
 Deferred work rides the work queue: three streams, one per processor, each shipped *together with*
 its consumer and its credential grant so no stream is ever reachable with no consumer and no
 credential control behind it. The batch stream is FIFO, unsharded, and rejects stale patches;
 `batch-processor` yields to the promotion stream's depth (fairness to the paths where a human is
 waiting), not merely to health signals.
+
+| Stream | The message carries | What enqueueing confers | May publish (by credential) | Drained by |
+| --- | --- | --- | --- | --- |
+| Batch | A git patch — content *and* destination | The processor's own write scope, the widest in the system — hence the tightest producer set | The Coder workspace only | `batch-processor` |
+| Promotion | A pointer to something already written in `00-inbox/` | Nothing — the processor refuses any pointer outside the enqueuer's own scope | OpenClaw, n8n, Claude Code | `promotion-processor` |
+| Drift | Content, with the destination fixed by the processor, never the message | Nothing — the destination is not the message's to choose | `local-replicator` only | `drift-processor` |
 
 The lint pass walks the whole vault on a schedule, from a read-only mount (whole-vault reads through
 the gateway would contend with the write path and muddy the write-absence signal), and writes only
@@ -297,6 +365,24 @@ one-way and lag, the vault must stay readable without any query engine — plain
 and no note is ever a materialised cache of something computed elsewhere (the global todo is a
 query, never copied rows; task metadata uses the Tasks plugin's bracket format, settled vault-wide).
 
+```mermaid
+flowchart TB
+    VOL[("vault volume — the authoritative bytes")]
+    subgraph planeA["Plane A — conversational: always fresh, Mac-independent, primary on the phone"]
+        WA["WhatsApp"] -->|"asks"| OCr["OpenClaw"]
+        WEB["Open WebUI, in a browser"]
+    end
+    OCr -->|"reads live, read-only handle"| VOL
+    WEB -->|"reads live, read-only handle"| VOL
+    VOL -->|"git committer: read-only mount,<br/>commits and pushes every 15 min"| GH["GitHub bare repo"]
+    VOL -->|"the same committer pushes a second remote to"| NAS["NAS bare repo — independence insurance:<br/>readable with zero tooling, no cluster"]
+    subgraph planeB["Plane B — native Obsidian: rich, offline, freshness gated on the Mac waking"]
+        GH -->|"pulled by"| LRr["local-replicator (Mac, every 15 min)"]
+        LRr -->|"rsync of the working tree, no .git,<br/>capture-gated (see the device loop)"| IC["iCloud vault directory —<br/>the vault both devices actually open"]
+        IC -->|"Apple's own replication"| DEV["Obsidian on macOS and iOS"]
+    end
+```
+
 ## 5. Known limits and open verifications
 
 Held here so they are not rediscovered; the roadmap carries their disposition.
@@ -311,9 +397,9 @@ Held here so they are not rediscovered; the roadmap carries their disposition.
 - **`salience:` may prove redundant with `confidence:`** — at roughly 200 notes, their correlation
   is measured, and if they track, `salience:` is removed. The audit is a scheduled decision, not a
   hope.
-- **The W2 (NAS drop) writer has no place in the current authority model** — its content routes to
+- **The [W2](./USE_CASES.md#axis-2--writers-connected) (NAS drop) writer has no place in the current authority model** — its content routes to
   bulk import, whose stream is closed to all but the operator's workspace. Connecting it is a design
-  decision (see `ROADMAP.md`).
+  decision (see [`ROADMAP.md`'s open decisions](./ROADMAP.md#open-decisions)).
 - **Search at scale and near-duplicate detection are deliberately not built.** Named techniques
   exist for the day the thresholds are hit; pre-building them would be a regression.
 
@@ -333,7 +419,7 @@ different name, the retired synonym is noted.
   `apps-ai`). **`ppat/homelab-ops-kubernetes-clusters`** — composes modules onto the real clusters;
   a change reaches a cluster only after a release is cut *and* that repo bumps its pinned tag.
 - **The Coder workspace** — the operator's development environment, itself a pod in the cluster; the
-  home of writer W1 and the only holder of the batch stream's producer credential.
+  home of writer [W1](./USE_CASES.md#axis-2--writers-connected) and the only holder of the batch stream's producer credential.
 
 ### Vault areas and content
 
@@ -359,8 +445,8 @@ different name, the retired synonym is noted.
 - **`salience:`** — an integer 1–10 an automated pass scores for roll-up ranking; normalised within
   a batch, never thresholded on the absolute number. **`consolidated:`** — the date a note was last
   folded into a roll-up; compared against `updated:` to re-qualify re-edited notes.
-- **The tolerance line** — the written statement, inside the linter, of what badness S2 tolerates;
-  what makes S2's acceptance falsifiable.
+- **The tolerance line** — the written statement, inside the linter, of what badness [S2](./USE_CASES.md#s2--sound) tolerates;
+  what makes [S2](./USE_CASES.md#s2--sound)'s acceptance falsifiable.
 
 ### Write path
 
@@ -421,7 +507,7 @@ different name, the retired synonym is noted.
 - **The capture gate** — the rule that a cycle publishes nothing (and advances no tag) unless every
   drift patch spooled *and* actually captured what changed; a content-free patch (a pasted binary)
   withholds the cycle.
-- **Capture / dispatch** — W6's two halves: recording a device edit non-destructively (delivered)
+- **Capture / dispatch** — [W6](./USE_CASES.md#axis-2--writers-connected)'s two halves: recording a device edit non-destructively (delivered)
   versus adjudicating it back into the vault as an ingest event (unbuilt: the drift stream,
   `drift-processor`'s classifier, and the reconcile-against-upstream obligation before stamping
   `authority: human`).
@@ -449,7 +535,7 @@ different name, the retired synonym is noted.
 - **Measured / inferred** — every status claim is one or the other, tagged; and *authored*,
   *merged*, *released*, *deployed-and-observed* are four states never collapsed.
 - **AI triage** — the not-yet-built capability for an agent to interpret alerts; its absence is why
-  alerting (O3) is a non-outcome.
-- **Outcome identifiers** — S1–S4 (pipeline), W1–W6 (writers), R1–R5 (readers), O1–O3
+  alerting ([O3](./USE_CASES.md#o3--alerting)) is a non-outcome.
+- **Outcome identifiers** — [S1](./USE_CASES.md#s1--admitted)–[S4](./USE_CASES.md#s4--retrievable) (pipeline), [W1](./USE_CASES.md#axis-2--writers-connected)–[W6](./USE_CASES.md#axis-2--writers-connected) (writers), [R1](./USE_CASES.md#axis-3--readers-connected)–[R5](./USE_CASES.md#axis-3--readers-connected) (readers), [O1](./USE_CASES.md#o1--measured)–[O3](./USE_CASES.md#o3--alerting)
   (operability): defined in [`USE_CASES.md`](./USE_CASES.md) and used as the coordinate system in
   [`ROADMAP.md`](./ROADMAP.md) and the tickets.

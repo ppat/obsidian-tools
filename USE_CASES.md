@@ -2,21 +2,26 @@
 
 What this platform is *for*: the outcomes it exists to deliver, each with an acceptance criterion
 that could fail. This is the stable contract of the three top-level documents — it changes only when
-the understanding of what the platform is for changes. [`DESIGN.md`](./DESIGN.md) holds the pillars
+the understanding of what the platform is for changes. [`DESIGN2.md`](./DESIGN2.md) holds the pillars
 and invariants that deliver these outcomes; [`ROADMAP.md`](./ROADMAP.md) holds the work, its state,
 and the mapping from every work unit back to exactly one outcome here.
 
 Vocabulary used without introduction here (the vault's areas, the handles, provenance fields) is
-defined in [`DESIGN.md`](./DESIGN.md)'s Glossary.
+defined in [`DESIGN2.md`](./DESIGN2.md)'s Glossary.
 
 ## The system, in one paragraph
 
-BRAIN is a git-backed Obsidian vault used as a shared brain: one human and several AI agents write
-into it, and the same human and agents read from it. Content enters through controlled paths, is
-checked for soundness, is routed to where it belongs, and is readable everywhere the owner actually
-is — a chat window on a phone, an agent's context window, or the native Obsidian app on a device
-that works offline. The human is primarily a source (asking agents to write) and a reader; direct
-human writes are rare, deliberately.
+BRAIN is a git-backed Obsidian vault used as a shared brain: the store of the owner's knowledge,
+ideas, work, thoughts and research, and the medium for sharing it between agents and/or the human.
+It exists to capture the owner's ideas however fleeting, and to have agents work on them — at least
+the important ones, which bubble up by salience or some other form of prominence. The end state is
+automation: agents doing work on the owner's ideas, on the owner's behalf. Content enters through
+controlled paths, is checked for soundness, is routed to where it belongs, and is readable
+everywhere the owner actually is — a chat window on a phone, an agent's context window, or the
+native Obsidian app on a device that works offline. On both axes the human originates and agents act: a voice note, a dropped document, or
+tasked research arrives as an agent write; "find what relates to this note" comes back as an agent
+read. Direct human writes are extremely rare, deliberately; direct human reads are more common than
+direct human writes, though most human-motivated reading is still performed by agents.
 
 ## Governing constraints
 
@@ -25,11 +30,16 @@ These are not outcomes; they bound every outcome and every design choice.
 - **Durability and independence over convenience.** The canonical copy is plain markdown in git,
   readable with `grep`/`sed`/`vim` in fifty years, never hostage to a paid or proprietary service.
   This constraint — more than cost — eliminated the leading off-the-shelf alternatives.
-- **Writes are agent-heavy; reads are human-heavy.** The dominant risks are agent-vs-agent drift,
-  staleness, and content that reads cleanly while being wrong — not human-vs-agent edit collisions,
-  which are rare by construction.
+- **Humans originate; agents act — on both axes.** Writes and reads are both agent-heavy: human
+  involvement on either side is overwhelmingly mediated by agents. A voice note or message becomes
+  an agent write; tasked work and research become agent reads and writes; a dropped PDF or video
+  link arrives extracted to markdown by an agent. Direct human writes are extremely rare but never
+  impossible; direct human reads are more common than direct human writes, and still less common
+  than agent reads. The dominant risks follow: agent-vs-agent drift, staleness, and content that
+  reads cleanly while being wrong — not human-vs-agent edit collisions, which are rare by
+  construction.
 - **One operator, no team.** Anything that produces noise a single person cannot triage is negative
-  value. This is why alerting is an explicit non-outcome (O3) and why review surfaces are ranked and
+  value. This is why alerting is an explicit non-outcome ([O3](#o3--alerting)) and why review surfaces are ranked and
   hard-capped.
 - **Acceptance criteria must be falsifiable.** A criterion that cannot fail is not one. Every
   outcome below states what would falsify it, and a control is proven by making it fire (violation
@@ -44,10 +54,24 @@ slot). The outcomes therefore live on four independent axes:
 
 | Axis | Outcomes | Kind |
 | --- | --- | --- |
-| **Content pipeline** | S1 Admitted → S2 Sound → S3 Placed → S4 Retrievable | Sequential **for one piece of content**; the work behind the stages is not |
-| **Writers connected** | W1–W6 | Adoption; each writer lands independently |
-| **Readers connected** | R1–R5 | Adoption; each reader lands independently |
-| **Operability** | O1 Measured · O2 Survives failure · O3 Alerting (a non-outcome) | Qualities; cross-cutting, positioned by reversibility |
+| **Content pipeline** | [S1](#s1--admitted) Admitted → [S2](#s2--sound) Sound → [S3](#s3--placed) Placed → [S4](#s4--retrievable) Retrievable | Sequential **for one piece of content**; the work behind the stages is not |
+| **Writers connected** | [W1](#axis-2--writers-connected)–[W6](#axis-2--writers-connected) | Adoption; each writer lands independently |
+| **Readers connected** | [R1](#axis-3--readers-connected)–[R5](#axis-3--readers-connected) | Adoption; each reader lands independently |
+| **Operability** | [O1](#o1--measured) Measured · [O2](#o2--survives-its-failure-modes) Survives failure · [O3](#o3--alerting) Alerting (a non-outcome) | Qualities; cross-cutting, positioned by reversibility |
+
+How the axes relate — writers feed the pipeline, the pipeline serves the readers, operability
+watches all of it:
+
+```mermaid
+flowchart TB
+    W["Axis 2 — writers W1–W6:<br/>each connects independently"]
+    P["Axis 1 — the content pipeline:<br/>S1 Admitted → S2 Sound → S3 Placed → S4 Retrievable<br/>(sequential for one piece of content, not for the work)"]
+    R["Axis 3 — readers R1–R5:<br/>each connects independently"]
+    O["Axis 4 — operability:<br/>O1 Measured · O2 Survives failure · O3 Alerting (a non-outcome)"]
+    W -->|"land content into"| P
+    P -->|"serves sound, placed, retrievable content to"| R
+    O -.->|"observes and protects every stage of"| P
+```
 
 ## Axis 1 — The content pipeline
 
@@ -65,7 +89,7 @@ attributable to the authority that made it.**
 - A producer's credential successfully publishes to a queue subject outside its grant.
 
 *Scope note:* admission is a **containment** claim, not a quality claim. S1 holding says nothing
-about whether what arrived is any good — that is S2. "Cannot write to the wrong place" and "is what
+about whether what arrived is any good — that is [S2](#s2--sound). "Cannot write to the wrong place" and "is what
 got written any good" are different questions, kept apart deliberately.
 
 ### S2 — Sound
@@ -108,9 +132,11 @@ move as its salience and its relationships to other notes change.**
 
 *Scope note:* S3 has a **basic** half (every note reaches its curated home) and an **advanced** half
 (salience/confidence-driven promotion and demotion; merging or combining notes, keeping or removing
-the sources). The advanced half's *first pass* is inside the definition of project done — an easy,
-fast time-to-release first pass to iterate on afterwards; post-done iteration is out of scope for
-the project. Both halves are inside S3.
+the sources). The advanced half is where the platform's purpose lands, not a refinement: it is the
+mechanism by which the important ideas bubble up to where agents and the human act on them. Its
+*first pass* is inside the definition of project done — an easy, fast time-to-release first pass to
+iterate on afterwards; post-done iteration is out of scope for the project. Both halves are inside
+S3.
 
 ### S4 — Retrievable
 
@@ -126,13 +152,15 @@ cluster to be reachable to them.**
   refusing them.
 
 *Scope note:* S4 is about content being **obtainable**, not about it being worth obtaining — that is
-S2's and S3's job, and it is precisely why reader onboarding sits late: unlinted, unplaced content
+[S2](#s2--sound)'s and [S3](#s3--placed)'s job, and it is precisely why reader onboarding sits late: unlinted, unplaced content
 makes readers do the work the pipeline should have done.
 
 ## Axis 2 — Writers connected
 
-An axis, not a stage: each writer lands independently, and none is a precondition for another. Every
-writer shares one acceptance shape:
+An axis, not a stage: each writer lands independently, and none is a precondition for another. Most
+human-originated content arrives through the agent writers — a voice note through W3, a dropped
+document through W2, tasked bulk work through W1 — the human originating, an agent acting; W6 is
+the rare direct path, not "the human path". Every writer shares one acceptance shape:
 
 > **Writer X can place content in the vault through its own credential, and cannot reach any subject
 > or path outside its scope.**
@@ -154,26 +182,27 @@ writer shares one acceptance shape:
 *Scope note on W6:* it has two separable halves — **capture** (a device edit is recorded
 non-destructively and never silently overwritten; delivered) and **dispatch** (the captured edit is
 adjudicated and becomes an ordinary ingest event; not delivered). Their value differs sharply: the
-owner's ruling is that the human write path is edits, almost never creation, and even edits are very
+owner's ruling is that the direct human write path is edits, almost never creation, and even edits are very
 rare — so capture's value (a non-destructive read replica) is banked, while dispatch adjudicates an
 event that is rare by design.
 
 *Scope note on W2:* the owner's framing routes the NAS drop to bulk import, but the batch stream is
 patch-carrying and closed to every producer except the operator's workspace — so W2 currently has no
 place in the authority model, and connecting it requires a design decision, not just a credential
-(see [`ROADMAP.md`](./ROADMAP.md), open decisions).
+(see [`ROADMAP.md`'s open decisions](./ROADMAP.md#open-decisions)).
 
 ## Axis 3 — Readers connected
 
-Read *access* for the agent readers has existed since the read-only keys were issued, so "X can
-read" carries no information. The criterion is about the owner's actual complaint — reader
-**effort**:
+The originator/actor split of the writer axis applies here too: most human-motivated reading is
+performed by agents on the human's behalf (R2–R4); R1 and R5 are the direct human surfaces. Read
+*access* for the agent readers has existed since the read-only keys were issued, so "X can read"
+carries no information. The criterion is about the owner's actual complaint — reader **effort**:
 
 > **Reader X answers a defined question from curated locations alone, without traversing the inbox
 > or the raw import layer, and without returning content the lint pass would have flagged.**
 >
 > *Falsified by:* the answer requiring a search of uncurated space; or the answer containing a note
-> that fails S2's checks.
+> that fails [S2](#s2--sound)'s checks.
 
 | # | Reader | State |
 | --- | --- | --- |
@@ -227,5 +256,5 @@ today. Nothing in O2 waits on an unbuilt component.
 **Deliberately not an outcome of this project.** There is no acceptance criterion because there is
 nothing to accept. The standing ruling: no alerting until AI triage exists — for a single-operator
 homelab, unwired alerts are negative value. Recorded as an explicit non-outcome so a later reader
-does not mistake the absence for an oversight and "fix" it. Metrics (O1) are the half that cannot be
+does not mistake the absence for an oversight and "fix" it. Metrics ([O1](#o1--measured)) are the half that cannot be
 deferred; rules on top of them can be, indefinitely.
