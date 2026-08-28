@@ -59,21 +59,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from stat import S_ISDIR, S_ISLNK, S_ISREG
 
+from obsidian_tools.logging_config import LOG_PATH_SAMPLE_LIMIT
 from obsidian_tools.vault_git.baseline_selector import PathInfo, select_baseline_paths
 from obsidian_tools.vault_git.runner import GitRunner
 
 logger = logging.getLogger(__name__)
 
 OBSIDIAN_DIR = ".obsidian"
-
-# How many paths either of this module's two path-list log fields carries. Both lists are built from
-# whatever happens to be on the volume, so neither length is this code's to choose: a plugin that
-# ships a source tree makes the unselected list arbitrarily long, and a whole unreadable subtree does
-# the same to the unreadable one. A log pipeline's line-size limit rejects an oversized line outright
-# rather than truncating it (Loki's `max_line_size` does exactly this unless it is explicitly
-# configured to truncate), which would lose the *count* along with the sample at the moment either
-# list is most interesting — so the sample is capped here and the full count is logged beside it.
-_LOG_PATH_SAMPLE_LIMIT = 100
 
 _IGNORE_RULE_CONTENTS = """\
 # Managed by obsidian-tools' git committer (obsidian_tools/vault_git/baseline.py) — do not edit.
@@ -256,14 +248,14 @@ def _walk_log_fields(walk: _ObsidianWalk) -> dict[str, object]:
     exists to prevent, reintroduced in the mechanism meant to reveal it. A caller that cannot choose
     which fields to include cannot make that mistake again.
 
-    Both samples are capped at `_LOG_PATH_SAMPLE_LIMIT` here, which is also the only place either cap
-    is applied.
+    Both of this module's samples are capped here, and this is the only place either cap is applied;
+    the limit itself is one number shared with every other path-list field (`logging_config.py`).
     """
     return {
         "unselected_count": len(walk.unselected),
-        "unselected_paths": walk.unselected[:_LOG_PATH_SAMPLE_LIMIT],
+        "unselected_paths": walk.unselected[:LOG_PATH_SAMPLE_LIMIT],
         "unreadable_count": len(walk.unreadable),
-        "unreadable_paths": walk.unreadable[:_LOG_PATH_SAMPLE_LIMIT],
+        "unreadable_paths": walk.unreadable[:LOG_PATH_SAMPLE_LIMIT],
     }
 
 

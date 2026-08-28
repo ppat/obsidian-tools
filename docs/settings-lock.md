@@ -355,6 +355,15 @@ land there" is not a claim this checklist gets to make. A probe against that ver
 `.obsidian/snippets/sub/dir/creds.json`. Narrowed to file globs below, which costs a device
 baseline nothing: `*.css` under both, plus a theme's own `manifest.json`.
 
+**The narrowing is by extension, not by depth.** `obsidian_tools/vault_git/baseline_selector.py`,
+which is what runs on every commit, admits a `*.css` at *any* depth under `snippets/` or `themes/`
+— the rule is a file type, and `data.json` and everything else this list refuses is refused by not
+being one. The single-level globs in the command below are the shell's, and they are what a
+hand-run capture reaches, not a depth rule the automated capture enforces. Every rule that admits a
+`.json` is depth-bounded — the eight top-level files at exactly one path segment, a theme manifest
+at `themes/<name>/manifest.json`, and plugin code at `plugins/<name>/<file>` — and the one rule
+without a depth bound, `*.css`, admits no `.json` at all.
+
 ```sh
 git add --force -- \
   .obsidian/app.json \
@@ -390,8 +399,25 @@ rather than passing it as-is.
       `git add -A`, and check that `git status --short` reports nothing.
 
 Accepted consequence, and it is deliberate: a setting changed at this GUI afterwards does
-not reach the devices. Re-baselining is a manual act - change it, force-add `.obsidian/`
-again, let the replication cycle carry it. Nothing does this on a schedule.
+not reach the devices. Nothing does this on a schedule, and re-baselining is a manual act in
+two parts, not one - **the replication cycle carries the first part only.** Changing the
+setting and force-adding `.obsidian/` again updates the committed baseline, which is what a
+newly-seeded device will receive. It does not reach a device that already has one: local-replicator
+excludes `.obsidian/` from every publish unconditionally, and seeds it only where a completion
+marker is absent, so an already-seeded device keeps what it has indefinitely
+(`docs/DESIGN.md` §8a D3). Until each device is reset, the cycle reports the gap
+(`"event": "obsidian_baseline_diverged"`, at `warning`) rather than closing it — **from the cycle
+after `LAST_CHECKOUT` advances past the re-baseline commit, not from the one that fetches it.** The
+comparison runs against the clone parked at that tag, so a new cluster-side baseline becomes the
+thing devices are measured against only once the tag has moved onto it, and the tag advances only
+on a cycle that publishes. A gate held open on the Mac — `drift_uncaptured` from a pasted image is
+the ordinary one, and can persist indefinitely — therefore postpones the report for exactly as long
+as it lasts (`docs/local-replicator.md`, Troubleshooting).
+
+The second part is per device, and it is the `.obsidian/`-only reset in
+[`local-replicator.md`](./local-replicator.md) → "Resetting a device". Do it in that order:
+re-baseline at the cluster first, then reset each device, so the re-seed picks up the new
+baseline rather than the one it is replacing.
 
 ## Out of scope here
 

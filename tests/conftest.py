@@ -277,3 +277,13 @@ def push_commit(
     run_git("add", "-A", cwd=clone)
     run_git("-c", "user.name=x", "-c", "user.email=x@example.invalid", "commit", "-q", "-m", message, cwd=clone)
     run_git("push", "-q", "origin", "main", cwd=clone)
+
+
+def seed_obsidian_baseline_in_history(origin: Path, tmp_path: Path) -> None:
+    """Two commits, in this order, because one cannot express it: `git add -A` consults ignore rules
+    for untracked paths, so committing the ignore rule alongside the file it names would leave the
+    file untracked. The real vault reaches the same state by the committer's own `git add --force`
+    (`vault_git/baseline.py`) -- what matters downstream is only that `.obsidian/app.json` ends up
+    tracked *and* covered by a tracked `.gitignore`, which is the shape a device actually sees."""
+    push_commit(origin, tmp_path, {".obsidian/app.json": '{"legacyEditor": false}\n'}, "obsidian baseline")
+    push_commit(origin, tmp_path, {".gitignore": ".obsidian/\n"}, "ignore .obsidian")

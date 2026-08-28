@@ -19,22 +19,28 @@ Covers every scenario named in the brief for this component:
 
 from __future__ import annotations
 
+import json
 import logging
+import shutil
+import stat
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import pytest
-from conftest import push_commit, replicate_config, run_git
+from conftest import push_commit, replicate_config, run_git, seed_obsidian_baseline_in_history
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 import obsidian_tools.local_replicator.cycle as cycle_module
 from obsidian_tools.local_replicator.cycle import run_cycle
+from obsidian_tools.local_replicator.device_baseline import is_baselined
 from obsidian_tools.local_replicator.drift import SpoolEntry
 from obsidian_tools.local_replicator.spool import SpoolWriteError, list_spool_files, read_spool_entry, write_spool_entry
 from obsidian_tools.local_replicator.tag import read_last_checkout
+from obsidian_tools.logging_config import LOG_PATH_SAMPLE_LIMIT, JsonFormatter
 from obsidian_tools.vault_git.runner import GitRunner
 
 
@@ -522,9 +528,8 @@ def test_a_global_ignore_file_cannot_hide_a_device_creation_from_the_drift_diff(
     lands in `uncaptured`, the gate sees a clean cycle, and the publish's `--delete` removes the
     note from iCloud.
 
-    The vault's own tracked `.gitignore` must keep working (the `.obsidian/` rule depends on it --
-    see the commit "correct the claim that .obsidian churn reaches the spool"), so what closes this
-    has to be scoped to the *user-global* file specifically, not to ignore rules in general."""
+    The vault's own tracked `.gitignore` must keep working, so what closes this has to be scoped to
+    the *user-global* file specifically, not to ignore rules in general."""
     global_ignore = tmp_path / "hostile-global-gitignore"
     global_ignore.write_text("phone-*.md\n")
     _hostile_global_git_config(tmp_path, monkeypatch, f"[core]\n\texcludesFile = {global_ignore}\n")
@@ -1480,6 +1485,735 @@ def test_obsidian_copied_once_absent_then_left_alone_when_present(
     assert result_2.obsidian_seed_attempted is False
     assert (icloud_dir / ".obsidian" / "app.json").read_text() == '{"legacyEditor": true}\n'  # untouched
     assert (icloud_dir / ".obsidian" / "community-plugins.json").exists()  # untouched
+
+
+# --- `.obsidian/` is observed where it can be acted on, not where it can only be reported ---------
+
+
+def test_a_device_edit_to_a_tracked_obsidian_file_is_never_spooled_as_drift(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path
+) -> None:
+    """The defect confirmed on real hardware (ppat/obsidian-tools#46): a device edit to a tracked
+    `.obsidian/` file spooled as drift, `publish` left the file untouched because it excludes
+    `.obsidian/`, and the *next* cycle -- on identical, unchanged content -- spooled it again.
+
+    The second cycle is the load-bearing assertion, not a repetition of the first: a component that
+    merely failed to write the file back would still stop re-reporting once something reconciled it.
+    Nothing ever does here, which is why re-running on unchanged content is what distinguishes
+    "publication is deferred" from "this drift can never resolve"."""
+    seed_obsidian_baseline_in_history(seeded_origin, tmp_path)
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+
+    (icloud_dir / ".obsidian" / "app.json").write_text('{"legacyEditor": true}\n')
+
+    first = run_cycle(config)
+    second = run_cycle(config)
+
+    assert first.drifted == ()
+    assert second.drifted == ()
+    assert _spooled_by_path(tmp_path) == {}
+    assert first.tag_advanced is True
+    assert second.tag_advanced is True
+    assert (icloud_dir / ".obsidian" / "app.json").read_text() == '{"legacyEditor": true}\n'
+
+
+def test_a_diverged_device_baseline_is_reported_on_every_cycle_it_lasts(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Detection is not given up, it moves: excluding `.obsidian/` from the overlay removes it from
+    the spool, and the same allowlist `seed_baseline` places is compared against what the device
+    actually holds. The report repeats every cycle deliberately -- the condition itself persists
+    until an operator resolves it by hand, so a one-shot report would be visible only in whichever
+    log window happened to contain the cycle the edit landed in."""
+    seed_obsidian_baseline_in_history(seeded_origin, tmp_path)
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+    baseline = _tag_sha(tmp_path)
+
+    (icloud_dir / ".obsidian" / "app.json").write_text('{"legacyEditor": true}\n')
+
+    with caplog.at_level(logging.INFO):
+        first = run_cycle(config)
+        second = run_cycle(config)
+
+    assert first.obsidian_baseline_diverged == (".obsidian/app.json",)
+    assert second.obsidian_baseline_diverged == (".obsidian/app.json",)
+    events = [r for r in caplog.records if getattr(r, "event", None) == "obsidian_baseline_diverged"]
+    assert len(events) == 2
+    assert getattr(events[0], "paths", None) == [".obsidian/app.json"]
+    # `warning`, not `info`: the level is the contested half of this decision (see the emitter's own
+    # comment weighing the two), so it is the half a later edit must not be able to move quietly.
+    assert events[0].levelno == logging.WARNING
+    # Which baseline the device was found to differ from -- the only thing on this line that lets an
+    # operator reproduce the comparison from the clone by hand.
+    assert getattr(events[0], "baseline_sha", None) == baseline
+
+
+def test_a_device_baseline_matching_the_parked_clone_reports_no_divergence(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The control that makes the report above readable at all: an ordinary seeded device, left
+    alone, must stay silent. Without it, an implementation that reported every allowlisted path on
+    every cycle would satisfy the divergence test and be indistinguishable from a working one."""
+    seed_obsidian_baseline_in_history(seeded_origin, tmp_path)
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+
+    with caplog.at_level(logging.INFO):
+        result = run_cycle(config)
+
+    assert result.obsidian_baseline_diverged == ()
+    assert [r for r in caplog.records if getattr(r, "event", None) == "obsidian_baseline_diverged"] == []
+
+
+def test_deleting_the_device_obsidian_directory_reseeds_without_spooling_the_baseline_as_deletions(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The documented device reset -- delete `.obsidian/` from the iCloud vault by hand and let the
+    next cycle re-seed it -- run end to end. The overlay's `--delete` used to answer that empty
+    directory by stripping the parked checkout's own baseline, so the cycle staged the whole frozen
+    set as device-side deletions and spooled them as a human's edits, on the one cycle whose entire
+    purpose is to put the baseline back."""
+    seed_obsidian_baseline_in_history(seeded_origin, tmp_path)
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+    assert (icloud_dir / ".obsidian" / "app.json").exists()
+
+    shutil.rmtree(icloud_dir / ".obsidian")
+
+    with caplog.at_level(logging.INFO):
+        result = run_cycle(config)
+
+    assert result.drifted == ()
+    assert _spooled_by_path(tmp_path) == {}
+    assert result.obsidian_seed_attempted is True
+    # The control for the withheld-seed report: this cycle reaches the same unseeded device and
+    # answers it, so the report must stay silent here or it says nothing anywhere.
+    assert [r for r in caplog.records if getattr(r, "event", None) == "obsidian_baseline_unseeded"] == []
+    # Bootstrap, not divergence: this cycle's device is missing every allowlisted path by
+    # definition, and the re-seed below is what answers that. Reporting it as a diverged baseline
+    # would make the signal fire loudest on precisely the cycle that resolves it.
+    assert result.obsidian_baseline_diverged == ()
+    assert (icloud_dir / ".obsidian" / "app.json").read_text() == '{"legacyEditor": false}\n'
+
+
+def test_a_device_side_obsidian_symlink_is_never_spooled(tmp_path: Path, seeded_origin: Path, icloud_dir: Path) -> None:
+    """The same exclusion, through the whole cycle, against the one entry shape that can defeat an
+    rsync filter rule written for a directory. A `.obsidian` symlink that reaches the overlay is
+    staged by `git add -A` as a mode-120000 blob whose content is its target path — publishing a
+    path outside the vault into the drift stream, which is `ppat/obsidian-tools#22`'s blast radius —
+    alongside a deletion of every baseline path the symlink displaced."""
+    seed_obsidian_baseline_in_history(seeded_origin, tmp_path)
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+
+    outside_the_vault = tmp_path / "outside-the-vault"
+    (outside_the_vault).mkdir()
+    (outside_the_vault / "app.json").write_text('{"legacyEditor": true}\n')
+    shutil.rmtree(icloud_dir / ".obsidian")
+    (icloud_dir / ".obsidian").symlink_to(outside_the_vault)
+
+    result = run_cycle(config)
+
+    assert result.drifted == ()
+    assert _spooled_by_path(tmp_path) == {}
+
+
+def test_untracked_obsidian_residue_in_the_parked_clone_is_pruned_before_it_is_compared(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path
+) -> None:
+    """Excluding `.obsidian/` from the overlay removed the only thing that ever pruned the parked
+    clone's copy of it: `git clean -fd` skips ignored paths and the vault's own `.gitignore` carries
+    `.obsidian/` wholesale, `reset --hard` is tracked-only, and the overlay's `--delete` no longer
+    reaches it. Anything a device deposited there before that -- an auto-updated community plugin's
+    `main.js`, which the baseline allowlist admits -- would otherwise sit in the clone forever and be
+    read by `diverged_baseline_paths` as the committed baseline, which it never was. The comparison
+    walks the clone's working tree, so the working tree is what has to hold only what `HEAD` does."""
+    seed_obsidian_baseline_in_history(seeded_origin, tmp_path)
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+
+    residue = tmp_path / "cache-clone" / ".obsidian" / "plugins" / "device-only-plugin" / "main.js"
+    residue.parent.mkdir(parents=True)
+    residue.write_text("copied in from a device by an overlay that predates the exclusion\n")
+
+    result = run_cycle(config)
+
+    assert not residue.exists()
+    assert result.obsidian_baseline_diverged == ()
+
+
+def test_untracked_obsidian_residue_is_not_seeded_onto_a_device_being_reset(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path
+) -> None:
+    """The other half, and the one that reaches the device: `seed_baseline` walks the same working
+    tree, so a reset -- the documented remedy, which deletes `.obsidian/` from the iCloud vault by
+    hand -- hands the device the committed baseline unioned with whatever a previous device left in
+    the clone. Before the exclusion the overlay's own `--delete` wiped the residue earlier in the
+    same cycle; nothing else ever did."""
+    seed_obsidian_baseline_in_history(seeded_origin, tmp_path)
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+
+    residue = tmp_path / "cache-clone" / ".obsidian" / "plugins" / "device-only-plugin" / "main.js"
+    residue.parent.mkdir(parents=True)
+    residue.write_text("copied in from a device by an overlay that predates the exclusion\n")
+    shutil.rmtree(icloud_dir / ".obsidian")
+
+    result = run_cycle(config)
+
+    assert result.obsidian_seed_attempted is True
+    assert (icloud_dir / ".obsidian" / "app.json").exists()  # the real baseline did arrive
+    assert not (icloud_dir / ".obsidian" / "plugins" / "device-only-plugin").exists()
+
+
+def test_a_large_divergence_set_is_sampled_with_its_full_count_beside_it(
+    tmp_path: Path,
+    seeded_origin: Path,
+    icloud_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The list is bounded by the allowlist but not by anything small: eight top-level settings
+    files, three per plugin, plus every `snippets/*.css` and `themes/*/*`. A cluster-side baseline
+    change or an interrupted seed puts the whole set on one line, and a log pipeline's line-size
+    limit drops an oversized line whole rather than truncating it -- taking the count with it, at
+    the one moment the count is what an operator needs. Sampled with the count beside it, the same
+    convention and the same limit `vault_git/baseline.py`'s walk fields use.
+
+    The detector is stubbed rather than driven, because what is under test is the emitter: building
+    150 real diverged paths would exercise `select_baseline_paths` again and pin nothing new."""
+    seed_obsidian_baseline_in_history(seeded_origin, tmp_path)
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)  # bootstrap: seeds the device, so the divergence check is no longer gated off
+
+    many = [f".obsidian/plugins/plugin-{n:03d}/main.js" for n in range(150)]
+
+    def _many_diverged(_cache_clone_dir: Path, _icloud_vault_dir: Path) -> list[str]:
+        return list(many)
+
+    monkeypatch.setattr(cycle_module, "diverged_baseline_paths", _many_diverged)
+
+    with caplog.at_level(logging.INFO):
+        result = run_cycle(config)
+
+    [record] = [r for r in caplog.records if getattr(r, "event", None) == "obsidian_baseline_diverged"]
+    assert getattr(record, "path_count", None) == 150
+    assert getattr(record, "paths", None) == many[:100]
+    # The result itself is not sampled -- the cap is a property of the log line, and
+    # `cycle_complete`'s count is taken from this.
+    assert len(result.obsidian_baseline_diverged) == 150
+
+
+def test_a_device_left_without_a_baseline_by_a_withheld_cycle_is_reported_rather_than_silent(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The state with the largest possible divergence is the one the divergence comparison cannot
+    see. A device reset deletes `.obsidian/` by hand and the re-seed sits behind the publish gate,
+    which an uncaptured path -- a pasted image, which `drift.captures_content` treats as the routine
+    case -- holds shut for as long as it lasts. The device is then left with no settings lock, no
+    plugins and no template folder, while `is_baselined()` is False so the comparison is skipped as
+    bootstrap. Nothing else names the state: `cycle_complete` reads field for field as it does on a
+    healthy seeded cycle, `obsidian_seed_attempted: false` included, and the two events a gated
+    cycle does emit name the pasted image rather than `.obsidian/`."""
+    seed_obsidian_baseline_in_history(seeded_origin, tmp_path)
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+
+    shutil.rmtree(icloud_dir / ".obsidian")
+    (icloud_dir / "pasted.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x01\x02\x03")
+
+    with caplog.at_level(logging.INFO):
+        first = run_cycle(config)
+        second = run_cycle(config)
+
+    assert first.obsidian_seed_attempted is False
+    assert second.obsidian_seed_attempted is False
+    assert first.obsidian_baseline_diverged == ()
+    assert not (icloud_dir / ".obsidian").exists()
+    records = [r for r in caplog.records if getattr(r, "event", None) == "obsidian_baseline_unseeded"]
+    assert len(records) == 2  # every cycle it lasts, for the same reason the divergence event repeats
+    assert records[0].levelno == logging.WARNING
+
+
+def test_untracked_obsidian_residue_is_not_seeded_after_the_last_checkout_tag_is_deleted(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path
+) -> None:
+    """The runbook's other reset, and the one branch the re-park block never runs on. Deleting
+    `LAST_CHECKOUT` without removing the rest of the clone is a documented whole-vault reset, and it
+    makes `previous_checkout` None -- so `seed_baseline` walks a working tree nothing pruned this
+    cycle. An operator reaches this state by escalating rather than by choosing it: the
+    `.obsidian/`-only reset leaves a device unseeded for as long as the publish gate is shut, and
+    dropping the tag is what the runbook offers next."""
+    seed_obsidian_baseline_in_history(seeded_origin, tmp_path)
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+
+    residue = tmp_path / "cache-clone" / ".obsidian" / "plugins" / "device-only-plugin" / "main.js"
+    residue.parent.mkdir(parents=True)
+    residue.write_text("copied in from a device by an overlay that predates the exclusion\n")
+    shutil.rmtree(icloud_dir / ".obsidian")
+    run_git("tag", "-d", "LAST_CHECKOUT", cwd=tmp_path / "cache-clone")
+
+    result = run_cycle(config)
+
+    assert result.obsidian_seed_attempted is True
+    assert (icloud_dir / ".obsidian" / "app.json").exists()  # the real baseline did arrive
+    assert not (icloud_dir / ".obsidian" / "plugins" / "device-only-plugin").exists()
+    assert not residue.exists()
+
+
+def test_obsidian_residue_carrying_its_own_git_directory_is_pruned_too(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """`git clean` will not remove a directory that is itself a git repository unless force is given
+    twice, and it declines at exit 0. A plugin installed from source or through BRAT is a git
+    checkout, which makes the residue shape an operator is most likely to have produced by hand the
+    one shape a single `-f` leaves in place permanently -- and leaves in place *quietly*, which the
+    second assertion here is for: `obsidian_residue_prune_incomplete` is keyed on a non-zero exit,
+    so it does not fire, and weakening the flag goes red on the first assertion with no log line
+    anywhere naming what survived."""
+    seed_obsidian_baseline_in_history(seeded_origin, tmp_path)
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+
+    residue_dir = tmp_path / "cache-clone" / ".obsidian" / "plugins" / "developer-installed-plugin"
+    residue_dir.parent.mkdir(parents=True)
+    run_git("init", "-q", "-b", "main", str(residue_dir), cwd=tmp_path)
+    (residue_dir / "main.js").write_text("a plugin checked out from source, not from the baseline\n")
+
+    with caplog.at_level(logging.INFO):
+        result = run_cycle(config)
+
+    assert not residue_dir.exists()
+    assert result.obsidian_baseline_diverged == ()
+    assert [r for r in caplog.records if getattr(r, "event", None) == "obsidian_residue_prune_incomplete"] == []
+
+
+def test_the_residue_prune_is_bounded_to_the_vault_roots_own_obsidian_directory(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path
+) -> None:
+    """`-x` reaches ignored content, which is what the prune is for and equally why it must stay
+    pathspec-scoped. The vault's own `.gitignore` carries `.obsidian/` with no leading slash, so git
+    ignores a directory of that name at any depth, while a git pathspec is anchored at the work-tree
+    root -- and the overlay excludes `.obsidian` at any depth too, so nothing would put back what an
+    unscoped `-x` deleted. A vault holding a nested vault is the concrete case; the general one is
+    that every ignored path in the clone outside the frozen baseline is content this statement has
+    no business touching."""
+    seed_obsidian_baseline_in_history(seeded_origin, tmp_path)
+    push_commit(seeded_origin, tmp_path, {"10-areas/note.md": "a note in a real vault folder\n"}, "add a note")
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+
+    nested = tmp_path / "cache-clone" / "10-areas" / ".obsidian" / "app.json"
+    nested.parent.mkdir(parents=True)
+    nested.write_text("a nested vault's own settings, which this cycle never seeds or compares\n")
+
+    run_cycle(config)
+
+    assert nested.exists()
+
+
+def test_a_residue_prune_that_cannot_finish_does_not_stop_the_cycle(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """`git clean` exits 1 on any entry it cannot remove and any directory it cannot read, and the
+    prune runs ahead of the drift capture -- so treating that exit as fatal would let one permission
+    fault inside a local cache directory stop the vault replicating at all, on this cycle and every
+    subsequent one. `_iter_obsidian_candidates` names the identical condition on this same directory
+    as expected and goes to length to degrade gracefully on it. What degrading costs is asserted
+    here too, because it is real: the comparison then reads residue the prune could not remove."""
+    seed_obsidian_baseline_in_history(seeded_origin, tmp_path)
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+
+    residue_dir = tmp_path / "cache-clone" / ".obsidian" / "plugins" / "unremovable-plugin"
+    residue_dir.mkdir(parents=True)
+    (residue_dir / "main.js").write_text("residue the clean cannot reach\n")
+    residue_dir.chmod(stat.S_IRUSR | stat.S_IXUSR)  # readable and traversable, not writable
+    (icloud_dir / "note-from-the-device.md").write_text("a real edit, made on the same cycle\n")
+
+    try:
+        with caplog.at_level(logging.INFO):
+            result = run_cycle(config)
+    finally:
+        residue_dir.chmod(stat.S_IRWXU)  # tmp_path cleanup
+
+    assert result.drifted == ("note-from-the-device.md",)  # the cycle carried on and did its job
+    assert result.tag_advanced is True
+    [record] = [r for r in caplog.records if getattr(r, "event", None) == "obsidian_residue_prune_incomplete"]
+    assert record.levelno == logging.WARNING
+    # git's own reason for the failure, carried through so the line names a directory to go and fix.
+    assert any("Permission denied" in line for line in getattr(record, "detail", []))
+    # The cost of degrading rather than failing, stated as an assertion: this path is in the clone
+    # and not in `HEAD`, so the comparison names it exactly as the prune exists to prevent.
+    assert ".obsidian/plugins/unremovable-plugin/main.js" in result.obsidian_baseline_diverged
+
+
+def test_a_diverged_baseline_is_still_reported_when_origin_has_no_history_to_publish(
+    tmp_path: Path,
+    seeded_origin: Path,
+    icloud_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The comparison runs in step 2 and the cycle can still return before step 6 -- an origin whose
+    history this clone can no longer resolve returns early, ahead of every later step. What was
+    observed before that point is a fact about the device either way, so it has to survive the early
+    return rather than be discarded with the cycle that could not publish."""
+    seed_obsidian_baseline_in_history(seeded_origin, tmp_path)
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+
+    (icloud_dir / ".obsidian" / "app.json").write_text('{"legacyEditor": true}\n')
+
+    def _no_origin_history(_runner: GitRunner, *, branch: str) -> str | None:
+        return None
+
+    monkeypatch.setattr(cycle_module, "fetch_origin", _no_origin_history)
+
+    with caplog.at_level(logging.INFO):
+        result = run_cycle(config)
+
+    assert result.obsidian_baseline_diverged == (".obsidian/app.json",)
+    assert result.tag_advanced is False
+    assert [r for r in caplog.records if getattr(r, "event", None) == "cycle_no_origin_history"]
+
+
+def test_no_unseeded_baseline_is_reported_before_the_committer_has_taken_one(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The withheld-seed report has to stay silent while there is nothing to seed. A vault whose
+    history carries no `.obsidian/` baseline commit yet is a routine state (docs/DESIGN.md §8a D3),
+    and a device is unconfigured there for a reason no gate produced and no operator can clear --
+    naming the gate would point at a cause that isn't one and a remedy that doesn't exist."""
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+
+    (icloud_dir / "pasted.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x01\x02\x03")
+
+    with caplog.at_level(logging.INFO):
+        result = run_cycle(config)
+
+    assert result.uncaptured == ("pasted.png",)  # the gate really is shut, so no seed ran
+    assert result.obsidian_seed_attempted is False
+    assert not is_baselined(icloud_dir)
+    assert [r for r in caplog.records if getattr(r, "event", None) == "obsidian_baseline_unseeded"] == []
+
+
+def test_a_healthy_seeded_cycle_never_reports_an_unseeded_baseline(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The direction the withheld-seed report fails in if its completion-marker term is ever
+    dropped. Every cycle of a correctly seeded device reaches this report with no seed attempted
+    (there is nothing to seed) and a baseline present in the clone, so that term is the only thing
+    holding the line back: without it the event fires at `warning` on every cycle a healthy device
+    ever runs -- 96 times a day at the installed interval -- telling an operator the device is not
+    running the locked baseline while it is. A report that cannot stop firing is the inverse of the
+    silence it was added to remove, and costs the same thing in the end."""
+    seed_obsidian_baseline_in_history(seeded_origin, tmp_path)
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+
+    with caplog.at_level(logging.INFO):
+        result = run_cycle(config)
+
+    assert is_baselined(icloud_dir)
+    # The guard's other two terms are inert on this cycle, which is what makes it discriminating:
+    # nothing was seeded, and the clone does hold a baseline to seed from.
+    assert result.obsidian_seed_attempted is False
+    assert [r for r in caplog.records if getattr(r, "event", None) == "obsidian_baseline_unseeded"] == []
+
+
+def test_a_seed_that_was_attempted_and_withheld_is_not_also_reported_as_unseeded(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The report is keyed on the seed not having been *attempted*, not on the device ending up
+    with a baseline: every way a seed can be attempted and not complete emits its own per-cycle
+    event already, and this line would restate it while naming a cause that is not the one --
+    "this cycle did not seed one", about a cycle that tried. The reachable instance is a clone
+    directory the seed walk cannot enumerate, which withholds the completion marker deliberately so
+    the next cycle tops up what is missing. Nothing else separates the two events here: the marker
+    really is absent, and the clone really does hold a baseline."""
+    seed_obsidian_baseline_in_history(seeded_origin, tmp_path)
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+
+    shutil.rmtree(icloud_dir / ".obsidian")
+    unreadable = tmp_path / "cache-clone" / ".obsidian" / "plugins" / "unreadable-plugin"
+    unreadable.mkdir(parents=True)
+    (unreadable / "main.js").write_text("a plugin directory the seed walk cannot enumerate\n")
+    unreadable.chmod(stat.S_IWUSR | stat.S_IXUSR)  # traversable, not readable
+
+    try:
+        with caplog.at_level(logging.INFO):
+            result = run_cycle(config)
+    finally:
+        unreadable.chmod(stat.S_IRWXU)  # tmp_path cleanup
+
+    assert result.obsidian_seed_attempted is True
+    assert not is_baselined(icloud_dir)  # the marker was withheld, so the device really is unseeded
+    assert [r for r in caplog.records if getattr(r, "event", None) == "device_baseline_seed_incomplete"]
+    assert [r for r in caplog.records if getattr(r, "event", None) == "obsidian_baseline_unseeded"] == []
+
+
+def test_obsidian_seed_attempted_records_the_attempt_and_not_that_a_baseline_landed(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The flag is set before `seed_baseline` is called and is never revised by what that call
+    finds, so it cannot carry the claim that a device now holds a baseline -- only that a cycle got
+    as far as trying. The state that separates the two needs nothing exotic: a vault whose history
+    carries no `.obsidian/` baseline commit yet (docs/DESIGN.md §8a D3) publishes normally, attempts
+    the seed, and skips it. What confirms a baseline actually landed is `device_baseline_seeded`,
+    and that is what docs/local-replicator.md sends an operator to look for; this pins the
+    difference the runbook now turns on."""
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+
+    with caplog.at_level(logging.INFO):
+        result = run_cycle(config)
+
+    assert result.tag_advanced is True  # nothing gated this cycle, so the seed really was reached
+    assert result.obsidian_seed_attempted is True
+    assert not (icloud_dir / ".obsidian").exists()  # and it placed nothing at all
+    assert not is_baselined(icloud_dir)
+    events = [getattr(record, "event", None) for record in caplog.records]
+    assert "device_baseline_skip_no_source" in events
+    assert "device_baseline_seeded" not in events
+
+
+def test_a_device_holding_its_own_obsidian_but_no_completed_baseline_is_reported_unseeded(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """What this report's predicate is, and it is not the directory: the completion marker.
+    Obsidian creates `.obsidian/` itself the first time it opens a vault, so a real directory full
+    of the device's own settings with no baseline ever seeded into it is the *ordinary* state
+    between a reset and the cycle that publishes -- the sibling test above reaches the same state
+    with the directory absent, which is the narrower half of it. The event has to fire on both, and
+    its message has to stay true of a device that visibly has plugins."""
+    seed_obsidian_baseline_in_history(seeded_origin, tmp_path)
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+
+    shutil.rmtree(icloud_dir / ".obsidian")
+    device_own = icloud_dir / ".obsidian"
+    (device_own / "plugins" / "device-installed-plugin").mkdir(parents=True)
+    (device_own / "app.json").write_text('{"legacyEditor": true}\n')
+    (device_own / "plugins" / "device-installed-plugin" / "main.js").write_text("installed on the device\n")
+    (icloud_dir / "pasted.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x01\x02\x03")
+
+    with caplog.at_level(logging.INFO):
+        result = run_cycle(config)
+
+    assert result.uncaptured == ("pasted.png",)  # the gate is shut, so no seed ran
+    assert not is_baselined(icloud_dir)
+    assert result.obsidian_baseline_diverged == ()  # and the comparison is skipped as bootstrap
+    [record] = [r for r in caplog.records if getattr(r, "event", None) == "obsidian_baseline_unseeded"]
+    assert record.levelno == logging.WARNING
+    # The seed is the only thing in the cycle that writes this directory, and the gate withheld it:
+    # the device keeps its own settings, unaltered, rather than being half-configured while the
+    # report says it is unconfigured. Not a statement about the excludes -- `publish` does not run
+    # on a gated cycle and `overlay` only reads the device side, so nothing here can discriminate
+    # them however they are spelled.
+    assert (device_own / "app.json").read_text() == '{"legacyEditor": true}\n'
+
+
+def test_a_device_left_unseeded_by_a_cycle_that_cannot_reach_origin_is_reported_too(
+    tmp_path: Path,
+    seeded_origin: Path,
+    icloud_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The other route that withholds the seed, and the one that returns before the publish gate is
+    ever consulted. An origin whose branch this clone can no longer resolve leaves a reset device
+    exactly as unconfigured as a shut gate does, so the state has to be reported on both routes or
+    the report is conditional on which way the cycle happened to end."""
+    seed_obsidian_baseline_in_history(seeded_origin, tmp_path)
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+    shutil.rmtree(icloud_dir / ".obsidian")
+
+    def _no_origin_history(_runner: GitRunner, *, branch: str) -> str | None:
+        return None
+
+    monkeypatch.setattr(cycle_module, "fetch_origin", _no_origin_history)
+
+    with caplog.at_level(logging.INFO):
+        result = run_cycle(config)
+
+    assert result.obsidian_seed_attempted is False
+    assert not (icloud_dir / ".obsidian").exists()
+    [record] = [r for r in caplog.records if getattr(r, "event", None) == "obsidian_baseline_unseeded"]
+    assert record.levelno == logging.WARNING
+
+
+# --- every path list on every log line is bounded, not just the ones that were noticed ----------
+
+
+def _oversized_path_lists(records: list[logging.LogRecord]) -> list[tuple[str, str, int]]:
+    """Every `extra=`-supplied list of paths on `records` that exceeds the sample limit, as
+    (event, field, length). A log pipeline rejects an oversized line outright rather than truncating
+    it, so an uncapped list does not cost a few paths -- it costs the whole line, count included,
+    at the moment the line is most interesting (`logging_config.LOG_PATH_SAMPLE_LIMIT`). Swept
+    generically rather than field by field so an emitter added later is covered by construction,
+    which is what the constant's comment claims of the codebase."""
+    oversized: list[tuple[str, str, int]] = []
+    formatter = JsonFormatter()
+    for record in records:
+        # Measured on the emitted line rather than on the record, because the limit is a property of
+        # what reaches the pipeline: `extra=` fields are folded into the JSON object by the formatter,
+        # and that object is what a line-size limit is applied to.
+        payload: dict[str, object] = json.loads(formatter.format(record))
+        for field, value in payload.items():
+            if not isinstance(value, list):
+                continue
+            items = cast(list[object], value)
+            if all(isinstance(item, str) for item in items) and len(items) > LOG_PATH_SAMPLE_LIMIT:
+                oversized.append((str(payload.get("event", "?")), field, len(items)))
+    return oversized
+
+
+def test_a_gated_cycles_own_path_lists_are_sampled_with_their_counts_beside_them(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The gate's own two lines are the ones that must survive: they are the only place the paths
+    that stopped this cycle publishing are named at all (`cycle_complete` carries counts and nothing
+    else). A folder of images dropped into the vault -- one drag, and the routine way this gate is
+    reached -- puts every one of them on both lines at once."""
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+
+    (icloud_dir / "attachments").mkdir()
+    for index in range(150):
+        # A trailing NUL is what makes every one of these binary to git, rather than only the ones
+        # whose index byte happens to fall outside printable ASCII.
+        (icloud_dir / "attachments" / f"pasted-{index:03d}.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00" + bytes([index]))
+
+    with caplog.at_level(logging.INFO):
+        result = run_cycle(config)
+
+    assert len(result.uncaptured) == 150  # the result itself is never sampled
+    assert result.tag_advanced is False
+    [uncaptured_record] = [r for r in caplog.records if getattr(r, "event", None) == "drift_uncaptured"]
+    assert getattr(uncaptured_record, "path_count", None) == 150
+    assert len(getattr(uncaptured_record, "paths", [])) == LOG_PATH_SAMPLE_LIMIT
+    [gate_record] = [r for r in caplog.records if getattr(r, "event", None) == "cycle_tag_not_advanced"]
+    assert getattr(gate_record, "uncaptured_count", None) == 150
+    assert len(getattr(gate_record, "uncaptured", [])) == LOG_PATH_SAMPLE_LIMIT
+    assert _oversized_path_lists(caplog.records) == []
+
+
+def test_an_oversized_matching_upstream_set_is_sampled_with_its_full_count_beside_it(
+    tmp_path: Path,
+    seeded_origin: Path,
+    icloud_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The same bound on the line whose size is set by *upstream*, not by the device: a crash in the
+    step 6/7 window makes the next cycle read every path that commit touched as drift, so one agent
+    commit reorganising the vault is enough to oversize it (ppat/obsidian-tools#36)."""
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+    push_commit(
+        seeded_origin,
+        tmp_path,
+        {f"10-areas/note-{index:03d}.md": f"upstream note {index}\n" for index in range(150)},
+        "an agent reorganises the vault",
+    )
+
+    _crash_between_publish_and_tag_advance(config, monkeypatch)
+
+    with caplog.at_level(logging.INFO):
+        run_cycle(config)
+
+    [record] = [r for r in caplog.records if getattr(r, "event", None) == "drift_matches_upstream"]
+    assert getattr(record, "path_count", None) == 150
+    assert len(getattr(record, "paths", [])) == LOG_PATH_SAMPLE_LIMIT
+    assert _oversized_path_lists(caplog.records) == []
+
+
+def test_an_oversized_spooled_set_is_sampled_on_the_spool_failure_line_too(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The third field on the same two lines, and the one whose length is set by how much the device
+    changed before the disk failed rather than by anything this cycle chose."""
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+
+    (icloud_dir / "10-areas").mkdir()
+    for index in range(150):
+        (icloud_dir / "10-areas" / f"note-{index:03d}.md").write_text(f"a device edit {index}\n")
+    (icloud_dir / "10-areas" / "zzz-last.md").write_text("the one whose spool write fails\n")
+
+    with caplog.at_level(logging.INFO):
+        result = run_cycle(config, spool_writer=_failing_spool_writer("10-areas/zzz-last.md"))
+
+    assert result.spool_write_failed is True
+    assert len(result.spooled) == 150
+    [record] = [r for r in caplog.records if getattr(r, "event", None) == "cycle_tag_not_advanced"]
+    assert getattr(record, "spooled_count", None) == 150
+    assert len(getattr(record, "spooled", [])) == LOG_PATH_SAMPLE_LIMIT
+    assert _oversized_path_lists(caplog.records) == []
+
+
+def test_an_oversized_spooled_set_is_sampled_on_the_uncaptured_gate_line_too(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The same field on the *other* of the two gate lines, and the one the generic sweep above
+    cannot reach by construction: its scenario drops a folder of images, so every path is
+    uncaptured and `spooled` is empty. Reaching this one needs a bulk edit and a pasted image in
+    the same cycle -- one ordinary day, not a contrived state -- and the whole point of the line is
+    that it is the only place the paths this cycle did manage to spool are named."""
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+
+    (icloud_dir / "10-areas").mkdir()
+    for index in range(150):
+        (icloud_dir / "10-areas" / f"note-{index:03d}.md").write_text(f"a device edit {index}\n")
+    (icloud_dir / "pasted.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x01\x02\x03")
+
+    with caplog.at_level(logging.INFO):
+        result = run_cycle(config)
+
+    assert len(result.spooled) == 150
+    assert result.uncaptured == ("pasted.png",)
+    [record] = [r for r in caplog.records if getattr(r, "event", None) == "cycle_tag_not_advanced"]
+    assert getattr(record, "reason", None) == "uncaptured"
+    assert getattr(record, "spooled_count", None) == 150
+    assert len(getattr(record, "spooled", [])) == LOG_PATH_SAMPLE_LIMIT
+    assert _oversized_path_lists(caplog.records) == []
+
+
+def test_an_oversized_prune_failure_is_sampled_with_its_full_line_count_beside_it(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The list on this line is git's own output rather than a set of paths this cycle built, and
+    git emits one warning per entry it could not deal with -- so its length is set by how much
+    residue sits under a directory the prune cannot write to, and a plugin directory is exactly the
+    shape that holds hundreds of files. The generic sweep does not reach this emitter either: a
+    prune failure is not part of any scenario that produces a long list elsewhere."""
+    seed_obsidian_baseline_in_history(seeded_origin, tmp_path)
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    run_cycle(config)
+
+    residue_dir = tmp_path / "cache-clone" / ".obsidian" / "plugins" / "unremovable-plugin"
+    residue_dir.mkdir(parents=True)
+    for index in range(150):
+        (residue_dir / f"chunk-{index:03d}.js").write_text(f"residue the clean cannot reach {index}\n")
+    residue_dir.chmod(stat.S_IRUSR | stat.S_IXUSR)  # readable and traversable, not writable
+
+    try:
+        with caplog.at_level(logging.INFO):
+            run_cycle(config)
+    finally:
+        residue_dir.chmod(stat.S_IRWXU)  # tmp_path cleanup
+
+    [record] = [r for r in caplog.records if getattr(r, "event", None) == "obsidian_residue_prune_incomplete"]
+    assert getattr(record, "detail_line_count", None) == 150
+    assert len(getattr(record, "detail", [])) == LOG_PATH_SAMPLE_LIMIT
+    assert _oversized_path_lists(caplog.records) == []
 
 
 # --- shared exclude list, end to end --------------------------------------------------------------

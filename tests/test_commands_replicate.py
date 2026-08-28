@@ -27,7 +27,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from conftest import push_commit, replicate_config
+from conftest import push_commit, replicate_config, seed_obsidian_baseline_in_history
 
 from obsidian_tools.commands import replicate as replicate_command
 from obsidian_tools.config import ReplicateConfig
@@ -170,6 +170,31 @@ def test_uncaptured_binary_gates_the_cycle_but_the_run_still_exits_zero(
     assert record.uncaptured == 1  # type: ignore[attr-defined]
     assert record.tag_advanced is False  # type: ignore[attr-defined]
     assert (icloud_dir / "_attachments" / "screenshot.png").exists()  # never destroyed by --delete
+
+
+def test_a_diverged_device_baseline_is_counted_on_the_summary_line(
+    tmp_path: Path, seeded_origin: Path, icloud_dir: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """`.obsidian/` is excluded from both rsyncs, so a diverged device produces no drift, no spool
+    entry and no gated cycle -- every other field on this line reads exactly as it does on a healthy
+    one. This count is the only thing on the summary line that differs, and this process is watched
+    by nothing else, so an omission here is not a field an operator has to go looking for: it is a
+    condition with no way to be seen at all. A real count, not presence -- the sibling assertions
+    above read 0 on a healthy cycle."""
+    seed_obsidian_baseline_in_history(seeded_origin, tmp_path)
+    config = replicate_config(tmp_path, seeded_origin, icloud_dir)
+    assert replicate_command.run(config) == 0  # bootstrap: seeds the device baseline
+    (icloud_dir / ".obsidian" / "app.json").write_text('{"legacyEditor": true}\n')
+    caplog.clear()  # drop the bootstrap cycle's own "cycle_complete" record above
+
+    with caplog.at_level(logging.INFO):
+        exit_code = replicate_command.run(config)
+
+    assert exit_code == 0  # divergence is reported, never gated on -- nothing here can resolve it
+    [record] = [r for r in caplog.records if getattr(r, "event", None) == "cycle_complete"]
+    assert record.obsidian_baseline_diverged == 1  # type: ignore[attr-defined]
+    assert record.drifted == 0  # type: ignore[attr-defined]
+    assert record.tag_advanced is True  # type: ignore[attr-defined]
 
 
 # --- cycles that could not complete at all -- these are run failures -------------------------------

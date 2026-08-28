@@ -160,9 +160,10 @@ class SpoolEntry:
     `upstream_sha` is also a drifted path, whereas after a *withheld* publish the paths upstream
     changed are still sitting at the baseline's version in iCloud and so differ without drifting.
     It is a strong hint, not a decision procedure -- it collapses when the human happened to touch
-    every path upstream changed, and it is contaminated by `.obsidian/` being excluded from publish
-    but not from the overlay -- so it belongs with the Phase 5 consumer that can validate it, not
-    guessed at here ahead of one. The argument is recorded in ppat/obsidian-tools#42.
+    every path upstream changed -- so it belongs with the Phase 5 consumer that can validate it, not
+    guessed at here ahead of one. It is at least uncontaminated: `.obsidian/` is excluded from the
+    overlay as well as from the publish (`exclude.py`), so no path this heuristic sees is one the
+    publish was structurally unable to place. The argument is recorded in ppat/obsidian-tools#42.
 
     Deliberately not recorded, likewise: a `previous_cycle_incomplete` field. `baseline_sha !=
     upstream_sha` already says that much, and saying it again one interpretation further along

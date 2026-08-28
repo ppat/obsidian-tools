@@ -19,6 +19,16 @@ the Mac — because presence is a fact about the shared iCloud vault, not about 
 own memory: Mac and iPhone open the *same* iCloud-synced `.obsidian/`, and local-replicator's own
 state could be lost and rebuilt independently of whether the device copy was ever actually seeded.
 
+**Divergence is reported, never reconciled, and the two halves share one set on purpose.** Nothing
+publishes `.obsidian/` after the seed, and nothing here writes over a device's settings to bring
+them back — that would need a third `.obsidian/` write path and would silently revert a device's own
+theme choice, which is the seed-once rule reversed rather than repaired. What
+`diverged_baseline_paths` adds is the observation the rsync exclusion would otherwise cost
+(ppat/obsidian-tools#46): it enumerates through the *same* `select_baseline_paths` call `seed_baseline`
+copies through, so it can never name a path no seed would place. Reporting a divergence the system
+has no mechanism to act on is the failure this pairing exists to avoid, one level up from the
+overlay/publish asymmetry that motivated it.
+
 **What gets copied is decided by `vault_git/baseline_selector.py`, not by a rule re-derived here.**
 That module is the one place every `.obsidian/` safety rule applies — an allowlist, not a denylist
 — after three prior ad hoc rules in this repository each fixed one hole and left another (a plugin's
@@ -34,12 +44,14 @@ uses for the committer-side capture; deciding which paths are safe never happens
 
 from __future__ import annotations
 
+import filecmp
 import logging
 import os
 import shutil
 from pathlib import Path
 from stat import S_ISLNK, S_ISREG
 
+from obsidian_tools.logging_config import LOG_PATH_SAMPLE_LIMIT
 from obsidian_tools.vault_git.baseline_selector import PathInfo, select_baseline_paths
 
 logger = logging.getLogger(__name__)
@@ -50,6 +62,15 @@ BASELINE_MARKER = ".local-replicator-baseline-complete"
 
 def is_baselined(icloud_vault_dir: Path) -> bool:
     return (icloud_vault_dir / OBSIDIAN_DIR / BASELINE_MARKER).exists()
+
+
+def baseline_source_present(cache_clone_dir: Path) -> bool:
+    """Whether the parked clone holds anything at `.obsidian` to seed a device from — `seed_baseline`'s
+    own "nothing to seed from" test, exposed so a caller can tell a seed that was *withheld* from one
+    there was never anything to perform. The committer not having taken its `.obsidian/` baseline
+    commit yet is a routine state (docs/DESIGN.md §8a D3), and reporting an unconfigured device
+    against it would name a cause no operator can act on."""
+    return (cache_clone_dir / OBSIDIAN_DIR).is_dir()
 
 
 def _iter_obsidian_candidates(source: Path) -> tuple[list[PathInfo], list[str]]:
@@ -182,10 +203,112 @@ def seed_baseline(cache_clone_dir: Path, icloud_vault_dir: Path) -> None:
             extra={
                 "event": "device_baseline_seed_incomplete",
                 "file_count": copied,
-                "unreadable_paths": unreadable,
+                "unreadable_count": len(unreadable),
+                "unreadable_paths": unreadable[:LOG_PATH_SAMPLE_LIMIT],
             },
         )
         return
 
     (destination / BASELINE_MARKER).write_text("seeded by obsidian-tools local-replicator\n")
     logger.info("seeded device .obsidian/ baseline", extra={"event": "device_baseline_seeded", "file_count": copied})
+
+
+def diverged_baseline_paths(cache_clone_dir: Path, icloud_vault_dir: Path) -> list[str]:
+    """Every allowlisted `.obsidian/` path whose device copy differs from the parked clone's, as
+    vault-relative paths (`.obsidian/app.json`, not `app.json`) so a log line reads the same way
+    `CycleResult.drifted` does. Sorted, and empty when the clone holds no baseline to compare
+    against — the same "nothing to seed from" state `seed_baseline` treats as routine.
+
+    **The comparison source is `seed_baseline`'s own source, and the set is `seed_baseline`'s own
+    set.** That is the property worth preserving over any refinement: this reports a divergence
+    exactly when a re-seed of that device would place different bytes than it currently holds, so
+    every path it names is one a documented recovery can actually resolve.
+
+    **It does not distinguish a device edit from a baseline the cluster changed after the device
+    was seeded.** Both are genuine divergence from the committed baseline and neither is reconciled
+    by any publish, but only the first is a settings-lock violation. The device cannot tell them
+    apart: nothing records which revision a device was seeded from, and the completion marker is a
+    presence flag, not a provenance one. Deliberately not solved by making the marker carry a SHA —
+    that would make a device's seed provenance state this component has to keep true across a
+    partial copy, a hand-edit and a manual reset, to sharpen a log line that already points at the
+    right file.
+
+    A device copy that cannot be read at all counts as diverged, since what it holds is exactly what
+    could not be established. Two conditions take the opposite answer and are reported on their own
+    event rather than named here, because in both of them nothing about the device was established
+    and a zero would be indistinguishable from a healthy one: a clone subdirectory that fails to
+    enumerate (it produces no candidates at all, so there is no path to name), and a device copy
+    iCloud has evicted to a dataless placeholder. `filecmp.cmp(shallow=False)` compares sizes before
+    contents, so the multi-megabyte minified plugin `main.js` files this allowlist admits are only
+    read in full when they are already known to be the same length.
+    """
+    source = cache_clone_dir / OBSIDIAN_DIR
+    if source.is_symlink() or not source.is_dir():
+        return []
+
+    destination = icloud_vault_dir / OBSIDIAN_DIR
+    if destination.is_symlink():
+        # The read-side twin of `seed_baseline`'s source guard, and reachable for the reason
+        # `is_baselined` is not itself a guard: that check follows the link, so a device whose
+        # `.obsidian` points elsewhere answers "seeded" and arrives here. `is_file()` and
+        # `filecmp.cmp` follow it too, so every allowlisted path would be read from outside the
+        # vault and reported under an `.obsidian/`-relative name — a comparison against a tree this
+        # component does not control, presented as a fact about the device. Returning silently would
+        # be this module's own named worst case (a zero that is a fact about the read rather than
+        # about the device), so the condition is reported. The write-side half of this gap — the
+        # seed following the same symlink — is ppat/obsidian-tools#72.
+        #
+        # This guard is the directory's, and only the directory's. A symlink at an individual
+        # allowlisted path inside a real `.obsidian/` is still followed by both sides: `is_file()`
+        # and `filecmp.cmp` below resolve it, so a target outside the vault whose content happens to
+        # match reads as "not diverged", and `seed_baseline`'s `copy2` writes through it. Measured,
+        # not inferred, and folded into #72 — a per-path shape needs a per-path guard, which is not
+        # something a check on `destination` can be widened into.
+        logger.warning(
+            "refusing to compare the device .obsidian/ baseline: .obsidian in the device's iCloud "
+            "vault is a symlink, not a real directory, so every allowlisted path would be read from "
+            "outside the vault",
+            extra={"event": "obsidian_baseline_skip_symlinked_device"},
+        )
+        return []
+
+    candidates, unreadable = _iter_obsidian_candidates(source)
+    diverged: list[str] = []
+    dataless: list[str] = []
+    for relative_path in select_baseline_paths(candidates):
+        device_copy = destination / relative_path
+        if not device_copy.exists() and (device_copy.parent / f".{device_copy.name}.icloud").exists():
+            # iCloud evicts a file's content by leaving a `.<name>.icloud` placeholder in its place
+            # — the same shape `exclude.py`'s `SHARED_EXCLUDE_LIST` carries defensively, and the
+            # largest allowlisted files (a minified plugin `main.js`) are the first candidates for
+            # it. The real path is then simply absent, which is byte-for-byte what a setting deleted
+            # on the device looks like, while the diagnosis this comparison's own event hands an
+            # operator names neither cause.
+            dataless.append(f"{OBSIDIAN_DIR}/{relative_path}")
+            continue
+        try:
+            same = device_copy.is_file() and filecmp.cmp(source / relative_path, device_copy, shallow=False)
+        except OSError:
+            same = False
+        if not same:
+            diverged.append(f"{OBSIDIAN_DIR}/{relative_path}")
+
+    if unreadable or dataless:
+        # Two lists of paths the comparison could not reach, from opposite sides of it. Unlike
+        # `seed_baseline` there is no marker to withhold here, and refusing outright would suppress
+        # the divergence that *was* established, so saying so is the whole of what this caller can
+        # do about it — and it has to be said even when `diverged` is empty, since that is precisely
+        # the case in which an unreachable path and a healthy device are otherwise the same zero.
+        logger.warning(
+            "part of this cycle's .obsidian/ baseline comparison could not be made: paths under a "
+            "clone directory that could not be read, and paths whose device copy iCloud has evicted "
+            "to a dataless placeholder, are absent from the result rather than known to match",
+            extra={
+                "event": "obsidian_baseline_comparison_incomplete",
+                "unreadable_count": len(unreadable),
+                "unreadable_paths": unreadable[:LOG_PATH_SAMPLE_LIMIT],
+                "dataless_count": len(dataless),
+                "dataless_paths": dataless[:LOG_PATH_SAMPLE_LIMIT],
+            },
+        )
+    return diverged

@@ -34,10 +34,8 @@ from pathlib import Path
 import pytest
 from conftest import make_runner, run_git
 
-from obsidian_tools.vault_git.baseline import (
-    _LOG_PATH_SAMPLE_LIMIT,  # pyright: ignore[reportPrivateUsage]
-    ensure_obsidian_baseline,
-)
+from obsidian_tools.logging_config import LOG_PATH_SAMPLE_LIMIT
+from obsidian_tools.vault_git.baseline import ensure_obsidian_baseline
 from obsidian_tools.vault_git.commit import create_commit, has_staged_changes, push_all, stage_all
 from obsidian_tools.vault_git.provisioning import provision_repository
 from obsidian_tools.vault_git.runner import GitRunner
@@ -960,7 +958,7 @@ def test_the_logged_path_lists_are_capped(
     nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     _write_obsidian_dir(vault_dir)  # workspace.json + workspaces.json are unselected too
-    extra = _LOG_PATH_SAMPLE_LIMIT + 20
+    extra = LOG_PATH_SAMPLE_LIMIT + 20
     for index in range(extra):
         (vault_dir / ".obsidian" / f"unknown-{index:04d}.json").write_text("{}\n")
 
@@ -970,7 +968,7 @@ def test_the_logged_path_lists_are_capped(
 
     record = _one_record_with_event(caplog, "baseline_unselected_paths")
     assert getattr(record, "unselected_count") == extra + 2  # noqa: B009 -- LogRecord attr
-    assert len(getattr(record, "unselected_paths")) == _LOG_PATH_SAMPLE_LIMIT  # noqa: B009
+    assert len(getattr(record, "unselected_paths")) == LOG_PATH_SAMPLE_LIMIT  # noqa: B009
 
 
 def test_an_unreadable_walk_is_reported_as_such_even_when_nothing_allowlisted_was_found(
@@ -1022,7 +1020,7 @@ def test_the_unreadable_path_list_is_capped_too(
     _write_obsidian_dir(vault_dir)
     denied = vault_dir / ".obsidian" / "plugins" / "plugin-b"
     denied.mkdir(parents=True)
-    entries = _LOG_PATH_SAMPLE_LIMIT + 20
+    entries = LOG_PATH_SAMPLE_LIMIT + 20
     for index in range(entries):
         (denied / f"chunk-{index:04d}.js").write_text("// plugin code\n")
     denied.chmod(stat.S_IRUSR | stat.S_IWUSR)  # listable, but its entries cannot be stat'ed
@@ -1034,7 +1032,7 @@ def test_the_unreadable_path_list_is_capped_too(
 
         refusal = _one_record_with_event(caplog, "baseline_refused_incomplete_walk")
         assert getattr(refusal, "unreadable_count") == entries  # noqa: B009 -- LogRecord attr
-        assert len(getattr(refusal, "unreadable_paths")) == _LOG_PATH_SAMPLE_LIMIT  # noqa: B009
+        assert len(getattr(refusal, "unreadable_paths")) == LOG_PATH_SAMPLE_LIMIT  # noqa: B009
     finally:
         denied.chmod(stat.S_IRWXU)  # tmp_path cleanup
 
