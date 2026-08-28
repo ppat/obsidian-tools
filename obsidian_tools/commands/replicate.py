@@ -41,6 +41,7 @@ def run(config: ReplicateConfig) -> int:
             # (docs/DESIGN.md §2 item 10), so a field missing from this line is a field with no way
             # to be seen at all -- not merely one an operator has to go looking for.
             "uncaptured": len(result.uncaptured),
+            "obsidian_baseline_diverged": len(result.obsidian_baseline_diverged),
             "obsidian_seed_attempted": result.obsidian_seed_attempted,
             "tag_advanced": result.tag_advanced,
             "checkout": result.checkout,

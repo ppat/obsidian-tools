@@ -10,6 +10,9 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import pytest
+
+from obsidian_tools.local_replicator.exclude import OBSIDIAN_BASELINE_EXCLUDE
 from obsidian_tools.local_replicator.rsync_ops import overlay, publish
 
 
@@ -92,20 +95,141 @@ def test_overlay_applies_a_same_size_same_mtime_edit(tmp_path: Path) -> None:
 
 
 def test_overlay_suppresses_the_shared_exclude_list(tmp_path: Path) -> None:
+    """Deliberately no `.obsidian/`-relative path here. Both rsync calls exclude that directory
+    wholesale, so an assertion naming one would pass whatever `SHARED_EXCLUDE_LIST` contained --
+    the shared list's two workspace entries are pinned separately, below, in the one configuration
+    that can still discriminate them."""
     baseline = tmp_path / "baseline"
     icloud = tmp_path / "icloud"
     baseline.mkdir()
     _write(icloud / ".DS_Store", "finder metadata\n")
-    _write(icloud / ".obsidian" / "workspace.json", '{"instance": "device"}\n')
-    _write(icloud / ".obsidian" / "workspaces.json", '{"instance": "device"}\n')
     _write(icloud / "note.md.icloud", "dataless placeholder stub\n")
 
     overlay(icloud, baseline)
 
     assert not (baseline / ".DS_Store").exists()
-    assert not (baseline / ".obsidian" / "workspace.json").exists()
-    assert not (baseline / ".obsidian" / "workspaces.json").exists()
     assert not (baseline / "note.md.icloud").exists()
+
+
+def test_the_shared_lists_workspace_entries_suppress_them_without_the_wholesale_exclusion(
+    tmp_path: Path,
+) -> None:
+    """The two `.obsidian/workspace*.json` entries in `SHARED_EXCLUDE_LIST` are unreachable at both
+    of this module's call sites, which pass `OBSIDIAN_BASELINE_EXCLUDE` and so cover them by a wider
+    rule. They are kept as the narrow rule that would still be right if the wholesale exclusion ever
+    came off (`exclude.py`), and this is the configuration in which that claim is testable at all:
+    without it nothing in the suite distinguishes the entries being present from their being deleted
+    as dead, and the reversal they exist to protect would be quietly incomplete."""
+    baseline = tmp_path / "baseline"
+    icloud = tmp_path / "icloud"
+    _write(baseline / ".obsidian" / "app.json", "a settings file the baseline does place\n")
+    _write(baseline / ".obsidian" / "workspace.json", '{"instance": "cluster"}\n')
+    _write(baseline / ".obsidian" / "workspaces.json", '{"instance": "cluster"}\n')
+    icloud.mkdir()
+
+    publish(baseline, icloud, extra_excludes=[])
+
+    assert (icloud / ".obsidian" / "app.json").exists()
+    assert not (icloud / ".obsidian" / "workspace.json").exists()
+    assert not (icloud / ".obsidian" / "workspaces.json").exists()
+
+
+def test_overlay_leaves_the_baselines_obsidian_directory_untouched(tmp_path: Path) -> None:
+    """`.obsidian/` is a one-time seed, not synced content, so `publish` never writes it back to the
+    device. An overlay that copied the device's copy in would therefore report drift this cycle has
+    structurally decided never to resolve -- the same unchanged bytes read as fresh drift on every
+    subsequent cycle, forever (ppat/obsidian-tools#46). Observation covers exactly what publication
+    can act on, which means both directions exclude it."""
+    baseline = tmp_path / "baseline"
+    icloud = tmp_path / "icloud"
+    _write(baseline / ".obsidian" / "app.json", "frozen baseline content\n")
+    _write(icloud / ".obsidian" / "app.json", "device has since reconfigured this\n")
+    _write(icloud / ".obsidian" / "plugins" / "dataview" / "data.json", "device-only plugin state\n")
+
+    overlay(icloud, baseline)
+
+    assert (baseline / ".obsidian" / "app.json").read_text() == "frozen baseline content\n"
+    assert not (baseline / ".obsidian" / "plugins").exists()
+
+
+def test_overlay_never_deletes_the_baselines_obsidian_when_the_device_has_none(tmp_path: Path) -> None:
+    """The `--delete` half of the same exclude, and the state the operator reaches on purpose: the
+    documented device reset deletes `.obsidian/` from the iCloud vault by hand. An unexcluded
+    `--delete` strips the parked checkout's own baseline in response, staging the entire frozen
+    `.obsidian/` set as device-side deletions on the very cycle that is about to re-seed it."""
+    baseline = tmp_path / "baseline"
+    icloud = tmp_path / "icloud"
+    _write(baseline / ".obsidian" / "app.json", "frozen baseline content\n")
+    _write(icloud / "note.md", "the vault the device still has\n")
+
+    overlay(icloud, baseline)
+
+    assert (baseline / ".obsidian" / "app.json").read_text() == "frozen baseline content\n"
+
+
+@pytest.mark.parametrize("device_entry", ["symlink", "file"])
+def test_overlay_holds_the_obsidian_exclusion_against_non_directory_entries(tmp_path: Path, device_entry: str) -> None:
+    """The exclude pattern must match `.obsidian` whatever kind of entry it currently is. A
+    trailing slash restricts an rsync filter rule to directories, so the two shapes that are not
+    one are not covered by it at all: a symlink, and a plain *file* of that name. `--delete` then
+    removes the parked baseline's real directory and puts the entry in its place, destroying the
+    clone's settings baseline; in the symlink case `git add -A` additionally stages a mode-120000
+    blob naming the target path (ppat/obsidian-tools#22, and `vault_git/baseline.py`'s ignore rule,
+    which drops its own trailing slash for this reason). Both shapes, because `.git` one constant
+    over meets the same trap and is parametrized over both -- a claim of "whatever kind of entry it
+    is" that only ever ran the symlink is a claim wider than its evidence. Exercised through
+    `overlay` rather than against the pattern string, because it is rsync's filter semantics that
+    decide it."""
+    baseline = tmp_path / "baseline"
+    icloud = tmp_path / "icloud"
+    outside_the_vault = tmp_path / "outside-the-vault"
+    _write(baseline / ".obsidian" / "app.json", "frozen baseline content\n")
+    _write(outside_the_vault / "app.json", "content of a directory the vault does not own\n")
+    _write(icloud / "note.md", "the vault the device still has\n")
+    if device_entry == "symlink":
+        (icloud / ".obsidian").symlink_to(outside_the_vault)
+    else:
+        (icloud / ".obsidian").write_text("a plain file where the device's settings should be\n")
+
+    overlay(icloud, baseline)
+
+    assert not (baseline / ".obsidian").is_symlink()
+    assert (baseline / ".obsidian").is_dir()
+    assert (baseline / ".obsidian" / "app.json").read_text() == "frozen baseline content\n"
+
+
+@pytest.mark.parametrize("device_entry", ["symlink", "file"])
+def test_overlay_holds_the_git_metadata_exclusion_against_non_directory_entries(
+    tmp_path: Path, device_entry: str
+) -> None:
+    """`.git` meets the same trap as `.obsidian`, one constant over, and the consequence is heavier:
+    `--delete` replaces the parked clone's own repository with whatever the device holds -- silently,
+    at exit 0 -- after which every `GitRunner` invocation of the next cycle addresses something else,
+    or nothing. Two entry shapes defeat a directory-shaped rule, not one: a symlink, and a plain
+    *file* named `.git`, which is exactly what `git worktree add` and a submodule produce.
+
+    Nothing in this system puts either shape in the vault -- `vault_git/runner.py` is built on there
+    never being a `.git` inside the vault directory at all -- so what the bare name buys is that the
+    clone survives one arriving from outside it (ppat/obsidian-tools#73). The recovery is what makes
+    that worth buying: clearing the clone is the documented remedy, and it leaves the next cycle with
+    no `LAST_CHECKOUT`, which skips the drift capture entirely and then publishes with `--delete`."""
+    baseline = tmp_path / "baseline"
+    icloud = tmp_path / "icloud"
+    outside_the_vault = tmp_path / "outside-the-vault"
+    _write(baseline / ".git" / "HEAD", "ref: refs/heads/main\n")
+    _write(baseline / "note.md", "the vault the device still has\n")
+    _write(outside_the_vault / "HEAD", "ref: refs/heads/an-unrelated-repository\n")
+    _write(icloud / "note.md", "the vault the device still has\n")
+    if device_entry == "symlink":
+        (icloud / ".git").symlink_to(outside_the_vault)
+    else:
+        (icloud / ".git").write_text("gitdir: /some/other/repository/.git\n")
+
+    overlay(icloud, baseline)
+
+    assert not (baseline / ".git").is_symlink()
+    assert (baseline / ".git").is_dir()
+    assert (baseline / ".git" / "HEAD").read_text() == "ref: refs/heads/main\n"
 
 
 # --- publish (step 6: baseline back out to iCloud) ----------------------------------------------
@@ -173,15 +297,15 @@ def test_publish_overwrites_a_same_size_same_mtime_file_with_different_content(t
 
 
 def test_publish_leaves_an_excluded_directory_untouched(tmp_path: Path) -> None:
-    """`.obsidian/`, once already seeded, is excluded wholesale -- proves a directory-shaped
-    exclude protects everything beneath it, not just a bare filename."""
+    """`.obsidian/`, once already seeded, is excluded wholesale -- the exclusion covers everything
+    beneath the directory, not just an entry of that name."""
     baseline = tmp_path / "baseline"
     icloud = tmp_path / "icloud"
     _write(baseline / ".obsidian" / "app.json", "frozen baseline content\n")
     _write(icloud / ".obsidian" / "app.json", "device has since reconfigured this\n")
     _write(icloud / ".obsidian" / "community-plugins.json", "a plugin only the device knows about\n")
 
-    publish(baseline, icloud, extra_excludes=[".obsidian/"])
+    publish(baseline, icloud, extra_excludes=[OBSIDIAN_BASELINE_EXCLUDE])
 
     assert (icloud / ".obsidian" / "app.json").read_text() == "device has since reconfigured this\n"
     assert (icloud / ".obsidian" / "community-plugins.json").exists()

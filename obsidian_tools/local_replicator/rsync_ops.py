@@ -15,7 +15,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from obsidian_tools.local_replicator.exclude import rsync_exclude_args
+from obsidian_tools.local_replicator.exclude import OBSIDIAN_BASELINE_EXCLUDE, rsync_exclude_args
 
 
 class RsyncError(RuntimeError):
@@ -42,16 +42,35 @@ _CHECKSUM_FLAG = "--checksum"
 
 def overlay(icloud_vault_dir: Path, baseline_work_tree: Path) -> None:
     """Overlay `icloud_vault_dir` onto `baseline_work_tree` in place (step 2): rsync in, with
-    `--delete`, excluding `.git/` and the shared noise list.
+    `--delete`, excluding `.git`, `.obsidian` and the shared noise list -- bare names, and
+    `exclude.py` carries why that is not a spelling choice.
 
     `--delete` is what makes a phone-side deletion visible to the `git diff` that follows at all --
     without it, a note removed on the device leaves the checkout's copy in place, and the deletion
-    never registers as drift. Excluding `.git/` is what keeps that same `--delete` from deleting the
+    never registers as drift. Excluding `.git` is what keeps that same `--delete` from deleting the
     checkout's own repository, since the iCloud side never has one of its own to compare against
     and would otherwise look, to a plain `--delete`, like `.git/` had been removed on the device
     (docs/DESIGN.md §4 Plane B, "Constraints"; ppat/obsidian-tools#3, "Implementation traps").
+
+    **`.obsidian/` is excluded here for the same reason `publish` excludes it, and the two must not
+    disagree** (ppat/obsidian-tools#46). Observation covers exactly what publication can act on: an
+    overlay that brought device settings in would stage them as ordinary drift, and the publish
+    below cannot write them back, so the identical bytes are re-read as fresh drift on every
+    subsequent cycle for as long as the divergence lasts. `--delete` makes the reverse direction
+    worse still -- a device reset, which deletes `.obsidian/` from the iCloud vault by hand
+    (docs/local-replicator.md, "Resetting a device"), would otherwise strip the parked checkout's
+    own baseline and stage the entire frozen set as device-side deletions on the one cycle that
+    exists to re-seed it. Divergence is detected instead by
+    `device_baseline.diverged_baseline_paths`, against the same allowlist the seed places.
     """
-    args = ["-a", _CHECKSUM_FLAG, "--delete", *rsync_exclude_args(), f"{icloud_vault_dir}/", f"{baseline_work_tree}/"]
+    args = [
+        "-a",
+        _CHECKSUM_FLAG,
+        "--delete",
+        *rsync_exclude_args(OBSIDIAN_BASELINE_EXCLUDE),
+        f"{icloud_vault_dir}/",
+        f"{baseline_work_tree}/",
+    ]
     _run_rsync(args)
 
 
@@ -66,7 +85,9 @@ def publish(baseline_work_tree: Path, icloud_vault_dir: Path, *, extra_excludes:
     function deciding per path which parts of an otherwise-unconditional run to skip.
 
     `extra_excludes` is `.obsidian/`'s own publish rule (device_baseline.py): excluded from this
-    sync once already seeded on the device, so a device's own configuration is never overwritten.
+    sync so a device's own configuration is never overwritten, once the one-time seed has placed it.
+    `overlay` excludes the same directory, which is what keeps this exclusion from producing drift
+    nothing can resolve -- see that function.
     Plain `--delete` (never `--delete-excluded`) does not touch an excluded path -- verified
     directly against a real rsync invocation, not assumed from the man page's prose (see
     tests/test_local_replicator_rsync_ops.py).

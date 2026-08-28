@@ -16,6 +16,18 @@ import os
 import sys
 from datetime import UTC, datetime
 
+# How many paths any path-list log field in this codebase carries, with the full count logged
+# beside it. Every such list is built from whatever happens to be on a volume or a device, so no
+# length is the emitting code's to choose. A log pipeline's line-size limit rejects an oversized
+# line outright rather than truncating it (Loki's `max_line_size` does exactly this unless it is
+# explicitly configured to truncate), which would lose the *count* along with the sample at the
+# moment the list is most interesting. Lives here rather than beside any one emitter because the
+# emitters are in three modules and the pipeline limit they are sized against is one fact. Each
+# emitter pins the cap in its own test, and one cycle's whole record set is additionally swept
+# generically (`_oversized_path_lists`, tests/test_local_replicator_cycle.py), so an emitter added
+# to the cycle later inherits the invariant rather than having to remember it.
+LOG_PATH_SAMPLE_LIMIT = 100
+
 # What a bare `logging.LogRecord` already carries, plus the two attributes `Formatter.format`
 # synthesizes (`message`, and `asctime` if a date format is used) — anything else on a record came
 # from a caller's `extra=`, and that's what gets folded into the JSON payload below.

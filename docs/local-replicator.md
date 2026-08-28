@@ -197,13 +197,12 @@ changes); it is still real, running code, not something you can skip installing.
    steady-state cycles. For the drainer, look for `"event": "drain_complete"`; in steady state with no
    human edits, `"drained"` should be **zero or close to it**.
 
-   A persistently non-zero count *is* worth investigating rather than shrugging at. `.obsidian/`
-   churn — plugin caches, index state — does not reach the spool, despite the device-side detector
-   being deliberately unfiltered (`docs/DESIGN.md` §1.5 R2): the vault repository carries a tracked
-   `.gitignore` listing `.obsidian/`, and the cycle stages with `git add -A`, which consults ignore
-   rules for untracked paths. So only the handful of `.obsidian/` files the bootstrap commit
-   actually tracked can ever show as drift, and only when genuinely changed — which is exactly the
-   signal wanted, a human having altered a setting on a device.
+   A persistently non-zero count *is* worth investigating rather than shrugging at. No part of
+   `.obsidian/` reaches the spool: both rsync directions exclude it, so a device's settings are
+   never observed as drift at all — plugin caches and index state included. What replaces that
+   observation is a separate per-cycle report, `"event": "obsidian_baseline_diverged"`, described
+   under Troubleshooting below; the `"drifted"` count therefore carries vault content only, which
+   is what makes a non-zero one worth reading.
 
 ## Running a cycle by hand
 
@@ -241,6 +240,13 @@ write failure, not just the offending path (`docs/DESIGN.md` §4 Plane B, "Why t
 The `cycle_complete` line that follows names the count in `uncaptured`, and `"tag_advanced": false`
 confirms nothing was published that cycle; the `cycle_tag_not_advanced` line right before it names
 the cause in plain text, distinguishing this from an actual spool write failure.
+
+These two lines are the only place the paths *this gate withheld* are named — `cycle_complete`
+carries counts alone — so both sample: `"paths"`/`"uncaptured"`/`"spooled"` hold up to 100
+entries and the matching `"path_count"`/`"uncaptured_count"`/`"spooled_count"` carries the whole
+number. Dragging a folder of
+images into the vault is the ordinary way this list gets long, and an oversized line is dropped
+whole by a log pipeline rather than truncated, which would take the count with it.
 
 **Remedy:** delete the offending file from the device's iCloud vault directory (or move it out of
 the vault entirely) and let the next scheduled cycle run — there's nothing to fix in this codebase,
@@ -313,45 +319,121 @@ spool itself is deliberately not built here: there is no consumer of the spool u
 `drift-processor` on receipt — is a decision that belongs with that consumer, not guessed at ahead
 of it.
 
-### A device-edited `.obsidian/` file redrifts every cycle and never resolves on its own
+### A device's `.obsidian/` has diverged from the committed baseline
 
-"Install" step 5 above already rules out plugin-cache/index-state `.obsidian/` churn as a source of
-drift, because it's untracked and `.gitignore`d. A genuine edit to one of the handful of
-`.obsidian/` files the bootstrap commit *did* track (a locked setting — see the vault's own
-`CLAUDE.md` section 11, `docs/settings-lock.md`) is different, and not in the direction this
-component's other drift handling would suggest. `overlay` (`rsync_ops.py`) does not exclude
-`.obsidian/` from the device-side comparison — only `.git/` and the narrow
-`SHARED_EXCLUDE_LIST` (`exclude.py`) are excluded there — so the edit is picked up, diffed, and
-spooled like any other drift. But `publish` (the same module) *does* exclude `.obsidian/` from what
-it writes back to the device, once `device_baseline.py` considers the device baselined — that
-exclusion is what lets a device keep its own configuration indefinitely (Prerequisites, item 6, and
-"Resetting a device" → "The `.obsidian/` baseline only" below both depend on it). Publish therefore never
-reconciles the device's copy with the parked baseline, so the same unchanged content is read as
-fresh drift again on the very next cycle, and every cycle after that — at the default 900-second
-interval, roughly 96 identical spool entries a day, indefinitely, not just for one unlucky run.
+`.obsidian/` is seeded onto a device once and then left alone permanently (Prerequisites, item 6,
+and "Resetting a device" → "The `.obsidian/` baseline only" below both depend on that). Nothing
+publishes it again, so nothing returns a diverged device to the baseline: recovery is a manual copy,
+and no number of cycles will do it for you.
 
-Both halves are correct by design on their own terms — `overlay` staying unfiltered is the
-device-side detector's deliberate breadth (`docs/DESIGN.md` §1.5 R2), and `publish` excluding
-`.obsidian/` is what makes a device's settings sticky once seeded. The pair's asymmetry is tracked
-as [`ppat/obsidian-tools#46`](https://github.com/ppat/obsidian-tools/issues/46); it is not something
-to work around by hand-editing either function.
+Because publication cannot act on these paths, observation does not cover them either — both
+`overlay` and `publish` (`rsync_ops.py`) exclude `.obsidian/`, so a device settings change never
+enters the drift diff and never reaches the spool. Detection is not lost, it moves: each cycle
+compares the paths a seed would place — the allowlist in `vault_git/baseline_selector.py`, the same
+one `device_baseline.py` seeds through — against what the device actually holds, and reports the
+difference on its own log event rather than as drift.
 
-**Symptom:** `cycle_complete`'s `"drifted"` count stays non-zero across consecutive cycles for the
-same path(s) under `.obsidian/`, with neither `drift_uncaptured` nor `drift_matches_upstream`
-alongside it — check the `"drifted"` list itself, not just the count, since a real, changing vault
-note drifting on every cycle would look identical from the count alone.
+**Symptom:** a line with `"event": "obsidian_baseline_diverged"`, on every cycle for as long as
+the condition lasts. `"path_count"` is the whole set and `"paths"` a sample of up to 100 of them
+— a longer list would push the line past a log pipeline's size limit, which drops it entire
+rather than truncating it. `"baseline_sha"` names the commit the device was compared against, and
+the remedy below copies from exactly that revision.
 
-**Remedy:** this is a locked setting, not one the device owns — restore it from the parked
-baseline rather than accepting the device's edit. Quit Obsidian on the device first (same hazard as
-the `.obsidian/` reset below: Obsidian can write its in-memory state back over a file replaced out
-from under it), then copy the file back from `$OBSIDIAN_CACHE_CLONE_DIR`, which stays checked out
-at the baseline `publish` last used:
+**Four kinds of cycle run no comparison at all, and on each of them `cycle_complete` carries
+`"obsidian_baseline_diverged": 0` — a zero about the comparison, not about the device.** The first
+two are properties of the cycle; the last two are the comparison itself refusing to run:
+
+1. **No `LAST_CHECKOUT` to park at** — a first run, the one after a whole-vault reset, or a clone
+   that was lost or re-provisioned. The tag exists again from the next cycle on.
+2. **The device held no completed baseline when the comparison would have run.** Either the seed
+   later in that same cycle gave it one (`"event": "device_baseline_seeded"`), or the gate was shut
+   and `obsidian_baseline_unseeded` (below) says so — *unless* the parked clone holds no
+   `.obsidian/` to seed from either, which is silent on both counts deliberately: nothing about that
+   state can be fixed on the device, and `device_baseline_skip_no_source` names it on the next cycle
+   that publishes.
+3. **The parked clone's `.obsidian/` is absent or is a symlink**, so there is nothing to compare
+   *against*. This emits **no `.obsidian/` line at all**, and unlike the silent case in 2 it can
+   happen on a cycle that is otherwise completely healthy — a quiet cycle and a zero, with the
+   fault on the clone rather than the device.
+4. **The device's `.obsidian` is a symlink** — `obsidian_baseline_skip_symlinked_device`, below.
+
+On every other cycle that count carries the same total as the line above.
+
+**Three different lines, none of them this condition.** Each means the comparison could not be
+made, not that a device changed — a cycle can emit any of them while reporting no divergence at all:
+
+| Event | What it means | What to do |
+| --- | --- | --- |
+| `obsidian_baseline_comparison_incomplete` | `"unreadable_paths"`: part of `$OBSIDIAN_CACHE_CLONE_DIR/.obsidian/` could not be read, so the paths beneath it were left out. `"dataless_paths"`: the device's copy of an allowlisted path is an iCloud dataless placeholder, so its content is not on the device to compare — the largest baseline files (a plugin's `main.js`) are the first to be evicted | Fix the permissions on the named clone directories, or clear the clone ("Resetting a device" → "The whole vault"). For a dataless path, open the file on the device once to materialise it, and check "Optimize Mac Storage" is off (Prerequisites) |
+| `obsidian_baseline_unseeded` | The device holds no *completed* `.obsidian/` baseline — the seed's completion marker is absent — **and this cycle did not seed one**, because the seed runs only on a cycle that publishes. Whatever `.obsidian/` the device does have is its own: Obsidian writes one itself the first time it opens a vault, and none of the locked settings are in it. The baseline cannot be compared either | Clear whatever is gating the cycle — `drift_uncaptured` above, a spool write failure ("A paused cycle re-spools…" above), or `cycle_no_origin_history` below — then confirm `"event": "device_baseline_seeded"` on a following cycle. `"obsidian_seed_attempted": true` is **not** that confirmation: it records only that the cycle reached the seed and called it |
+| `obsidian_baseline_skip_symlinked_device` | `.obsidian` in the device's iCloud vault is a symlink rather than a directory, so every allowlisted path would be read from outside the vault. Nothing in this system creates that | Replace the symlink with a real directory, or delete it and let the next publishing cycle re-seed ("Resetting a device" → "The `.obsidian/` baseline only") |
+
+A fourth, `obsidian_residue_prune_incomplete`, is about the clone rather than the device: the prune
+that puts `$OBSIDIAN_CACHE_CLONE_DIR/.obsidian/` back to what the committed baseline holds could not
+finish. That prune runs on each cycle that reads the directory — the one that parks the clone at
+`LAST_CHECKOUT`, and the one that re-seeds a device — so a cycle that does neither does not prune.
+The cycle deliberately carries on rather than failing, so the cost is that a divergence reported by
+the same cycle may name a path the baseline never held. Fix the permissions the line names;
+`"detail"` carries git's own reasons, up to 100 of them, with `"detail_line_count"` beside it.
+
+**Two different causes produce it, and the event does not distinguish them** — nothing on the device
+records which revision it was seeded from, so this cannot be told apart locally:
+
+| Cause | What it means | What to do |
+| --- | --- | --- |
+| A setting was changed on the device | A locked setting (the vault's own `CLAUDE.md` section 11, `docs/settings-lock.md`) is no longer locked on that device | Restore it from the baseline — the device does not own this setting |
+| The baseline itself changed at the cluster | The device is behind a baseline it will never be sent, by design | Restore it from the baseline if the new setting is wanted on this device; otherwise leave it and expect the event to persist |
+
+**Remedy**, for either cause. Quit Obsidian on the device first — same hazard as the `.obsidian/`
+reset below, since Obsidian can write its in-memory state back over a file replaced out from under
+it — then take the file out of `$OBSIDIAN_CACHE_CLONE_DIR` **at the revision the event names**,
+rather than out of that clone's working tree. The two are not the same commit: the working tree is
+left wherever the cycle last fetched to, while the comparison runs against `LAST_CHECKOUT`, and a
+cycle that does not publish does not advance that tag. On such a cycle the working tree's copy is
+the *newer* cluster-side baseline, and putting it on the device leaves the event firing on the same
+path.
 
 ```sh
-cp "$OBSIDIAN_CACHE_CLONE_DIR/.obsidian/<path>" "$ICLOUD_VAULT_DIR/.obsidian/<path>"
+restored="$(mktemp "${TMPDIR:-/tmp}/obsidian-baseline.XXXXXX")"
+git -C "$OBSIDIAN_CACHE_CLONE_DIR" show "<baseline_sha>:<path>" > "$restored" \
+  && mv "$restored" "$ICLOUD_VAULT_DIR/<path>"
 ```
 
-The next cycle reports `drifted=0` for that path once the copy matches again.
+Both placeholders are fields of the `obsidian_baseline_diverged` line, pasted as printed:
+`<baseline_sha>`, and one whole entry out of `"paths"`, which already carries its `.obsidian/`
+prefix. **Write to a temporary file and move it into place; do not redirect `git show` straight
+onto the device's copy.** The shell truncates a redirect target *before* the command on its left
+runs, so a `<baseline_sha>` that is mistyped, truncated in a copy-paste, or names a commit this
+clone does not hold leaves the device's live settings file zero-length — the remedy destroying the
+file it exists to repair, on the one input an operator copies by hand. With the temporary file, a
+failed `git show` writes nothing into the vault and the `mv` never runs.
+
+**The prune that runs with each comparison deletes everything under that clone's `.obsidian/` that
+the committed baseline does not hold** — untracked and gitignored content alike, git checkouts of
+plugins included. Nothing you park under that directory by hand survives a cycle; put a backup
+somewhere else.
+
+The event stops once every named path matches the baseline the *next* cycle compares against.
+Resetting the whole directory (below) is the other route, and the right one when several paths are
+named at once, or when the cluster-side baseline is the half that moved.
+
+### `.obsidian/` on the write side: whether a device ever got a baseline
+
+The events above are all about the comparison. These are the seed itself, and the reset procedures
+below turn on them — in particular on the first, which is the only line in the system that means a
+device now holds the baseline:
+
+| Event | Level | What it means |
+| --- | --- | --- |
+| `device_baseline_seeded` | `info` | The baseline was copied and the completion marker written. **This, and only this, means the device now holds it** |
+| `device_baseline_skip_no_source` | `info` | The parked clone holds no `.obsidian/` to seed from, because the committer has not taken its baseline commit yet (`docs/DESIGN.md` §8a D3). A cluster-side state; nothing to do on the device |
+| `device_baseline_skip_symlinked_source` | `warning` | `.obsidian` in the parked clone is a symlink rather than a directory, so the seed refuses to copy an unknown target's contents into iCloud. Nothing in this system creates that; clear the clone ("Resetting a device" → "The whole vault") |
+| `device_baseline_seed_incomplete` | `warning` | Part of the clone's `.obsidian/` could not be read, so the marker was withheld deliberately and the next cycle retries and tops up what is missing. The write-side twin of `obsidian_baseline_comparison_incomplete` above — same cause, same fix |
+| `cycle_no_origin_history` | `info` | Not a seed event: the cycle could not resolve this branch at origin, so it published nothing and therefore seeded nothing. A third gating cause alongside `drift_uncaptured` and `spool_write_failed`, and the one neither of those names |
+
+The three exits in the middle of that table are why `"obsidian_seed_attempted": true` on
+`cycle_complete` confirms nothing on its own: the flag is set before the seed is called, so it reads
+`true` on every one of them.
 
 ## Uninstall
 
@@ -402,6 +484,16 @@ The next scheduled (or manually triggered, `obsidian-tools replicate`) cycle det
 completion marker and reseeds from whatever `.obsidian/` baseline the parked clone currently holds
 (`obsidian_tools/local_replicator/device_baseline.py`).
 
+**Clear any gating condition before deleting `.obsidian/`, not after.** The re-seed runs only on a
+cycle that publishes, so a live `drift_uncaptured` or `spool_write_failed` — a pasted image is
+enough, and can persist indefinitely — leaves the device with *no* `.obsidian/` at all until the
+gate clears: no locked settings, no plugins, Obsidian back at its own defaults. The cycle reports
+that state on every cycle it lasts (`"event": "obsidian_baseline_unseeded"`), and
+`"event": "device_baseline_seeded"` is what confirms the re-seed actually happened.
+`"obsidian_seed_attempted": true` on `cycle_complete` is not the same claim: it says the cycle
+reached the seed and called it, which it does equally on each of the three exits that leave the
+device unseeded (Troubleshooting, "`.obsidian/` on the write side").
+
 ### The whole vault
 
 Wiping `.obsidian/` only resets locked settings. Reprovisioning a device from scratch, or
@@ -409,19 +501,29 @@ discarding a device copy that's diverged too far to trust, means clearing the wh
 — and that needs one more step than the `.obsidian/`-only reset above, or the vault simply comes
 back exactly as it was.
 
-**Clearing `$ICLOUD_VAULT_DIR` alone does not reset anything — it looks like it worked, and then
-undoes itself on the next cycle.** `LAST_CHECKOUT` (the parked clone's own tag,
+**Clearing `$ICLOUD_VAULT_DIR` alone resets the opposite of what it looks like it resets.** The
+vault *content* comes straight back on the next cycle, so as a content reset it is a no-op that
+undoes itself; `.obsidian/`, the part both rsyncs never touch, is the part it really does reset.
+Content first. `LAST_CHECKOUT` (the parked clone's own tag,
 `obsidian_tools/local_replicator/tag.py`) survives independently of whatever's on disk in iCloud,
 and `run_cycle` (`obsidian_tools/local_replicator/cycle.py`) still finds it set on the next cycle:
 step 1 parks the clone back at that tag; step 2's `overlay` then rsyncs the now-empty
-`$ICLOUD_VAULT_DIR` onto it **with `--delete`**, so every file the baseline held reads as deleted;
-`git diff` captures that as ordinary, real drift — the whole vault, spooled as a device-side
-deletion — and step 5's `git reset --hard` immediately restores the working tree from git,
-unaffected by any of it. The very next `publish` rsyncs that intact tree straight back into the
-now-empty `$ICLOUD_VAULT_DIR`. The device gets its files back within one cycle, `.obsidian/`'s
-completion marker was never touched, and nothing was actually reset — harmless in Phase 2 only
-because the drainer discards what it read (`drainer.py`'s `discard_sink`) rather than acting on a
-vault's worth of deletion entries that were never really deletions.
+`$ICLOUD_VAULT_DIR` onto it **with `--delete`**, so every file the baseline held *except*
+`.obsidian/` — which both rsyncs exclude — reads as deleted; `git diff` captures that as
+ordinary, real drift (the vault's whole content, spooled as a device-side deletion), and step
+5's `git reset --hard` immediately restores the working tree from git, unaffected by any of
+it. The very next `publish` rsyncs that intact tree straight back into the
+now-empty `$ICLOUD_VAULT_DIR`. The vault's content is therefore back within one cycle and nothing
+about it was reset — harmless in Phase 2 only because the drainer discards what it read
+(`drainer.py`'s `discard_sink`) rather than acting on a vault's worth of deletion entries that were
+never really deletions.
+
+**`.obsidian/` is the one part this *does* reset, and the excludes are not what save it.** They
+keep both rsyncs off the directory, but `rm -rf "$ICLOUD_VAULT_DIR"` has already taken the
+completion marker along with everything else, so the next publishing cycle re-seeds the baseline
+exactly as the `.obsidian/`-only reset above does — behind the same gate, with the same
+`obsidian_baseline_unseeded` line while that gate is shut. So this operation resets the settings
+baseline and leaves vault content untouched, which is the opposite of what it looks like it does.
 
 **Quit Obsidian first** — same reason as the `.obsidian/`-only reset above.
 
