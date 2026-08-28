@@ -15,6 +15,10 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # renovate: datasource=github-releases depName=lycheeverse/lychee
+  LYCHEE_VERSION: "0.24.2"
+
 jobs:
   detect-changes:
     uses: ppat/github-workflows/.github/workflows/detect-changed-files.yaml@5a96ced8ceefd58062f6b91ee9d6f3a31cd06e1c # v6.0.0
@@ -68,6 +72,42 @@ jobs:
     with:
       git_ref: ${{ github.head_ref || github.ref }}
       files: ${{ github.event_name != 'pull_request' && 'ALL' || fromJSON(needs.detect-changes.outputs.results).actions_all_changed_files }}
+
+  links:
+    needs: [detect-changes]
+    if: ${{ github.event_name != 'pull_request' || fromJSON(needs.detect-changes.outputs.results).markdown_any_changed == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+    - name: Setup repository and tools
+      uses: ppat/homelab-ops-actions/actions/setup-repository-tools@9c16506c3c527478b6314c86ca961c0011d9f94a # v2.2.0
+      with:
+        current_git_ref: ${{ github.head_ref || github.ref }}
+        current_repository: ${{ github.repository }}
+        token: ${{ secrets.GITHUB_TOKEN }}
+        mise_toml: |
+          [tools]
+          lychee = "${{ env.LYCHEE_VERSION }}"
+
+    - name: Check links
+      shell: bash
+      working-directory: ./current
+      env:
+        # Only read on the full (online) run below -- resolves GitHub links via the API
+        # instead of tripping anonymous rate limits.
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        # Internal file and #anchor links are what the top-level docs restructure (and
+        # any future file rename) can silently break, and checking them needs no
+        # network, so every pull_request touching Markdown gets that check: fast,
+        # deterministic, and it never fails a PR for a reason unrelated to the diff.
+        # External links are useful but a failure there is about the target site, not
+        # this change; they're checked in full outside pull_request (schedule,
+        # workflow_dispatch) instead, on the same weekly cadence this workflow already
+        # runs everything else on -- link rot doesn't wait for a PR to notice it.
+        offline_flag=""
+        [ "${{ github.event_name }}" = "pull_request" ] && offline_flag="--offline"
+        mise exec -- lychee --config lychee.toml --no-progress $offline_flag './**/*.md'
 
   markdown:
     needs: [detect-changes]
