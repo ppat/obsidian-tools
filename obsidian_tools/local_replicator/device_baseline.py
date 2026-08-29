@@ -1,4 +1,4 @@
-"""`.obsidian/` on the device side: copy once, then hands off (docs/DESIGN.md §8a D3).
+"""`.obsidian/` on the device side: copy once, then hands off (ADR-0028).
 
 One rule covers bootstrap and steady state: if `.obsidian/` is absent at the destination, copy it;
 if present, exclude it from that cycle's publish rsync entirely (`cycle.py` does the excluding —
@@ -68,7 +68,7 @@ def baseline_source_present(cache_clone_dir: Path) -> bool:
     """Whether the parked clone holds anything at `.obsidian` to seed a device from — `seed_baseline`'s
     own "nothing to seed from" test, exposed so a caller can tell a seed that was *withheld* from one
     there was never anything to perform. The committer not having taken its `.obsidian/` baseline
-    commit yet is a routine state (docs/DESIGN.md §8a D3), and reporting an unconfigured device
+    commit yet is a routine state (ADR-0028), and reporting an unconfigured device
     against it would name a cause no operator can act on."""
     return (cache_clone_dir / OBSIDIAN_DIR).is_dir()
 
@@ -153,7 +153,7 @@ def seed_baseline(cache_clone_dir: Path, icloud_vault_dir: Path) -> None:
         # module from copying an unknown target's contents into iCloud, where they replicate to the
         # phone and to Apple's servers — a wider blast radius than a failed git command, which is
         # why this logs at `warning` rather than the `info` the routine "not written yet" skips
-        # below use. The committer's own invariants (`ensure_ignore_rule`, docs/DESIGN.md §7 Phase
+        # below use. The committer's own invariants (`ensure_ignore_rule`, ADR-0028
         # 2) mean `.obsidian` should never be anything but an ordinary directory in a clone pulled
         # from history it produced; seeing a symlink here means one of those invariants didn't hold,
         # which is worth a human noticing rather than a silent skip identical to bootstrap-not-done.
@@ -167,7 +167,7 @@ def seed_baseline(cache_clone_dir: Path, icloud_vault_dir: Path) -> None:
         return
 
     if not source.is_dir():
-        # The committer hasn't taken its own .obsidian baseline commit yet (docs/DESIGN.md §8a D3)
+        # The committer hasn't taken its own .obsidian baseline commit yet (ADR-0028)
         # — nothing to seed from. Not an error: the marker stays unwritten, and the next cycle
         # tries again once the clone has pulled a commit that includes it.
         logger.info(

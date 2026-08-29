@@ -1,4 +1,4 @@
-"""The `drain` subcommand: one run of the spool drainer (docs/DESIGN.md §2 item 10, §7 Phase 2).
+"""The `drain` subcommand: one run of the spool drainer (ADR-0024, ADR-0025).
 
 Decoupled from `replicate`'s own cycle, invoked on its own schedule — see
 `obsidian_tools.local_replicator.drainer`. Phase 2's sink discards everything it drains; Phase 5

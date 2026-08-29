@@ -147,7 +147,7 @@ def test_non_ascii_path_and_patch_round_trip_through_serialization(tmp_path: Pat
 
 
 def test_injected_write_failure_raises_spool_write_error_not_a_bare_oserror(tmp_path: Path) -> None:
-    """The seam the Phase 2 acceptance test injects a failure into (docs/DESIGN.md §7 Phase 2:
+    """The seam the acceptance test injects a failure into (docs/VERIFICATIONS.md §2:
     "Force the spool write to fail for a drift patch"). A real local disk write failure (full
     disk, permission error, anything `OSError`-shaped) must surface as `SpoolWriteError`, the type
     `cycle.py` catches to gate the cycle -- never an uncaught bare `OSError`."""

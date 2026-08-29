@@ -1,5 +1,5 @@
-"""Pure decisions for local-replicator's replication cycle (docs/DESIGN.md §2 item 10, §4 Plane
-B; ppat/obsidian-tools#3): what a staged git change becomes as a spool entry, and whether a
+"""Pure decisions for local-replicator's replication cycle (ADR-0025; ppat/obsidian-tools#3):
+what a staged git change becomes as a spool entry, and whether a
 cycle's publish and tag advance may proceed. No filesystem, no git, no rsync -- `cycle.py` gathers
 the state (git plumbing, rsync) and calls these; every safety rule lives here exactly once, the
 same split `vault_git/baseline_selector.py` uses over `baseline.py`, and for the same reason -- see
@@ -7,7 +7,7 @@ that module's docstring for what happens when a safety rule instead lives inline
 produces the data it judges.
 
 **Why this exists as its own module, not inlined in cycle.py.** The third reading of this cycle
-(docs/DESIGN.md §4 Plane B, "Why the gate moved, not disappeared") replaced two intertwined
+(ADR-0025) replaced two intertwined
 mechanisms -- a path enumeration and a separate per-path content read, gated per path -- with one:
 checking out the baseline and overlaying the device tree turns "which paths changed, and what do
 they now contain" into a single `git diff`. Once the comparison collapses to one mechanism, the
@@ -44,7 +44,7 @@ class StagedChange:
 
     `patch` is never empty for a real change: a deletion's patch removes every line, and a
     creation's patch -- only possible *because* the path was staged first, since an unstaged
-    `git diff` shows nothing at all for an untracked path (docs/DESIGN.md §4 Plane B,
+    `git diff` shows nothing at all for an untracked path (ADR-0025,
     "Constraints") -- adds every line, from `/dev/null`. That is what "the whole file, once
     staged" means in the design doc: one mechanism produces both a modification's diff and a
     creation's full content, so there is no separate content-read step for creations.
@@ -67,7 +67,7 @@ class UpstreamComparison:
 
     `sha` is `refs/remotes/origin/<branch>` as the parked clone held it **before this cycle's
     fetch**, and that is the load-bearing choice. The drift enumeration runs ahead of the pull
-    (docs/DESIGN.md §2 item 10, step 3 before step 5), so this is the only upstream revision
+    (ADR-0026), so this is the only upstream revision
     observable at that moment. Measuring against the revision this cycle is *about* to fetch would
     report a human's edit as upstream content whenever an agent happened to write the same text
     upstream in between, which loses an edit.
@@ -94,9 +94,9 @@ class UpstreamComparison:
 @dataclass(frozen=True, slots=True)
 class SpoolEntry:
     """One drift patch, ready to be written to the local spool (spool.py) -- the unit
-    docs/DESIGN.md §2 item 10 step 4 calls "each drift patch." `kind` restates `StagedChange`'s raw
+    ADR-0025 calls "each drift patch." `kind` restates `StagedChange`'s raw
     git status in a stable, small vocabulary a downstream consumer can classify on without knowing
-    git's status-letter conventions (docs/DESIGN.md §1.5 R2's *shape* heuristic -- an append reads
+    git's status-letter conventions (ADR-0008's *shape* heuristic -- an append reads
     differently from a rewrite -- needs exactly this plus the patch text itself, once a real
     consumer exists at Phase 5). It already distinguishes a path created on the device from one
     modified in place, so nothing else here needs to restate that.
@@ -105,7 +105,7 @@ class SpoolEntry:
     Steps 6 and 7 are two operations that cannot be made one, so a crash can always leave published
     upstream content in iCloud while `LAST_CHECKOUT` still names the pre-publish commit; the next
     cycle then reads that content as device-side drift. The device does not suppress it -- deciding
-    a drifted path is not a human's edit is a judgement, and docs/DESIGN.md §1.5 R2 reserves those
+    a drifted path is not a human's edit is a judgement, and ADR-0008 reserves those
     for the server ("it submits every path the comparison flags, and makes no judgement, so it can
     never silently drop a real edit"). It records instead what only it can see: the iCloud tree at
     the one moment before publish's `--delete` overwrites it, measured against the baseline the
@@ -238,7 +238,7 @@ def captures_content(change: StagedChange) -> bool:
 
     **This is not a new policy call.** The vault receives markdown only, images are deferred past
     the first pass, and `_attachments/` is a committed placeholder with nothing in it yet
-    (docs/DESIGN.md Sec 5, Sec 8b G5) -- so a binary here is out of contract. What to do about
+    (ADR-0014) -- so a binary here is out of contract. What to do about
     out-of-contract input is likewise already settled, by DESIGN.md's "Fail loud, destroy nothing":
     every component defaults to that posture when it meets something it cannot reconcile. Silently
     deleting the bytes is the one response that policy rules out.
@@ -256,7 +256,7 @@ class SpoolSelection:
     capture came back without content.
 
     Two lists rather than a filtered one, because dropping the second silently is exactly what
-    docs/DESIGN.md Sec 1.5 R2 forbids -- "it submits every drift patch... and makes no judgement, so
+    ADR-0008 forbids -- "it submits every drift patch... and makes no judgement, so
     it can never silently drop a real edit." `uncaptured` is not a judgement about whether the
     edit mattered; it is a statement that this component could not capture it, which the cycle
     then treats as a capture failure rather than as permission to proceed.
@@ -304,7 +304,7 @@ def select_spool_entries(
     """The one place a staged git change becomes a spool entry.
 
     One entry per input change -- nothing is merged, split, or dropped. That is what lets the
-    device-side detector stay "dumb" (docs/DESIGN.md §1.5 R2: "it submits every drift patch...
+    device-side detector stay "dumb" (ADR-0008: "it submits every drift patch...
     and makes no judgement, so it can never silently drop a real edit"): filtering anything out
     here -- `.obsidian/` drift included, and content this cycle observes to be identical to
     upstream most of all -- would be a device-side judgement call this design deliberately reserves
@@ -348,7 +348,7 @@ def _classify(status: str) -> SpoolEntryKind:
 
 @dataclass(frozen=True, slots=True)
 class CycleVerdict:
-    """Whether this cycle's publish (docs/DESIGN.md §2 item 10 step 6) and tag advance (step 7)
+    """Whether this cycle's publish (ADR-0025) and tag advance (step 7)
     may proceed.
 
     Two fields, not one, even though they currently always agree: the design doc states them as
@@ -364,7 +364,7 @@ class CycleVerdict:
 
 
 def decide_cycle_outcome(*, spool_write_failed: bool, uncaptured_paths: Sequence[str] = ()) -> CycleVerdict:
-    """The gate, as a value, not a side effect (docs/DESIGN.md §4 Plane B, "Why the gate moved,
+    """The gate, as a value, not a side effect (ADR-0025, "Why the gate moved,
     not disappeared").
 
     Not per-path. The second, superseded reading of this cycle gated publish per drifted path,

@@ -6,7 +6,7 @@ discovery. Never `chdir` into the work tree and rely on git to find a `.git` by 
 must never be one inside the vault directory at all: headless Obsidian watches every directory in
 the vault it's given, and the Mac-side replication script's rsync into iCloud has to exclude
 whatever git metadata exists, so keeping it structurally outside the vault removes both problems at
-once rather than working around them (see docs/DESIGN.md §1.3 P4 and ppat/obsidian-tools#3).
+once rather than working around them (see ADR-0001 and ppat/obsidian-tools#3).
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ _FALLBACK_CWD_PREFIX = "obsidian-tools-git-cwd-"
 # `git diff`'s output is not a fixed format: it is a *configurable* one, and a caller that makes a
 # decision from it is reading something the machine's owner can replace. local-replicator is the one
 # component of this system that runs outside the cluster, on the operator's own MacBook with a real
-# `~/.gitconfig` (docs/DESIGN.md §4 Plane B) — and a single `[diff] external = ...`, a line
+# `~/.gitconfig` (DESIGN.md Glossary, "local-replicator") — and a single `[diff] external = ...`, a line
 # difftastic's README instructs users to add, replaces every patch this codebase reads with a
 # summary line carrying none of the content the publish gate is there to protect
 # (ppat/obsidian-tools#3).

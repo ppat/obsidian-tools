@@ -309,7 +309,7 @@ def test_themes_and_snippets_are_constrained_to_css_and_theme_manifest(
     level down (ppat/obsidian-tools#3). Regression test for a probe that staged
     `.obsidian/themes/Minimal/data.json`, `.obsidian/themes/deep/nested/inner/data.json` and
     `.obsidian/snippets/sub/dir/creds.json` against the old bare-directory implementation. Themes
-    are third-party code installed through the ungated GUI path (docs/DESIGN.md Sec 1.3 P8), so
+    are third-party code installed through the ungated GUI path (ADR-0028), so
     "nothing secret would ever land there" is not a claim this baseline gets to make."""
     nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
@@ -686,7 +686,7 @@ def test_an_unreadable_directory_refuses_the_baseline_until_the_read_error_clear
     run took the reapply branch and never re-walked -- so the omission was permanent even after the
     read error cleared. `/vault/brain` is a soft-mounted (`softerr`) Longhorn NFS export whose
     documented normal failure mode is exactly this: I/O returns an error rather than hanging
-    (docs/DESIGN.md §8c V12).
+    (ADR-0033).
 
     `chmod 0` stands in for that transient read error, the same way
     `tests/test_local_replicator_device_baseline.py` reproduces the sibling module's version of this

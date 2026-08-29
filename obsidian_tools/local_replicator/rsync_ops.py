@@ -1,11 +1,11 @@
 """The two rsync invocations the replication cycle needs: overlay the device tree onto the parked
-baseline, and publish the baseline back out (docs/DESIGN.md §2 item 10 steps 2 and 6, §4 Plane B).
+baseline, and publish the baseline back out (ADR-0025).
 
 Git is the drift engine now (see `obsidian_tools.local_replicator.drift`) -- these two calls are
 pure tree mutation, no longer a comparison. This module used to also provide an `rsync -n -ai`
 dry-run enumeration; that mechanism is gone. The third reading of this cycle collapsed "which paths
 changed, and what do they now contain" into a single `git diff` over a checked-out baseline
-(docs/DESIGN.md §4 Plane B, "Why the gate moved, not disappeared"; "One mechanism instead of two")
+(ADR-0025)
 -- reintroducing an rsync-side enumeration here would resurrect exactly the two-mechanisms-for-one-job
 shape that reading replaced.
 """
@@ -35,7 +35,7 @@ def _run_rsync(args: list[str]) -> None:
 # coincidentally identical size is enough to trigger a false "unchanged, skip it" (found directly,
 # by a same-length device edit landing in the same second as a checkout, in this module's own test
 # suite -- not a theoretical risk). `--checksum` forces a real content comparison instead. The vault
-# is markdown-only and stays small by design (docs/DESIGN.md §4 Plane B, "Payload"), so the extra
+# is markdown-only and stays small by design (ADR-0027), so the extra
 # read-and-hash cost this adds is not a concern worth trading correctness against here.
 _CHECKSUM_FLAG = "--checksum"
 
@@ -50,7 +50,7 @@ def overlay(icloud_vault_dir: Path, baseline_work_tree: Path) -> None:
     never registers as drift. Excluding `.git` is what keeps that same `--delete` from deleting the
     checkout's own repository, since the iCloud side never has one of its own to compare against
     and would otherwise look, to a plain `--delete`, like `.git/` had been removed on the device
-    (docs/DESIGN.md §4 Plane B, "Constraints"; ppat/obsidian-tools#3, "Implementation traps").
+    (ADR-0025; ppat/obsidian-tools#3, "Implementation traps").
 
     **`.obsidian/` is excluded here for the same reason `publish` excludes it, and the two must not
     disagree** (ppat/obsidian-tools#46). Observation covers exactly what publication can act on: an
@@ -79,8 +79,8 @@ def publish(baseline_work_tree: Path, icloud_vault_dir: Path, *, extra_excludes:
     (step 6).
 
     Unconditional once called -- no longer gated per path the way an earlier reading of this cycle
-    ran it, excluding only the paths whose capture had failed that cycle (docs/DESIGN.md §4 Plane
-    B, "Why the gate moved, not disappeared"). `cycle.py` now decides whether to call this function
+    ran it, excluding only the paths whose capture had failed that cycle (ADR-0025). `cycle.py`
+    now decides whether to call this function
     *at all*, via `obsidian_tools.local_replicator.drift.decide_cycle_outcome`, rather than this
     function deciding per path which parts of an otherwise-unconditional run to skip.
 

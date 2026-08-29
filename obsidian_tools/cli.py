@@ -3,7 +3,7 @@
 Subcommands share the same config/git helpers under `obsidian_tools/` — see
 `obsidian_tools/commands/` for each subcommand's own orchestration. `commit` is the in-cluster git
 committer; `replicate` is `local-replicator`'s replication cycle, and `drain` is its spool drainer,
-run on a separate schedule (ppat/obsidian-tools#3, docs/DESIGN.md §2 item 10) — all three are
+run on a separate schedule (ppat/obsidian-tools#3, ADR-0025) — all three are
 clients of the same shared `GitRunner`/config/retry/logging helpers, not a parallel set each.
 """
 

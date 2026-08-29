@@ -74,7 +74,7 @@ def provision_repository(
     # the volume at mount time independent of what wrote the files — without this, every run would
     # record spurious mode-only diffs as real content changes. This setting lives on this
     # repository only; it never touches the Mac clone or the iCloud copy, which are separate
-    # repositories entirely (docs/DESIGN.md §2 item 5, ppat/obsidian-tools#3).
+    # repositories entirely (ADR-0030, ppat/obsidian-tools#3).
     runner.run(["config", "core.fileMode", "false"])
     runner.run(["config", "user.name", author_name])
     runner.run(["config", "user.email", author_email])

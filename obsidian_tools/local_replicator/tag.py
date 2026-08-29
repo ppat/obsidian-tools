@@ -1,5 +1,5 @@
 """The `LAST_CHECKOUT` tag: the parked clone's own record of "content byte-identical to what was
-last placed in iCloud" (docs/DESIGN.md §4 Plane B).
+last placed in iCloud" (ADR-0025).
 
 A tag was chosen over a manifest of file hashes because it reuses machinery already present (the
 clone is a git repository regardless) and can't drift from what was actually checked out — the

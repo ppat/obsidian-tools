@@ -5,10 +5,10 @@ a cycle that *completed but was gated* (a spool write failure, or a path whose p
 content) exits 0 -- the design working, not a run failure -- while a cycle that *could not complete
 at all* (`GitCommandError`, `RsyncError`) exits 1. Getting the first case wrong would make launchd
 report a failing job on every cycle a human happens to paste an image, teaching the operator to
-ignore the one signal that means "your edit is being held" (docs/DESIGN.md §2 item 10).
+ignore the one signal that means "your edit is being held" (ADR-0025).
 
 The `extra={...}` log payload is checked by field name against `CycleResult`, not spot-checked --
-docs/DESIGN.md §2 item 10 states local-replicator is "watched by nothing" that reaches a Mac-side
+DESIGN.md's Glossary states local-replicator is "watched by nothing" that reaches a Mac-side
 process, so this log line is the entire operational surface, not decoration.
 
 Real local git repos and real rsync throughout, same as `test_local_replicator_cycle.py` -- the

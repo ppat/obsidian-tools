@@ -190,7 +190,7 @@ def test_mixed_creation_deletion_rename_modification_in_one_call() -> None:
 
 def test_content_identical_to_upstream_is_recorded_and_still_spooled() -> None:
     """The #36 case: a path republished by a crashed cycle. The entry is annotated, not dropped --
-    dropping is the judgement docs/DESIGN.md §1.5 R2 reserves for the server, and it is
+    dropping is the judgement ADR-0008 reserves for the server, and it is
     indistinguishable from a human edit that reproduced upstream byte-for-byte."""
     selection = _select([_change("M", "00-index.md")], upstream=_upstream())
 
@@ -272,8 +272,8 @@ def test_no_spool_failure_publishes_and_advances() -> None:
 
 
 def test_spool_failure_withholds_both_publish_and_tag_advance() -> None:
-    """The core safety property (docs/DESIGN.md §4 Plane B, "Why the gate moved, not
-    disappeared"): a single failed spool write blocks the *whole* cycle's publish, not merely the
+    """The core safety property (ADR-0025): a single failed spool write blocks the *whole*
+    cycle's publish, not merely the
     one path that failed -- there is no partial-publish path left in this design at all."""
     verdict = decide_cycle_outcome(spool_write_failed=True)
     assert verdict.should_publish is False
@@ -428,7 +428,7 @@ def _staged_changes(draw: st.DrawFn) -> list[StagedChange]:
 @given(_staged_changes())
 def test_every_input_change_is_accounted_for_exactly_once(changes: list[StagedChange]) -> None:
     """The property `select_spool_entries` exists to guarantee, stated independently of its own
-    implementation (docs/DESIGN.md §1.5 R2: the device-side detector "submits every drift patch...
+    implementation (ADR-0008: the device-side detector "submits every drift patch...
     and makes no judgement, so it can never silently drop a real edit").
 
     Accounted for, not spooled: a change whose patch carries no content is withheld from the spool
@@ -456,7 +456,7 @@ def test_the_upstream_observation_never_changes_which_entries_exist(changes: lis
     identical, every path different -- the entries `select_spool_entries` produces must be the same
     entries, carrying the same patches, with the same paths landing in `uncaptured`. The moment that
     stops holding, the device has started deciding rather than recording, which is exactly the
-    failure docs/DESIGN.md §1.5 R2 forbids.
+    failure ADR-0008 forbids.
 
     Deliberately *not* a restatement of `matches_upstream`'s own formula over generated input --
     that would only assert the implementation equals itself. This asserts the thing the formula must

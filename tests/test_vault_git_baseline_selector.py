@@ -26,7 +26,7 @@ _CREDENTIAL_SHAPED_BASENAMES = ("data.json", "secrets.json", ".env", "credential
 _GLOB_METACHAR_BASENAMES = ("weird[1].css", "star*.css", "question?.css")
 
 # The two core-plugin configuration files added to the top-level allowlist for the Phase 1 settings
-# lock (`docs/DESIGN.md` Sec 7). Held here as a table so the "selected at the top level" and "nowhere
+# lock (ADR-0040). Held here as a table so the "selected at the top level" and "nowhere
 # but the top level" cases below are driven by one list rather than two that can drift apart.
 _PHASE_ONE_SETTINGS_FILES = ("daily-notes.json", "templates.json")
 

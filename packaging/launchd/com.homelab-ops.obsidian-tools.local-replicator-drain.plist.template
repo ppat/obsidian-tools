@@ -6,7 +6,7 @@
   ../../docs/local-replicator.md for the install procedure that fills these in.
 
   The drainer, decoupled from local-replicator's own replication cycle by design
-  (docs/DESIGN.md §2 item 10, §4 Plane B: "A separate drainer, decoupled from this cycle's own
+  (ADR-0025: "A separate drainer, decoupled from this cycle's own
   numbering, sends the spool onward") — a separate LaunchAgent, not a second invocation folded into
   com.homelab-ops.obsidian-tools.local-replicator.plist, because the two are independent concerns: this
   job only ever reads the spool directory and needs neither ICLOUD_VAULT_DIR nor a git remote.

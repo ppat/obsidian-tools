@@ -1,6 +1,6 @@
 """The `.obsidian/` baseline: captured once, then frozen.
 
-See docs/DESIGN.md §7 Phase 2 / §8a D3 and ppat/obsidian-tools#3 for the full reasoning; the
+See ADR-0028 and ppat/obsidian-tools#3 for the full reasoning; the
 short version: `.obsidian/` exists only to get Mac/iOS clients configured quickly with a common
 baseline, and a setting changed later at the cluster GUI must not reach devices.
 
@@ -135,7 +135,7 @@ def _iter_obsidian_candidates(directory: Path, prefix: str = "") -> tuple[list[P
     earlier revision skipped an unreadable directory and carried on, reasoning that a transient NFS
     glitch is routine on this volume and "the next scheduled run tries again". The first half of that
     is true — `/vault/brain` is a soft-mounted Longhorn NFS export whose documented normal failure
-    mode is I/O returning an error rather than hanging (docs/DESIGN.md §8c V12) — and the second half
+    mode is I/O returning an error rather than hanging (ADR-0033) — and the second half
     is false *here* in a way it is not for the sibling walker in
     `local_replicator/device_baseline.py`: `ensure_obsidian_baseline` only ever runs this walk until
     something lands under `.obsidian/` in history, so a capture that skipped a directory is frozen by
@@ -373,7 +373,7 @@ def ensure_obsidian_baseline(runner: GitRunner, work_tree: Path) -> bool:
         #
         # `warning`, not `error` and not the `info` the "not there yet" skips above use: nothing has
         # failed (a transient read error is this volume's documented normal condition —
-        # docs/DESIGN.md §8c V12 — and the next run retries by itself), but unlike those skips this
+        # ADR-0033 — and the next run retries by itself), but unlike those skips this
         # one can also be a persistent fault that no run will ever clear on its own, and the only
         # thing that would ever tell a human so is this line.
         logger.warning(
