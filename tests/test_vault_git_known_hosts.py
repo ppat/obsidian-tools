@@ -293,7 +293,7 @@ def test_assemble_known_hosts_logs_what_was_assembled_and_from_where(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Alerting is off on this platform -- this log line is the only diagnostic a failed host-key
-    verification has to point back to (docs/DESIGN.md), so the event must actually be emitted, at a
+    verification has to point back to (DESIGN.md), so the event must actually be emitted, at a
     level a failed run's logs would show."""
     monkeypatch.setattr("obsidian_tools.vault_git.known_hosts.fetch_github_host_keys", _fake_fetch_one_github_key)
     destination = tmp_path / "known_hosts"

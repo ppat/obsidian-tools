@@ -132,7 +132,7 @@ def assemble_known_hosts(
     """Fetch GitHub's host keys if -- and only if -- `remote_urls` needs them, combine them with
     `extra_lines`, and write the result to `destination` (creating its parent directory if needed).
     Logs which host keys were assembled and from where, at INFO: with alerting off on this
-    platform (`docs/DESIGN.md`), this log line is the only diagnostic a failed host-key
+    platform (`DESIGN.md`), this log line is the only diagnostic a failed host-key
     verification has to point back to.
     """
     github_keys: list[str] = []

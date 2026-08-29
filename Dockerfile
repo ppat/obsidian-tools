@@ -54,7 +54,7 @@ ARG TARGETARCH
 WORKDIR /
 
 # uid/gid 1000 deliberately, not an arbitrary system uid: this matches the vault Deployment's
-# fsGroup (docs/DESIGN.md §2 item 1, ppat/homelab-ops-kubernetes-apps#3443) so the committer's
+# fsGroup (ADR-0040, ppat/homelab-ops-kubernetes-apps#3443) so the committer's
 # group-read access to vault content and the group ownership `fsGroupChangePolicy: OnRootMismatch`
 # preserves line up without a separate SecurityContext override at the point of use.
 ARG OBSIDIAN_TOOLS_UID=1000

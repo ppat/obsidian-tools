@@ -65,10 +65,9 @@
     <key>GIT_SSH_KNOWN_HOSTS_PATH</key>
     <string>__HOME_DIR__/.ssh/known_hosts</string>
 
-    <!-- The single parked clone (docs/DESIGN.md §2 item 10) — stays checked out at LAST_CHECKOUT
+    <!-- The single parked clone (ADR-0025) — stays checked out at LAST_CHECKOUT
          between cycles. Safe to delete by hand if it's ever suspected of being in a bad state;
-         the next cycle re-baselines from scratch (docs/DESIGN.md §4 Plane B, "Losing the Mac
-         clone loses the baseline"). -->
+         the next cycle re-baselines from scratch (ADR-0025). -->
     <key>OBSIDIAN_CACHE_CLONE_DIR</key>
     <string>__HOME_DIR__/.cache/obsidian-vault</string>
 
@@ -79,7 +78,7 @@
     <key>PATH</key>
     <string>__HOME_DIR__/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
 
-    <!-- Where drift patches are spooled before publish (docs/DESIGN.md §2 item 10 step 4) — has a
+    <!-- Where drift patches are spooled before publish (ADR-0025) — has a
          sensible default (obsidian_tools/config.py's ReplicateConfig), set explicitly here anyway
          so it's visible beside the other paths this job touches, matching OBSIDIAN_CACHE_CLONE_DIR
          above. Drained (Phase 2: discarded) by the separate

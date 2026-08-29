@@ -1,6 +1,5 @@
 """The replication cycle: park at the baseline, overlay the device tree, diff, spool, reset,
-pull, publish, advance -- in that order, because the order is load-bearing (docs/DESIGN.md §2 item
-10, §4 Plane B; ppat/obsidian-tools#3).
+pull, publish, advance -- in that order, because the order is load-bearing (ADR-0025; ppat/obsidian-tools#3).
 
 **Why comparison and capture precede the pull.** Whatever currently sits in iCloud was placed
 there by the last successful publish -- exactly `LAST_CHECKOUT`. The human's edits were made
@@ -36,8 +35,8 @@ between the publish and the tag advance leaves fresh upstream content sitting in
 `LAST_CHECKOUT` still names the pre-publish commit, so the next cycle's comparison reads every path
 that commit touched as device-side drift (ppat/obsidian-tools#36). Two operations cannot be made
 one, so the window cannot be closed -- and closing it by having *this* component decide such a path
-is not really a human's edit is the wrong repair twice over: it is the judgement docs/DESIGN.md §1.5
-R2 reserves for the server, and a human edit that happens to reproduce upstream byte-for-byte is
+is not really a human's edit is the wrong repair twice over: it is the judgement ADR-0008
+reserves for the server, and a human edit that happens to reproduce upstream byte-for-byte is
 indistinguishable from residue here, so a suppressing device would silently drop real edits. What
 step 3 does instead is *observe*: which baseline it compared against, which upstream revision the
 clone knew at that moment, and whether each drifted path's content is byte-identical to it
@@ -106,8 +105,8 @@ from obsidian_tools.vault_git.ssh import build_ssh_command
 
 logger = logging.getLogger(__name__)
 
-# The injectable seam the Phase 2 acceptance test uses to prove the ordering (docs/DESIGN.md §7
-# Phase 2: "Force the spool write to fail for a drift patch, run the cycle"). A real failure here
+# The injectable seam the acceptance test uses to prove the ordering (docs/VERIFICATIONS.md §2:
+# "Force the spool write to fail (`chmod 500`)"). A real failure here
 # is a local disk write failing -- expected to be rare to the point of practically never, which is
 # exactly why the gate can afford to sit on it (see this module's own docstring).
 SpoolWriter = Callable[[Path, SpoolEntry], Path]
@@ -276,7 +275,7 @@ def run_cycle(config: ReplicateConfig, *, spool_writer: SpoolWriter = write_spoo
 
     # A missing baseline (first run, or a lost/re-provisioned cache) means there is nothing
     # meaningful to diff against; re-baselining publishes everything once instead of reporting the
-    # whole vault as drifted (docs/DESIGN.md §4 Plane B, "Losing the Mac clone loses the baseline").
+    # whole vault as drifted (ADR-0025).
     if previous_checkout is not None:
         # Step 1: idempotent re-park, regardless of what a prior crash left behind (module
         # docstring, "Idempotent from any starting state").
@@ -313,7 +312,7 @@ def run_cycle(config: ReplicateConfig, *, spool_writer: SpoolWriter = write_spoo
                 #
                 # `warning` rather than `info`, with the cost stated rather than hidden: one of the
                 # two conditions that produce this is a device that is behind a baseline it will
-                # never be sent, which docs/DESIGN.md §8a D3 makes deliberate and permanent, so this
+                # never be sent, which ADR-0028 makes deliberate and permanent, so this
                 # line can be a healthy state logged at `warning` forever. The level tracks the
                 # severity of the *worse* branch (a locked setting no longer locked, which nothing
                 # else in the system checks at all) because the two are indistinguishable from here

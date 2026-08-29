@@ -2,7 +2,7 @@
 
 The property under test that matters most: a partial first copy must never be mistaken for a
 complete one. The copy itself is an ordinary per-file loop and is deliberately not made atomic
-(docs/DESIGN.md §7 Phase 2) — what removes the hazard is the gate, a completion marker written only
+(ADR-0028) — what removes the hazard is the gate, a completion marker written only
 after every file has copied, so presence is never decided by the directory merely existing.
 """
 
@@ -90,7 +90,7 @@ def test_a_partial_prior_copy_is_not_mistaken_for_complete(tmp_path: Path) -> No
 
 
 def test_seed_is_a_noop_when_no_source_obsidian_exists_yet(tmp_path: Path) -> None:
-    """The committer hasn't taken its own .obsidian baseline commit yet (docs/DESIGN.md §8a D3) —
+    """The committer hasn't taken its own .obsidian baseline commit yet (ADR-0028) —
     nothing to seed from. Must not create a half-baseline or a marker with no content behind it."""
     clone = tmp_path / "clone"
     icloud = tmp_path / "icloud"

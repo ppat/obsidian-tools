@@ -1,4 +1,4 @@
-"""The crash-injection stateful harness for local-replicator (docs/DESIGN.md §2 item 10, §4 Plane
+"""The crash-injection stateful harness for local-replicator (ADR-0025, ADR-0026 and the Plane
 B): the highest-value deferred testing mechanism named in
 /home/coder/.claude/tmp/obsidian-brain/notes/decision-testing-strategy-for-obsidian-tools.md,
 implemented here.
@@ -31,7 +31,7 @@ points a real crash could land on -- the two are complementary, not redundant).
 step, never off the model's own bookkeeping of what "should" have happened -- the model exists only
 to track which *markers* (unique, greppable content strings) are still owed durability, because
 that single fact cannot be re-derived from disk once a marker has been legitimately drained
-(docs/DESIGN.md §7 Phase 2: the drainer's stub sink discards on purpose, standing in for a
+(ADR-0024: the drainer's stub sink discards on purpose, standing in for a
 downstream consumer that doesn't exist yet). Everything else -- whether a path currently matches
 the tag, whether a marker appears in the spool -- is read directly off git and the filesystem each
 time, the same principle the crash-residue property applies.
@@ -41,7 +41,7 @@ obligation rather than a weaker one.** `upstream_content_never_misattributed` as
 which reached iCloud via `publish` is never spooled as drift. That is not achievable and was never
 the right claim: steps 6 and 7 cannot be made atomic, so a crash always can leave published content
 looking like drift -- and a device that *suppressed* it would be making the judgement
-docs/DESIGN.md §1.5 R2 reserves for the server, on a signal (content identical to upstream) that a
+ADR-0008 reserves for the server, on a signal (content identical to upstream) that a
 human's own edit can produce (ppat/obsidian-tools#36). What replaced it is split in two, so that
 retiring the false half cannot quietly take the true half with it:
 
@@ -102,8 +102,8 @@ from obsidian_tools.local_replicator.tag import read_last_checkout
 from obsidian_tools.vault_git.runner import GitRunner
 
 # Two fixed, named paths rather than arbitrary generated ones: the point of a stateful harness is
-# exploring *sequence* space (docs/DESIGN.md and the doctrine both call this out as what
-# property-based testing earns its keep on), not path-name space -- that's already covered by the
+# exploring *sequence* space (where a stateful property harness earns its keep), not path-name
+# space -- that's already covered by the
 # adversarial-path property in test_local_replicator_drift.py. A small, fixed alphabet keeps every
 # generated sequence's outcome tractable to reason about by hand when a failure needs to be read.
 _PATHS = ("alpha.md", "beta.md")
@@ -363,8 +363,8 @@ class CrashInjectionMachine(RuleBasedStateMachine):
 
     @rule(path=st.sampled_from(_PATHS))
     def upstream_delete(self, path: str) -> None:
-        """An agent removing a note upstream -- reorganising, archiving after a roll-up (§5 Salience
-        and consolidation), any of the ordinary reasons the vault loses a path.
+        """An agent removing a note upstream -- reorganising, archiving after a roll-up (ADR-0012's
+        consolidation pass), any of the ordinary reasons the vault loses a path.
 
         Added because its absence was silently doing load-bearing work: with `upstream_commit` the
         only upstream rule, upstream could never *lack* a path the device also lacked, so an entire
@@ -456,7 +456,7 @@ class CrashInjectionMachine(RuleBasedStateMachine):
 
         # Invariant 3, checked here rather than as a standalone @invariant: "the next cycle after
         # any crash-or-withheld cycle completes normally" -- a gate that pauses the cycle must
-        # never wedge it (docs/DESIGN.md's own framing, carried into this harness's brief).
+        # never wedge it (ADR-0025: a pause, not a wedge — carried into this harness's brief).
         recovery_known_files = set(list_spool_files(self.spool_dir))
         recovery_baseline, recovery_upstream = self._pre_cycle_refs()
         recovery_result = run_cycle(self.config)
@@ -502,7 +502,7 @@ class CrashInjectionMachine(RuleBasedStateMachine):
 
     @rule()
     def drain(self) -> None:
-        # Phase 2's discard sink is a real, permanent forgetting (docs/DESIGN.md §7 Phase 2) --
+        # Phase 2's discard sink is a real, permanent forgetting (ADR-0024) --
         # scan what's about to be discarded *before* draining, so open_markers can be resolved for
         # exactly the markers this call actually consumes, not guessed at.
         spool_text_before = self._spool_text()
@@ -514,7 +514,7 @@ class CrashInjectionMachine(RuleBasedStateMachine):
 
     @invariant()
     def durable_or_recoverable(self) -> None:
-        """The component's entire reason to exist (docs/DESIGN.md §4 Plane B): anything a human
+        """The component's entire reason to exist (ADR-0025): anything a human
         typed is present in the iCloud tree or recoverable from the spool -- never absent from
         both."""
         icloud_text = "".join((self.icloud / p).read_text() for p in _PATHS if (self.icloud / p).exists())
@@ -635,7 +635,7 @@ class CrashInjectionMachine(RuleBasedStateMachine):
     @invariant()
     def tag_never_names_unpublished_content(self) -> None:
         """`LAST_CHECKOUT` never names a commit whose content was not actually published
-        (docs/DESIGN.md §4 Plane B: the tag is defined as "byte-identical to what was last placed
+        (ADR-0025: the tag is defined as "byte-identical to what was last placed
         in iCloud"). A mismatch between the tag's tree and iCloud's current content is only
         legitimate when it's explained by a device edit that hasn't been captured by a cycle yet --
         never by the tag racing ahead of what publish actually wrote."""

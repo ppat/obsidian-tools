@@ -94,7 +94,7 @@ class CommitConfig:
             author_email=get_env("GIT_COMMIT_AUTHOR_EMAIL", "brain-committer@noreply.invalid"),
             origin_url=require_env("GIT_REMOTE_ORIGIN_URL"),
             # Unlike origin, genuinely optional: the NAS is a second push target for independence
-            # insurance (docs/DESIGN.md §2 item 5), not something the committer needs to do its
+            # insurance (ADR-0029), not something the committer needs to do its
             # primary job. Requiring it up front would also require, before the component could run
             # even once, everything the NAS remote depends on -- SSH access to the NAS, an
             # authorized_keys entry, a bare repository created by hand, and a host key published
@@ -116,7 +116,7 @@ class CommitConfig:
 class ReplicateConfig:
     """Configuration for the `replicate` subcommand (`local-replicator`), read once from the
     environment. Runs on the operator's Mac, not in-cluster — see
-    obsidian_tools/commands/replicate.py and docs/DESIGN.md §2 item 10 / §4 Plane B.
+    obsidian_tools/commands/replicate.py and ADR-0025.
 
     No default for `icloud_vault_dir`: unlike every path in `CommitConfig`, this one names a
     per-operator vault name (`iCloud Drive/Obsidian/<Vault Name>`) that this codebase has no
@@ -134,7 +134,7 @@ class ReplicateConfig:
     @classmethod
     def from_env(cls) -> ReplicateConfig:
         return cls(
-            # The single parked clone (docs/DESIGN.md §2 item 10): stays checked out at
+            # The single parked clone (ADR-0025): stays checked out at
             # LAST_CHECKOUT between cycles, so it doubles as both the pull-forward target and the
             # drift-comparison baseline. Not `/git/vault.git` (CommitConfig's bare, detached
             # git-dir) — this one is an ordinary, checked-out working tree, because rsync's publish
@@ -152,7 +152,7 @@ class ReplicateConfig:
             ssh_key_path=get_env("GIT_SSH_KEY_PATH", os.path.expanduser("~/.ssh/obsidian_vault_readonly")),
             ssh_known_hosts_path=get_env("GIT_SSH_KNOWN_HOSTS_PATH", os.path.expanduser("~/.ssh/known_hosts")),
             # Local, durable storage for drift patches, spooled before publish overwrites the
-            # device copy that produced them (docs/DESIGN.md §2 item 10 step 4). Application
+            # device copy that produced them (ADR-0025). Application
             # Support, not Caches — unlike the parked clone (disposable, rebuildable from origin),
             # an undrained spool entry may be the only record of a human's edit until the drainer
             # sends it onward, so it must not be treated as something the OS is free to purge.
@@ -168,13 +168,13 @@ class ReplicateConfig:
 
 @dataclass(frozen=True, slots=True)
 class DrainConfig:
-    """Configuration for the `drain` subcommand — the spool drainer (docs/DESIGN.md §2 item 10, §7
-    Phase 2), read once from the environment. Runs on the operator's Mac, alongside `replicate` but
+    """Configuration for the `drain` subcommand — the spool drainer (ADR-0024, ADR-0025),
+    read once from the environment. Runs on the operator's Mac, alongside `replicate` but
     on its own schedule — see obsidian_tools/commands/drain.py.
 
     Deliberately its own dataclass, not a slice of `ReplicateConfig`: the drainer is decoupled from
-    the replication cycle by design (docs/DESIGN.md §4 Plane B, "A separate drainer... decoupled
-    from this cycle's own numbering, sends the spool onward"), and giving it `ReplicateConfig`'s
+    the replication cycle by design (ADR-0024: a separate drainer, decoupled from the cycle's own
+    numbering, sends the spool onward), and giving it `ReplicateConfig`'s
     full environment would make it require `ICLOUD_VAULT_DIR`/`GIT_REMOTE_ORIGIN_URL` it has no use
     for at all — it never touches iCloud or git.
     """

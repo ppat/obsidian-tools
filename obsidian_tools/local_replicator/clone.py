@@ -10,7 +10,7 @@ needs (`checkout_forward`) that a bare repo never does, so this module is its ow
 committer-independent thing rather than importing the committer's private helpers.
 
 **Fetching and checking out forward are deliberately two separate functions, not one.** `cycle.py`
-always fetches and always checks out forward onto `main` (docs/DESIGN.md §2 item 10 step 5 runs
+always fetches and always checks out forward onto `main` (ADR-0025 runs
 unconditionally) — but whether the *publish* that follows actually reaches iCloud, and whether
 `LAST_CHECKOUT` advances, is gated separately, on the spool write, not on this step (see
 `obsidian_tools.local_replicator.drift.decide_cycle_outcome`). Idempotency across a partial cycle
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 def ensure_cache_clone(runner: GitRunner, *, branch: str, origin_url: str) -> None:
     """Idempotent: safe to call every cycle, whether the clone already exists or was just lost and
-    re-provisioned (docs/DESIGN.md §4 Plane B, "Losing the Mac clone loses the baseline")."""
+    re-provisioned (ADR-0025)."""
     runner.work_tree.mkdir(parents=True, exist_ok=True)
     runner.git_dir.mkdir(parents=True, exist_ok=True)
     runner.run(["init", "-q", f"--initial-branch={branch}"])

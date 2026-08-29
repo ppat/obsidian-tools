@@ -38,7 +38,7 @@ def run(config: ReplicateConfig) -> int:
             # `uncaptured` (a path whose patch carried no content, e.g. a binary -- see
             # drift.select_spool_entries) is the other reason a cycle can hold back publish and the
             # tag advance, alongside spool_write_failed. This process is watched by nothing else
-            # (docs/DESIGN.md §2 item 10), so a field missing from this line is a field with no way
+            # (ADR-0025), so a field missing from this line is a field with no way
             # to be seen at all -- not merely one an operator has to go looking for.
             "uncaptured": len(result.uncaptured),
             "obsidian_baseline_diverged": len(result.obsidian_baseline_diverged),
@@ -48,6 +48,6 @@ def run(config: ReplicateConfig) -> int:
         },
     )
     # A spool write failure withholds this cycle's publish and tag advance, and is retried next
-    # cycle by design (docs/DESIGN.md §2 item 10) — not a run failure. A non-zero exit here is
+    # cycle by design (ADR-0025) — not a run failure. A non-zero exit here is
     # reserved for a cycle that couldn't complete at all.
     return 0

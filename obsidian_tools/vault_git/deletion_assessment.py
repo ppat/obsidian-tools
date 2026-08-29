@@ -3,7 +3,7 @@ no `GitRunner`, no `git write-tree`.
 
 **Why this is split out of `commit.py` and kept pure.** `check_for_mass_deletion` is this
 component's entire safety net against committing (and then pushing, permanently) a blank or
-reset volume as though it were a deliberate deletion — `docs/DESIGN.md`'s "fail loud, destroy
+reset volume as though it were a deliberate deletion — `DESIGN.md`'s "fail loud, destroy
 nothing" applies nowhere more than here. That verdict depends on exactly two counts (how many
 tracked paths vanished, and whether every markdown note vanished) and one threshold; deriving it
 correctly for every boundary — 0%, 49/50/51%, 100%, the `>= 1.0` escape hatch, an empty `HEAD` — is

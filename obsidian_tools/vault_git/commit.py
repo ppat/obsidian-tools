@@ -71,7 +71,7 @@ def has_staged_changes(runner: GitRunner) -> bool:
 def check_for_mass_deletion(runner: GitRunner, *, max_deletion_fraction: float = DEFAULT_MAX_DELETION_FRACTION) -> None:
     """Refuse (by raising) when the currently-staged change looks like the volume came back empty
     rather than like a human deleted a note — this component's whole job is durability, and
-    `docs/DESIGN.md`'s "fail loud, destroy nothing" posture applies nowhere more than here.
+    `DESIGN.md`'s "fail loud, destroy nothing" posture applies nowhere more than here.
 
     The verdict itself — which of the two tripwires (deletion fraction, zero markdown) fired, if
     either — is `assess_deletion` (`vault_git/deletion_assessment.py`), pure over the before/after

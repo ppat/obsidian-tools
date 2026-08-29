@@ -1,7 +1,7 @@
 """The exclude list shared by the drift comparison and the publish rsync.
 
 Deliberately two separate constants, not one, because they answer different questions and the
-design doc (docs/DESIGN.md §4 Plane B, "Constraints") keeps them distinct:
+design doc (ADR-0025) keeps them distinct:
 
 - `GIT_METADATA_EXCLUDE` is structural, not about spurious drift: git metadata must never enter
   the iCloud-synced folder at all (iCloud resolves conflicts by *renaming*, which applied to

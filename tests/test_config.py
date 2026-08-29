@@ -30,7 +30,7 @@ def test_from_env_applies_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_from_env_nas_url_is_optional_and_defaults_to_none(monkeypatch: pytest.MonkeyPatch) -> None:
     """The NAS is a second push target for independence insurance, not required for the committer
-    to do its primary job (docs/DESIGN.md §2 item 5) -- an operator without the NAS's SSH access,
+    to do its primary job (ADR-0029) -- an operator without the NAS's SSH access,
     authorized_keys entry, bare repo and host key set up yet must still be able to run this
     component. Regression test for `GIT_REMOTE_NAS_URL` going from `require_env` to optional."""
     monkeypatch.setenv("GIT_REMOTE_ORIGIN_URL", "git@github.com:ppat/obsidian-vault.git")

@@ -1,13 +1,13 @@
-"""The drainer: sends spooled drift patches onward (docs/DESIGN.md §2 item 10, §7 Phase 2).
+"""The drainer: sends spooled drift patches onward (ADR-0024, ADR-0025).
 
 Decoupled from the replication cycle's own step numbering by design -- it runs on its own
 schedule, reading whatever the spool currently holds, independent of which cycle wrote any given
-entry (docs/DESIGN.md §4 Plane B: "A separate drainer, decoupled from this cycle's own numbering,
+entry (ADR-0024: a separate drainer, decoupled from the cycle's own numbering,
 sends the spool onward, with retry, onto the work queue's drift stream"). In Phase 2 there is
 nowhere for it to send anything -- the work queue's drift stream and `drift-processor` don't exist
 yet (ppat/obsidian-tools#4, Phase 5) -- so `discard_sink` *is* the destination: read the entry,
 throw it away, remove it from the spool. Phase 5 replaces only the sink; draining, ordering, and
-the spool format itself do not change (docs/DESIGN.md §7 Phase 5: "the drainer's stub destination
+the spool format itself do not change (ADR-0024: "the drainer's stub destination
 stops being discard and becomes the drift stream").
 
 Draining still has to run in Phase 2, even though it discards everything -- an undrained spool
@@ -30,7 +30,7 @@ DrainSink = Callable[[SpoolEntry], None]
 
 def discard_sink(entry: SpoolEntry) -> None:
     """The Phase 2 destination: read the entry, throw it away -- functionally `/dev/null`. Phase 5
-    replaces this with a publish onto the work queue's drift stream (docs/DESIGN.md §7 Phase 5);
+    replaces this with a publish onto the work queue's drift stream (ADR-0024);
     same signature, so nothing about `drain_once` below has to change to accommodate it."""
     del entry
 
@@ -42,7 +42,7 @@ def drain_once(spool_dir: Path, *, sink: DrainSink = discard_sink) -> list[str]:
     An entry the sink fails on is left in the spool -- undrained, not lost -- for a later drain to
     retry, and `drain_once` keeps going with the rest rather than stopping at the first failure:
     unlike the cycle's own spool-write gate (which is about *storing* every entry before publish
-    proceeds, docs/DESIGN.md §4 Plane B), drained entries are independent of each other once
+    proceeds, ADR-0025), drained entries are independent of each other once
     written, so one stuck entry has no reason to hold up the others.
     """
     drained: list[str] = []

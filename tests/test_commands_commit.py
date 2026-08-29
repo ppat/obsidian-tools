@@ -383,7 +383,7 @@ def test_emptied_vault_refuses_to_commit_a_mass_deletion(
 ) -> None:
     """The volume coming back genuinely empty (a re-provisioned or blank-restored PVC, a mis-set
     OBSIDIAN_VAULT_DIR, running before the volume is seeded) must not be committed and pushed as a
-    wholesale deletion of the vault's history — `docs/DESIGN.md`'s "fail loud, destroy nothing"
+    wholesale deletion of the vault's history — `DESIGN.md`'s "fail loud, destroy nothing"
     applies nowhere more than to the one component whose entire job is durability. Content stays
     recoverable in git history either way; the point is that this run must not push the deletion."""
     nas = make_bare_repo()
@@ -541,7 +541,7 @@ def test_no_nas_configured_pushes_to_origin_only_and_exits_zero(
     tmp_path: Path, seeded_origin: Path, vault_dir: Path
 ) -> None:
     """The NAS is a second push target for independence insurance, not something the committer
-    needs to do its primary job (docs/DESIGN.md §2 item 5) -- an operator who hasn't set up the
+    needs to do its primary job (ADR-0029) -- an operator who hasn't set up the
     NAS's SSH access, authorized_keys entry, bare repo, and host key yet must still be able to run
     this component against GitHub alone. Regression test for `GIT_REMOTE_NAS_URL` going from
     `require_env` to optional (config.py's `CommitConfig.nas_url`)."""
@@ -695,7 +695,7 @@ def test_an_unreadable_obsidian_subtree_defers_the_baseline_without_failing_the_
       A non-zero exit marks the Job failed and buys a `backoffLimit` retry of a cycle that succeeded
       at everything it was for; the deferred baseline is retried by the next scheduled run anyway,
       and soft-mount I/O failure is the documented *expected* condition on this volume
-      (docs/DESIGN.md §8c V12), not a run failure.
+      (ADR-0033), not a run failure.
     - **Nothing else in the run is skipped.** A `.obsidian/` problem stopping vault content being
       committed is precisely the wedge `ppat/obsidian-tools#22` cost twice.
 

@@ -38,7 +38,7 @@ from dataclasses import dataclass
 #
 # `daily-notes.json` and `templates.json` are the *configuration* of two core plugins that
 # `core-plugins.json` only records as enabled, and they carry the half of the Phase 1 settings lock
-# nothing else here captures (docs/DESIGN.md Sec 7): of the five retroactively-painful settings that
+# nothing else here captures (ADR-0040): of the five retroactively-painful settings that
 # phase exists to fix in place, new-note location and the attachment folder land in `app.json` and
 # the property types in `types.json`, but the daily-note format/folder/template and the template
 # folder live only in these two. Absent them a device runs Daily Notes at its defaults — folder =
@@ -61,8 +61,8 @@ from dataclasses import dataclass
 # do). Between them they hold date/time format strings, two vault-relative folder paths, a template
 # path and a boolean — no free-form value and, across the ~1,900 instances of these two filenames
 # indexed on GitHub, not one URL. Nor is either known to churn: Obsidian's only documented
-# gitignore-this warning names `workspace.json`/`workspaces.json` and nothing else (docs/DESIGN.md
-# Sec 8a D3), and no report of either file being rewritten other than by a settings change turns up
+# gitignore-this warning names `workspace.json`/`workspaces.json` and nothing else (ADR-0028),
+# and no report of either file being rewritten other than by a settings change turns up
 # anywhere, including the obsidian-git issue tracker where git users would raise it.
 #
 # The residual is a schema question, not a path one, and is recorded rather than solved: these are
@@ -86,7 +86,7 @@ BASELINE_TOP_LEVEL_FILES = (
 # level down: a probe against an earlier revision staged `.obsidian/themes/Minimal/data.json`,
 # `.obsidian/themes/deep/nested/inner/data.json` and `.obsidian/snippets/sub/dir/creds.json`
 # (ppat/obsidian-tools#3). Themes are third-party code installed through the ungated GUI path
-# (docs/DESIGN.md Sec 1.3 P8), so "nothing secret would ever land under there" is not a claim this
+# (ADR-0028), so "nothing secret would ever land under there" is not a claim this
 # baseline gets to make.
 BASELINE_DIRS = ("snippets", "themes")
 _BASELINE_CSS_SUFFIX = ".css"

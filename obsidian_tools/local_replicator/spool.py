@@ -1,5 +1,5 @@
 """The local spool: durable, atomic storage for drift patches, written before anything overwrites
-the iCloud copy that produced them (docs/DESIGN.md §2 item 10 step 4, §4 Plane B).
+the iCloud copy that produced them (ADR-0025).
 
 **Why atomic write-then-rename, not a plain write.** A crash mid-write must never look like a
 successful spool entry -- `cycle.py`'s publish gate (`obsidian_tools.local_replicator.drift`'s
@@ -11,8 +11,8 @@ filesystem (POSIX `rename(2)`), so a reader -- or a crash -- never observes a pa
 file at the final path. It either isn't there yet, or it's complete.
 
 **Why an opaque filename, not one derived from the vault path.** A vault path can contain almost
-anything a filesystem allows (docs/DESIGN.md §4 Plane B's non-ASCII/quoting concerns apply here
-too, and this is exactly the class of bug that "wedged the committer permanently" once already --
+anything a filesystem allows (non-ASCII/quoting hazards apply here too, and this is exactly the
+class of bug that "wedged the committer permanently" once already --
 ppat/obsidian-tools#3). Turning an arbitrary vault path into a filesystem-safe spool filename would
 be its own small parser, with its own escaping bugs to get wrong. Each entry gets a
 collision-resistant, content-independent filename instead; the vault path lives inside the entry's
@@ -37,8 +37,8 @@ _SPOOL_SUFFIX = ".json"
 class SpoolWriteError(RuntimeError):
     """A spool entry could not be written durably. `cycle.py` catches exactly this type to gate
     the cycle's publish and tag advance -- see `obsidian_tools.local_replicator.drift`'s
-    `decide_cycle_outcome`, and docs/DESIGN.md §2 item 10's "a laptop being off the network is
-    normal; a local write failing is not"."""
+    `decide_cycle_outcome`, and ADR-0025: a laptop off the network is normal; a local write
+    failing is not."""
 
 
 def _entry_filename() -> str:

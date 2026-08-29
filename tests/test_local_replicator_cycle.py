@@ -180,7 +180,7 @@ def test_device_deletion_is_spooled_as_a_delete(tmp_path: Path, seeded_origin: P
 def test_spool_write_failure_blocks_the_whole_cycles_publish_and_tag_advance(
     tmp_path: Path, seeded_origin: Path, icloud_dir: Path
 ) -> None:
-    """docs/DESIGN.md §7 Phase 2's own acceptance test, verbatim: "Force the spool write to fail
+    """The acceptance test of docs/VERIFICATIONS.md §2, verbatim: "Force the spool write to fail
     for a drift patch, run the cycle -> publish does not run for that cycle, the tag does not
     advance, and the next cycle retries the overlay from scratch"."""
     config = replicate_config(tmp_path, seeded_origin, icloud_dir)
@@ -212,7 +212,7 @@ def test_spool_write_failure_on_one_path_blocks_publish_of_an_unrelated_drifted_
     tmp_path: Path, seeded_origin: Path, icloud_dir: Path
 ) -> None:
     """The property that distinguishes this design from the superseded per-path-gated one
-    (docs/DESIGN.md §4 Plane B, "Why the gate moved"): a single stuck path holds back *every*
+    (ADR-0025, "Why the gate moved"): a single stuck path holds back *every*
     path's publish, because `LAST_CHECKOUT` names one commit and cannot mean "this path at the new
     commit, that path at the old one"."""
     push_commit(seeded_origin, tmp_path, {"10-areas/other.md": "original other\n"}, "add other")
@@ -428,7 +428,7 @@ def test_a_modified_tracked_binary_pauses_the_cycle_and_deleting_it_is_a_real_es
 # --- the operator's own git configuration must not reach any decision this cycle makes -----------
 #
 # local-replicator is the one component of this system that runs on a real machine with a real
-# `~/.gitconfig` (docs/DESIGN.md §4 Plane B). Every test below sets a *real* hostile global
+# `~/.gitconfig` (DESIGN.md Glossary, "local-replicator"). Every test below sets a *real* hostile global
 # configuration and drives the *real* cycle through it. None of them assert on argv: an assertion
 # that a flag is present proves only that we wrote the argv we intended, not that the environment
 # can no longer reach the output that argv produces.
@@ -950,8 +950,8 @@ def test_cycle_recovers_from_a_working_tree_left_on_main_by_a_prior_crash(
 #
 # The two tests above are one residue shape each -- stray files plus a staged modification; a clone
 # left checked out on `main` ahead of the tag -- chosen by a human because they're the two crash
-# points the design doc's own history called out (§4 Plane B, "Why the gate moved, not
-# disappeared"). `cycle.py`'s own docstring commits to a broader claim: "idempotent from any
+# points the cycle's own design history called out (ADR-0025, the three readings). `cycle.py`'s
+# own docstring commits to a broader claim: "idempotent from any
 # starting state", recovered by step 1 forcing the tree back to `LAST_CHECKOUT` rather than by
 # bookkeeping how a prior cycle ended. This property generalizes to a generated combination of both
 # residue shapes (and their absence), rather than only the two hand-picked ones.
@@ -1104,7 +1104,7 @@ def test_cycle_recovers_from_arbitrary_generated_crash_residue(tmp_path: Path, r
 # already moved past it, and reads every path the upstream commit touched as device-side drift.
 #
 # **The device does not suppress that, and must not.** Deciding a drifted path is not really a human
-# edit is a judgement, and docs/DESIGN.md §1.5 R2 reserves every such judgement for the server: the
+# edit is a judgement, and ADR-0008 reserves every such judgement for the server: the
 # device-side detector "submits every path the comparison flags, and makes no judgement, so it can
 # never silently drop a real edit". What the device does instead is record what it *observed* --
 # which baseline the comparison ran against, which upstream revision it knew at that moment, and
@@ -1157,7 +1157,7 @@ def test_content_republished_by_a_crashed_cycle_is_still_spooled(
     tmp_path: Path, seeded_origin: Path, icloud_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The half of #36 that is deliberately *not* fixed. The device keeps submitting the path --
-    dropping it would be exactly the silent judgement docs/DESIGN.md §1.5 R2 forbids, and the
+    dropping it would be exactly the silent judgement ADR-0008 forbids, and the
     coincidence case (a human edit that happens to reproduce upstream byte-for-byte) is
     indistinguishable from crash residue, so a suppressing device would drop real edits."""
     config = replicate_config(tmp_path, seeded_origin, icloud_dir)
@@ -1885,7 +1885,7 @@ def test_no_unseeded_baseline_is_reported_before_the_committer_has_taken_one(
     tmp_path: Path, seeded_origin: Path, icloud_dir: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """The withheld-seed report has to stay silent while there is nothing to seed. A vault whose
-    history carries no `.obsidian/` baseline commit yet is a routine state (docs/DESIGN.md §8a D3),
+    history carries no `.obsidian/` baseline commit yet is a routine state (ADR-0028),
     and a device is unconfigured there for a reason no gate produced and no operator can clear --
     naming the gate would point at a cause that isn't one and a remedy that doesn't exist."""
     config = replicate_config(tmp_path, seeded_origin, icloud_dir)
@@ -1964,7 +1964,7 @@ def test_obsidian_seed_attempted_records_the_attempt_and_not_that_a_baseline_lan
     """The flag is set before `seed_baseline` is called and is never revised by what that call
     finds, so it cannot carry the claim that a device now holds a baseline -- only that a cycle got
     as far as trying. The state that separates the two needs nothing exotic: a vault whose history
-    carries no `.obsidian/` baseline commit yet (docs/DESIGN.md §8a D3) publishes normally, attempts
+    carries no `.obsidian/` baseline commit yet (ADR-0028) publishes normally, attempts
     the seed, and skips it. What confirms a baseline actually landed is `device_baseline_seeded`,
     and that is what docs/local-replicator.md sends an operator to look for; this pins the
     difference the runbook now turns on."""
