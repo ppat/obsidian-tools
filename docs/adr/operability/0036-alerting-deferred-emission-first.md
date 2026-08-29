@@ -1,7 +1,7 @@
 # 0036. Alerting is deferred until AI triage exists; emission is front-loaded — the asymmetry is reversibility
 
 **Status:** Accepted ·
-**Pillar:** [Instrument early, alert never (until AI triage exists)](../../../DESIGN2.md#instrument-early-alert-never-until-ai-triage-exists) ·
+**Pillar:** [Instrument early, alert never (until AI triage exists)](../../../DESIGN.md#instrument-early-alert-never-until-ai-triage-exists) ·
 **Serves:** [O1](../../../USE_CASES.md#o1--measured), [O3](../../../USE_CASES.md#o3--alerting)
 
 ## Context

@@ -1,11 +1,11 @@
 # local-replicator: install and uninstall
 
 An operator runbook for the one component in this whole design that runs outside the cluster
-(`DESIGN.md` "Architecture", item 10; `docs/DESIGN.md` §2 item 10, §4 Plane B) — a launchd job on
+([ADR-0025](./adr/replication/0025-replication-cycle.md); [`DESIGN.md`](../DESIGN.md), "The device loop is non-destructive by ordering") — a launchd job on
 the operator's Mac, installed by hand on one machine, not applied by Flux. This file is operational,
 not design: it belongs beside [`gui-access.md`](./gui-access.md) in this directory's two-tier split
 (design of record in `DESIGN.md`; one-time and ongoing operator procedures here) — see
-[`README.md`](./README.md) for that split. It carries no authority over `docs/DESIGN.md`.
+[`README.md`](./README.md) for that split. It carries no authority over the design of record.
 
 Everything here assumes `obsidian-tools` is already installed as a console script (`pip install`,
 `pipx install`, or `uv tool install` from this repository, or from a built wheel/artifact) and
@@ -27,7 +27,7 @@ message pointing back here.
    vault directory — a read against a dataless stub can hang rather than fail cleanly, which the
    retry/backoff machinery this codebase uses elsewhere for the in-cluster NFS mount does not paper
    over here, because a hang is not the same failure shape as an error. This is also one of the
-   design's own three deliberately unresearched residual questions (`docs/DESIGN.md` §4 Plane B):
+   design's own three deliberately unresearched residual questions ([`VERIFICATIONS.md`](./VERIFICATIONS.md) §4):
    whether "Optimize Mac Storage" off is *sufficient* on its own has never been confirmed by
    anything but running it — treat this prerequisite as necessary, not as a guarantee.
 
@@ -130,7 +130,7 @@ message pointing back here.
 
 This installs **two** LaunchAgents: the replication cycle itself (`replicate`), and a separate one
 for the spool drainer (`drain`) — deliberately decoupled from the cycle's own schedule
-(`docs/DESIGN.md` §2 item 10, §4 Plane B). In Phase 2 the drainer only prevents the spool directory
+([ADR-0025](./adr/replication/0025-replication-cycle.md)). In Phase 2 the drainer only prevents the spool directory
 from growing without bound (it discards what it drains — `ppat/obsidian-tools#4` is where that
 changes); it is still real, running code, not something you can skip installing.
 
@@ -192,7 +192,7 @@ changes); it is still real, running code, not something you can skip installing.
    Each line is a JSON object (`obsidian_tools/logging_config.py`). For the replication cycle, look
    for `"event": "cycle_complete"` and confirm `"checkout"` is non-null after the first successful
    run. A first cycle publishes the whole vault unconditionally (there is no prior baseline to
-   compare against yet — `docs/DESIGN.md` §4 Plane B, "Losing the Mac clone loses the baseline"
+   compare against yet — [ADR-0025](./adr/replication/0025-replication-cycle.md): losing the clone loses the baseline
    describes the same re-baselining behaviour for a lost cache), so expect it to take longer than
    steady-state cycles. For the drainer, look for `"event": "drain_complete"`; in steady state with no
    human edits, `"drained"` should be **zero or close to it**.
@@ -230,13 +230,13 @@ Logged at `ERROR`, once per cycle it occurs in, whenever `git diff` produced a p
 actually carry what changed for one or more drifted paths
 (`obsidian_tools/local_replicator/drift.py`'s `captures_content`) — in practice, a binary landing
 in the vault on the device: a picture pasted into a note, a PDF, anything outside the vault's
-markdown-only contract (`docs/DESIGN.md` Sec 5, Sec 8b G5). `git diff --cached` emits
+markdown-only contract ([ADR-0014](./adr/content-model/0014-markdown-only-vault.md)). `git diff --cached` emits
 `Binary files ... differ` for it — a patch asserting that something changed while carrying none of
 it — so this component withholds the path from the spool rather than risk the publish rsync's
 `--delete` destroying the only copy of those bytes.
 
 Withholding it also withholds the **whole cycle's** publish and tag advance, exactly like a spool
-write failure, not just the offending path (`docs/DESIGN.md` §4 Plane B, "Why the gate moved").
+write failure, not just the offending path ([ADR-0025](./adr/replication/0025-replication-cycle.md), the gate's third reading).
 The `cycle_complete` line that follows names the count in `uncaptured`, and `"tag_advanced": false`
 confirms nothing was published that cycle; the `cycle_tag_not_advanced` line right before it names
 the cause in plain text, distinguishing this from an actual spool write failure.
@@ -296,7 +296,7 @@ as normal, and the next cycle sees no drift. Two exceptions:
   next cycle run.
 
 The device does not suppress these entries, because deciding a drifted path is not a human's edit is
-a judgement reserved for the server (`docs/DESIGN.md` §1.5 R2), and because a human edit reproducing
+a judgement reserved for the server ([ADR-0008](./adr/write-model/0008-drift-classification-separate-authority.md)), and because a human edit reproducing
 upstream is genuinely indistinguishable from residue here. Until `drift-processor` exists (Phase 5)
 the drainer discards everything it reads, so the only cost today is a few spool entries.
 
@@ -304,7 +304,7 @@ the drainer discards everything it reads, so the only cost today is a few spool 
 
 Once a cycle is gated (a spool write failure, or `drift_uncaptured` above), the drift itself is not
 remembered between cycles: the next cycle's overlay-and-diff reproduces it from scratch against the
-same, still-unmoved `LAST_CHECKOUT` (`docs/DESIGN.md` §4 Plane B). At the default 900-second
+same, still-unmoved `LAST_CHECKOUT` ([ADR-0025](./adr/replication/0025-replication-cycle.md)). At the default 900-second
 interval, a pause left unattended for a day produces on the order of 96 duplicate spool entries for
 the same drift, and the drainer picks up every one on its own schedule — there is no deduplication
 anywhere in this pipeline. This is bounded, not unbounded: an unresolved *deletion* used to wedge a
@@ -426,7 +426,7 @@ device now holds the baseline:
 | Event | Level | What it means |
 | --- | --- | --- |
 | `device_baseline_seeded` | `info` | The baseline was copied and the completion marker written. **This, and only this, means the device now holds it** |
-| `device_baseline_skip_no_source` | `info` | The parked clone holds no `.obsidian/` to seed from, because the committer has not taken its baseline commit yet (`docs/DESIGN.md` §8a D3). A cluster-side state; nothing to do on the device |
+| `device_baseline_skip_no_source` | `info` | The parked clone holds no `.obsidian/` to seed from, because the committer has not taken its baseline commit yet ([ADR-0028](./adr/replication/0028-settings-baseline-seed.md)). A cluster-side state; nothing to do on the device |
 | `device_baseline_skip_symlinked_source` | `warning` | `.obsidian` in the parked clone is a symlink rather than a directory, so the seed refuses to copy an unknown target's contents into iCloud. Nothing in this system creates that; clear the clone ("Resetting a device" → "The whole vault") |
 | `device_baseline_seed_incomplete` | `warning` | Part of the clone's `.obsidian/` could not be read, so the marker was withheld deliberately and the next cycle retries and tops up what is missing. The write-side twin of `obsidian_baseline_comparison_incomplete` above — same cause, same fix |
 | `cycle_no_origin_history` | `info` | Not a seed event: the cycle could not resolve this branch at origin, so it published nothing and therefore seeded nothing. A third gating cause alongside `drift_uncaptured` and `spool_write_failed`, and the one neither of those names |
@@ -466,7 +466,7 @@ This stops both schedules only. It does not touch:
 ### The `.obsidian/` baseline only
 
 `.obsidian/` is copied once, then left alone permanently — a setting changed later at the cluster
-GUI does not reach an already-seeded device (`docs/DESIGN.md` §8a D3). The only reset path is
+GUI does not reach an already-seeded device ([ADR-0028](./adr/replication/0028-settings-baseline-seed.md)). The only reset path is
 deleting `.obsidian/` from the device's iCloud vault directory by hand; the next cycle re-seeds it
 from the frozen baseline.
 
@@ -537,7 +537,7 @@ Clearing `$OBSIDIAN_CACHE_CLONE_DIR` (default `~/.cache/obsidian-vault`, the sam
 inside that clone, not anywhere else — so the next cycle finds no previous checkout at all and
 takes the same no-baseline branch a first-ever run does: no overlay, no diff, no spool, straight to
 a fresh clone and an unconditional republish, `.obsidian/` reseeded from the frozen baseline
-included (`docs/DESIGN.md` §4 Plane B, "Losing the Mac clone loses the baseline" describes the same
+included ([ADR-0025](./adr/replication/0025-replication-cycle.md) describes the same
 branch). Deleting the tag itself (`git -C "$OBSIDIAN_CACHE_CLONE_DIR" tag -d LAST_CHECKOUT`) without
 removing the rest of the clone reaches the same branch and works just as well, if keeping the
 clone's other state around is useful for some reason — either way, the tag is what has to go, not
@@ -546,7 +546,7 @@ just the iCloud directory.
 ## What isn't verified here
 
 Three questions the design deliberately leaves for the operator to answer by running this, not by
-reading about it (`docs/DESIGN.md` §4 Plane B, "Three residual questions"):
+reading about it ([`VERIFICATIONS.md`](./VERIFICATIONS.md) §4):
 
 - Whether iCloud reliably propagates a file written into its folder by an external process (this
   one) rather than by the Finder or Obsidian itself.
@@ -556,4 +556,4 @@ reading about it (`docs/DESIGN.md` §4 Plane B, "Three residual questions"):
   (Prerequisites, item 1).
 
 A negative answer to any of these changes this document or the plist, not the architecture
-(`docs/DESIGN.md` §4 Plane B).
+([ADR-0025](./adr/replication/0025-replication-cycle.md)).

@@ -1,7 +1,7 @@
 # 0003. Two MCP instances × two gateway handles; a third instance deferred; credential choices
 
 **Status:** Accepted ·
-**Pillar:** [Authority is carried by capability](../../../DESIGN2.md#authority-is-carried-by-capability-not-by-network-position) ·
+**Pillar:** [Authority is carried by capability](../../../DESIGN.md#authority-is-carried-by-capability-not-by-network-position) ·
 **Serves:** [S1](../../../USE_CASES.md#s1--admitted)
 
 ## Context
@@ -28,7 +28,7 @@ resolved as frontmatter-status updates plus appends to the log and nothing else 
 and no write path to the global todo, which holds queries only — n8n reaches the gateway through
 its own SSRF allowlist, and only the gateway); and **the human-facing browser
 chat is read-only** — the human is not a writer
-([the pillar](../../../DESIGN2.md#humans-originate-agents-act)). Batch runs disable
+([the pillar](../../../DESIGN.md#humans-originate-agents-act)). Batch runs disable
 the agent handle only; the ingestor handle stays live, which is what lets promotion keep draining
 mid-batch.
 

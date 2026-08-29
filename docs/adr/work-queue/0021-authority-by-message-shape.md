@@ -1,7 +1,7 @@
 # 0021. Enqueue authority follows message shape, carried by per-producer NATS credentials — never by network position
 
 **Status:** Accepted ·
-**Pillar:** [Authority is carried by capability](../../../DESIGN2.md#authority-is-carried-by-capability-not-by-network-position) ·
+**Pillar:** [Authority is carried by capability](../../../DESIGN.md#authority-is-carried-by-capability-not-by-network-position) ·
 **Serves:** [S1](../../../USE_CASES.md#s1--admitted)
 
 ## Context
@@ -9,7 +9,7 @@
 The original rule was a flat allowlist: only the Coder workspace may enqueue. Correct for the batch
 stream, but over-general as a principle — the escalation risk comes from the *processor's handle*,
 not from queueing itself. And the moment NATS has an ingress (it must:
-[`local-replicator`](../../../DESIGN2.md#device-loop-and-read-path) publishes from off-cluster), a
+[`local-replicator`](../../../DESIGN.md#device-loop-and-read-path) publishes from off-cluster), a
 NetworkPolicy stops distinguishing producers at all: it selects on pod and namespace, has no notion
 of *stream*, and sees every ingress client identically.
 
@@ -17,7 +17,7 @@ of *stream*, and sees every ingress client identically.
 
 What a message **carries** decides who may enqueue it, and the decision is enforced by a distinct
 NATS account per producer population, subject-scoped to the one stream it may publish
-([the stream table in DESIGN2 §3](../../../DESIGN2.md#3-the-write-path-end-to-end)):
+([the stream table in DESIGN §3](../../../DESIGN.md#3-the-write-path-end-to-end)):
 
 - **Patch-carrying** (batch): content *and* destination — the enqueuer effectively writes with the
   processor's own handle, so exactly one producer holds the credential. Consequence stated plainly:

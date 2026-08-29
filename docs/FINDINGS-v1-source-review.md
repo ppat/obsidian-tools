@@ -1,4 +1,4 @@
-# FINDINGS v1 — Primary-Source Review behind [CANON-1](./CANON-1-designing-brain.md) / [CANON-2](./CANON-2-mcp-research.md) / [DESIGN-v2](./DESIGN.md)
+# FINDINGS v1 — Primary-Source Review behind [CANON-1](./CANON-1-designing-brain.md) / [CANON-2](./CANON-2-mcp-research.md) / DESIGN-v2 (since superseded; the current design of record is [`DESIGN.md`](../DESIGN.md))
 
 **Access date for all sources: 2026-07-28.** Method: `gh api` (GitHub, authenticated) and WebFetch. WebSearch was unavailable (session budget exhausted); DuckDuckGo/Bing HTML search via WebFetch substituted where a search was needed.
 

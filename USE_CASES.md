@@ -2,12 +2,12 @@
 
 What this platform is *for*: the outcomes it exists to deliver, each with an acceptance criterion
 that could fail. This is the stable contract of the three top-level documents — it changes only when
-the understanding of what the platform is for changes. [`DESIGN2.md`](./DESIGN2.md) holds the pillars
+the understanding of what the platform is for changes. [`DESIGN.md`](./DESIGN.md) holds the pillars
 and invariants that deliver these outcomes; [`ROADMAP.md`](./ROADMAP.md) holds the work, its state,
 and the mapping from every work unit back to exactly one outcome here.
 
 Vocabulary used without introduction here (the vault's areas, the handles, provenance fields) is
-defined in [`DESIGN2.md`](./DESIGN2.md)'s Glossary.
+defined in [`DESIGN.md`](./DESIGN.md)'s Glossary.
 
 ## The system, in one paragraph
 

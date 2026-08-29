@@ -9,7 +9,7 @@
 
 Bulk work — the bootstrap import, later structural refactors — is too large for tool-by-tool
 traffic but must not become a second writer or a second operating state
-([the pillar](../../../DESIGN2.md#bulk-and-drift-are-feeds-into-the-one-write-path-never-lanes-around-it)).
+([the pillar](../../../DESIGN.md#bulk-and-drift-are-feeds-into-the-one-write-path-never-lanes-around-it)).
 Producers emit git patches; chunks are the transaction and redelivery unit; `batch-processor`
 applies each through the same gated MCP path as ordinary ingest.
 

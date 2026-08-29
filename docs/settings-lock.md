@@ -72,7 +72,7 @@ moment it lands.
       the container into the vault, and its `/mcp` endpoint cannot be disabled from
       the GUI - the design cites that undisableable endpoint as the reason
       NetworkPolicy, not application configuration, has to be the boundary (see
-      [`DESIGN.md`](./DESIGN.md)). The ratified *additional* plugin set (Tasks,
+      [ADR-0017](./adr/content-model/0017-plugin-set-tasks-dataview.md)). The ratified *additional* plugin set (Tasks,
       Dataview) is easy to confuse with the complete set; this line names all three
       because the earlier wording did not.
 - [ ] Do **not** install Templater or QuickAdd. Both declare a minimum application
@@ -338,7 +338,7 @@ instance supports, not a mirror of that instance's evolving state. So the baseli
 forced add — but **the pathspec must be an allowlist, never a denylist naming only the two
 workspace files.** A denylist here would commit
 `.obsidian/plugins/obsidian-local-rest-api/data.json` — the file holding the vault's Local
-REST API bearer token (`DESIGN.md` §2 item 5) — into permanent history on both remotes,
+REST API bearer token ([ADR-0028](./adr/replication/0028-settings-baseline-seed.md)) — into permanent history on both remotes,
 pulled to the Mac clone and published into iCloud and onto the phone (caught by review
 before this ever ran; see `ppat/obsidian-tools#3`). `data.json` is the conventional
 filename for *every* Obsidian plugin's settings, so a denylist would have to enumerate
@@ -405,7 +405,7 @@ setting and force-adding `.obsidian/` again updates the committed baseline, whic
 newly-seeded device will receive. It does not reach a device that already has one: local-replicator
 excludes `.obsidian/` from every publish unconditionally, and seeds it only where a completion
 marker is absent, so an already-seeded device keeps what it has indefinitely
-(`docs/DESIGN.md` §8a D3). Until each device is reset, the cycle reports the gap
+([ADR-0028](./adr/replication/0028-settings-baseline-seed.md)). Until each device is reset, the cycle reports the gap
 (`"event": "obsidian_baseline_diverged"`, at `warning`) rather than closing it — **from the cycle
 after `LAST_CHECKOUT` advances past the re-baseline commit, not from the one that fetches it.** The
 comparison runs against the clone parked at that tag, so a new cluster-side baseline becomes the

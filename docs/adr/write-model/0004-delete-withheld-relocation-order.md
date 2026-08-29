@@ -22,7 +22,7 @@ note through it (21 bytes to 0) to prove the hole before closing it.
 Where relocation happens, **order is load-bearing: write to the new path first, delete the source
 second, never the reverse.** A crash between the two leaves a recoverable duplicate (the lint pass
 already flags near-duplicates) rather than data loss —
-[fail loud, destroy nothing](../../../DESIGN2.md#fail-loud-destroy-nothing) applied to a two-step
+[fail loud, destroy nothing](../../../DESIGN.md#fail-loud-destroy-nothing) applied to a two-step
 operation.
 
 ## Alternatives considered
