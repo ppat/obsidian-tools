@@ -1,81 +1,136 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) and other coding agents working in this repository.
+Orientation for AI coding agents (and humans) starting cold on this repository: what is where, what
+is true today, and the disciplines that prevent a newcomer's mistakes. This file points at
+documents; it does not duplicate them — duplication is how two documents on this project once
+disagreed for weeks.
 
-## Start here
+## Start here — the document map
 
-- [README.md](./README.md) — what this repository is, what it will hold, and how to run it locally.
-- [DESIGN.md](./DESIGN.md) — why this repository is shaped the way it is, and what each component must and
-  must never do.
-- [docs/README.md](./docs/README.md) — the design canon: `docs/DESIGN.md` is the current design of record for
-  the whole BRAIN platform (not just this repository); the other three documents under `docs/` are research
-  inputs, superseded wherever `docs/DESIGN.md` says otherwise. Read that file before treating anything in
-  `docs/CANON-1-designing-brain.md` or `docs/CANON-2-mcp-research.md` as current.
+| Read | For |
+| --- | --- |
+| [`USE_CASES.md`](./USE_CASES.md) | What the platform is for: the outcomes on four axes, each with a falsifiable acceptance criterion |
+| [`DESIGN.md`](./DESIGN.md) | The pillars and invariants — and the **Glossary**, the single home for vocabulary. If a term needs defining, it gets defined there, never locally |
+| [`ROADMAP.md`](./ROADMAP.md) | All the work in one place: delivered, remaining, the delivery posture and value path, dependencies, open decisions. Supersedes every older phase numbering |
+| [`docs/adr/README.md`](./docs/adr/README.md) | The decision records: index, record format, statuses, and the granularity rule (one decision per record, cut by the re-argue test) |
+| [`docs/VERIFICATIONS.md`](./docs/VERIFICATIONS.md) | Every control's proving injection and answerable-by-doing check, past and pending |
+| [`docs/README.md`](./docs/README.md) | The research canon's authority chain — read CANON-1/CANON-2 only through it |
+| `docs/local-replicator.md` · `docs/settings-lock.md` · `docs/gui-access.md` | Operator runbooks: the Mac component, the one-time settings lock, reaching the GUI |
 
-## Status: this is a scaffold, not a working system
+Design questions resolve there, in that order: outcome → pillar/glossary → decision record. The
+stable documents cite decision records **by number, through the index only** — never deep-linked.
 
-**No application code exists in this repository yet.** `obsidian_tools/__init__.py` is an empty package with a
-version string. Every component named in `README.md` and `DESIGN.md` — the vault worker, git committer, batch
-processor, drift-reconciliation channel, frontmatter validator, and Mac-side replication script — is a future
-ticket, not something to start implementing speculatively. Check the epic
-[`ppat/homelab-ops-kubernetes-apps#3439`](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3439) for
-sequencing before starting work on any of them — several have hard dependencies on infrastructure (the headless
-Obsidian image, the MCP server deployment, cluster storage) that doesn't exist yet either.
+## What this repository is, and its state
+
+One Python package holding every BRAIN component. Shipped and running: the **git committer**
+(`obsidian_tools/commands/commit.py` — in-cluster CronJob) and **`local-replicator`**
+(`replicate.py` + `drain.py` — launchd on the operator's Mac; the drainer discards by design until
+the work queue exists). Specified but unbuilt: the work queue's three processors, the admission
+validator, the lint pass — see [`ROADMAP.md`](./ROADMAP.md), which also names each unit's tickets.
+
+**`main` is not deployed state, in either direction.** A change reaches the cluster only after
+release-please cuts a tag *and* the apps/clusters repos bump their pins; the Mac is upgraded by
+hand. `main` can also *understate* what exists (work sitting on open PR branches). Distinguish
+*authored → merged → released → deployed-and-observed* in every status claim, and tag claims
+**[measured]** or **[inferred]**.
+
+## Repository layout
+
+```
+USE_CASES.md · DESIGN.md · ROADMAP.md   — the top-level triad (outcomes / design / work)
+docs/
+  adr/                                  — decision records in six themed folders; README.md is the index
+  VERIFICATIONS.md                      — the verification catalogue
+  README.md                             — canon authority chain; CANON-1, CANON-2, FINDINGS-v1 (research inputs)
+  local-replicator.md · settings-lock.md · gui-access.md   — operator runbooks
+obsidian_tools/
+  cli.py · config.py · logging_config.py · retry.py
+  commands/                             — the three entrypoints: commit, replicate, drain
+  vault_git/                            — the committer's engine: provisioning, runner, ssh/known-hosts,
+                                          commit + message building, the settings-baseline allowlist
+                                          (baseline_selector.py is the executable copy of ADR-0028's list)
+  local_replicator/                     — the replication cycle: clone/tag/exclude, overlay+drift, spool,
+                                          drainer, device_baseline (the seed), rsync_ops
+packaging/launchd/                      — the two Mac plist templates (replicate, drain)
+tests/                                  — pytest + hypothesis, incl. the crash-injection harness
+Dockerfile                              — the committer's container image
+.github/workflows/                      — lint (incl. the links job), test, test-hypothesis-deep (scheduled),
+                                          build-image, release, renovate
+lychee.toml · mise.toml · pyproject.toml · commitlint.config.js · release-please-config.json
+```
 
 ## Language and constraints
 
-- **Runtime code is Python, managed with `uv`.** Bash is for CI and operational scripts only — never runtime
-  logic. This is a firm project constraint, not a default; see `DESIGN.md` for why.
-- Target the Python version pinned in `mise.toml`, not a version assumed from memory — check what's actually
-  pinned, and when bumping it, verify against current upstream (python.org / astral-sh) rather than guessing.
-- **Do not add a dependency for code that doesn't exist yet.** `pyproject.toml`'s `dependencies` list is
-  intentionally empty. When a component's ticket lands, add exactly the dependencies that component needs, and
-  verify the pinned version against the package's own release notes — don't copy a version from another repo
-  on trust.
-- **Don't copy a version number or config value from another repo on trust, even one that looks like a close
-  analog.** A repo can look authoritative — matching CI shape, matching toolchain — while several of its pinned
-  versions are simply stale because it never reached a released state. Treat any such repo as a source of
-  *shape* only (file layout, how pieces relate); verify every version and config value against current upstream
-  documentation independently, the same way this repository's own scaffold was verified rather than copied.
-- **Exactly three processes may ever mount the vault volume** — see `DESIGN.md` "The volume mount contract" and
-  `docs/DESIGN.md` §1.3/§2 for the full reasoning: headless Obsidian (read-write, content), the vault worker
-  (read-only, content), and the git committer (read-only, content; write-only, `.git/`). The **batch processor
-  takes no mount** — it reads the patch queue and writes only through the MCP gateway. When implementing any of
-  these components' Job/CronJob/Deployment spec (in `ppat/homelab-ops-kubernetes-apps`, not here, but the code
-  here assumes it), don't add a volume mount beyond what's listed above without revisiting that invariant first
-  — an unlisted fourth mounter breaks it, not just violates a style preference.
+- **Runtime code is Python, managed with `uv`; Bash is CI/ops only, never runtime** (ADR-0035 via
+  [the index](./docs/adr/README.md)). Target the Python pinned in `mise.toml` — check it, don't
+  assume.
+- **`pyproject.toml`'s `dependencies` list is empty on purpose and stays that way until a component
+  genuinely needs one** — the shipped components run on the standard library alone. When a new
+  component needs a dependency, add exactly that, verified against the package's own releases.
+- **Never copy a version or config value from another repo on trust**, however close the analog
+  looks — verify against current upstream, the way this scaffold was built.
+- **Exactly three processes may ever mount the vault volume** (headless Obsidian read-write on
+  content; the lint pass read-only; the committer read-only on content with git metadata on its own
+  volume). The processors take **no mount** — they write only through the gated MCP path. A fourth
+  mounter is a design change to ADR-0001, not a manifest detail — see
+  [`DESIGN.md`](./DESIGN.md#one-writer-one-door).
 
-## Working conventions
+## Working in this repository
 
-- **Conventional Commits**, enforced by commitlint (`commitlint.config.js`). Header max 120 chars. Scope must
-  be one of the enum values in `commitlint.config.js`: the six components this repository builds
-  (`worker`, `committer`, `processor`, `drift-channel`, `validator`, `replication`) plus the generic scopes
-  shared across this ecosystem's repositories (`dev-tools`, `github-actions`, `renovate`, `release`, `deps`).
-  Scope generally matches which component a change touches; use no scope (or `dev-tools`) for changes that
-  aren't specific to one component (scaffold, CI, shared utilities).
-- **Lint before pushing**: `pre-commit run --all-files` mirrors `.github/workflows/lint.yaml` and
-  `.pre-commit-config.yaml`. Individual checks can be run standalone — see `README.md` "Development".
-- **Property-based testing (`hypothesis`, in the `dev` dependency group) is for code with invariants that must
-  hold across arbitrary valid inputs — not a default for every test.** Reach for it where structured input and
-  a checkable invariant both exist; use ordinary example-based `pytest` tests everywhere else. The two candidates
-  this repository is expected to have, once the corresponding component lands: the **frontmatter validator**
-  (arbitrary frontmatter, valid or invalid, should round-trip through the JSON-Schema contract consistently —
-  `docs/DESIGN.md` §3 "Schema enforcement") and the **batch processor's patch chunking** (a patch split into
-  chunks, however the splits land, must always reassemble to the original patch — `docs/DESIGN.md` §3 "The batch
-  lane"). Don't write property tests — or any tests — for a component that doesn't exist yet; add them when its
-  ticket lands.
-- **Releases** are independent and automatic via release-please (`release-please-config.json` +
-  `.release-please-manifest.json`). Don't hand-edit `CHANGELOG.md`; it's generated when a release PR merges.
-- **Dependency updates** are managed by Renovate (`.github/renovate.json`), extending the shared
-  `ppat/renovate-presets`. Patch/minor auto-merge if CI passes; majors require review.
-- **Comments in committed code**: a comment should tell a future maintainer (often another agent) something
-  the code itself can't — a non-obvious constraint, a gotcha, a reason a workaround exists. Don't restate what
-  a line does or narrate what changed and why it's better now; that belongs in the commit message, not the file.
+- **Conventional Commits**, enforced by commitlint on branch commits and CI. Header ≤ 120 chars.
+  The scope enum is closed (`commitlint.config.js`): component scopes `committer`, `replication`,
+  `processor`, `validator`, `worker`, `drift-channel`, plus `deps`, `dev-tools`, `github-actions`,
+  `renovate`, `release`, and empty. Two scope names predate the component renames — `worker` is the
+  retired vault worker (today's lint pass), `drift-channel` is `drift-processor`'s ancestor — kept
+  in the enum for history; prefer the scope matching what the diff touches, empty scope for
+  cross-cutting changes.
+- **Releases are release-please**; never hand-edit `CHANGELOG.md`. **`docs` is a visible release
+  type here — a documentation PR proposes a release when merged. Expected, not accidental.**
+- **Lint before pushing**: `pre-commit run --all-files` mirrors CI. Tests: `pytest`, with
+  **hypothesis property tests only where structured input and a checkable invariant meet** — the PR
+  gate runs the fast profile; the deep profile runs on a schedule
+  (`test-hypothesis-deep.yaml`) against a shared example corpus built by `main` and scheduled runs
+  (a PR's own saves are discarded).
+- **The links job** checks every internal link *and anchor* offline on each PR; external links are
+  checked weekly, not per-PR (`lychee.toml` — links into the private vault repo are excluded
+  because an unauthenticated checker cannot tell "moved" from "private").
+- **Renovate** auto-merges patch/minor on green CI; majors need review.
+- **Comments in committed code** earn their place: non-obvious constraints, gotchas, reasons a
+  workaround exists — never restating the line or narrating the diff.
+
+## Standing disciplines
+
+- **Prove controls by violation injection** — create the violation and watch the control fire;
+  "nothing bad happened" proves nothing. The catalogue of proven and pending injections is
+  [`docs/VERIFICATIONS.md`](./docs/VERIFICATIONS.md); a new control lands with its injection row.
+- **Claims are falsifiable** — an acceptance criterion that cannot fail is not one.
+- **One decision per record** in `docs/adr/`, merged only when reversing one would force re-arguing
+  the others; superseding a decision mints a new number, never an edit-in-place.
+- **No alerting until AI triage exists** — propose instrumentation and queryable metrics, never
+  alert rules ([O3](./USE_CASES.md#o3--alerting) is an explicit non-outcome).
+
+## Gotchas that cost real effort
+
+- **Code docstrings still cite sections of the deleted `docs/DESIGN.md`** (61 sites; a dedicated
+  sweep is planned). Resolve any such citation through [`DESIGN.md`](./DESIGN.md) and
+  [the decision-record index](./docs/adr/README.md) — the content all survives; only the addresses
+  are stale.
+- **A green `build-image` run proves nothing about the runtime path** — Xvfb, CDP auto-trust and
+  REST binding are exercised only by a real deployment, never by the image build.
+- **A write-gate refusal is HTTP 200** with the error inside the JSON-RPC envelope — no HTTP-level
+  metric can ever observe the gate; parse the envelope or use queue-native facts.
+- **A `local-replicator` upgrade fails indistinguishably from healthy**
+  ([ot#66](https://github.com/ppat/obsidian-tools/issues/66)): the install path is version-scoped
+  while the launchd plist needs an absolute path, so an upgrade silently strands the schedule —
+  verify after upgrading, not just after installing.
+- **The committer's git dir is a derivable cache, never durable state**: cloned when missing (never
+  `git init` — that would re-root history), with every per-clone setting (`fileMode`,
+  `skip-worktree`, the ignore rule, `quotePath`) reapplied idempotently on every run.
 
 ## Where things are deployed
 
-This repository holds code only — it has no cluster definitions and doesn't deploy anything itself. The
-workloads built here are packaged (as container images, referenced from the sibling
-`ppat/homelab-ops-kubernetes-apps` repository's Kubernetes manifests) and run in-cluster, except for the
-replication script, which runs on the user's Mac outside the cluster entirely. See `DESIGN.md` "Architecture"
-for which component runs where.
+This repository holds code only. The in-cluster workloads are container images referenced by
+`ppat/homelab-ops-kubernetes-apps` (module `apps-ai`) and pinned onto clusters by
+`ppat/homelab-ops-kubernetes-clusters`; `local-replicator` is installed by hand on the operator's
+Mac per `docs/local-replicator.md`. Which component runs where: the component table in
+[`DESIGN.md`](./DESIGN.md#components-one-job-each).

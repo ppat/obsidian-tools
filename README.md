@@ -1,40 +1,43 @@
 # obsidian-tools
 
-Code for **BRAIN**: a git-backed Obsidian vault that a human reads and multiple AI agents write to. See
-[`docs/`](./docs/) for the full design of record and [`DESIGN.md`](./DESIGN.md) for this repository's part in it.
+Code for **BRAIN**: a git-backed Obsidian vault used as a shared brain — the store of the owner's
+knowledge and ideas, written mostly by AI agents, read by the same agents and a human. The design of
+record lives beside this file: [`USE_CASES.md`](./USE_CASES.md) (the outcomes),
+[`DESIGN.md`](./DESIGN.md) (the pillars, invariants and glossary), and [`ROADMAP.md`](./ROADMAP.md)
+(the work and its state), with the decision records under [`docs/adr/`](./docs/adr/README.md).
 
 ## Status
 
-**No application code exists yet.** This repository currently holds only the scaffold (CI, linting, release
-automation, dependency conventions) and the design canon under `docs/`. Everything below describes the target
-shape, not what's implemented today — see [`CLAUDE.md`](./CLAUDE.md) for what that means when working here.
+Two components are shipped and running (`v0.4.0` released; later fixes are merged and ride the next
+release — see [`ROADMAP.md`](./ROADMAP.md) for the delivery gap and everything below):
 
-## What this repository will hold
+- **The git committer** (`obsidian-tools commit`) — runs in-cluster on a schedule, turning the vault
+  volume into git history pushed to two remotes. It never authors content.
+- **`local-replicator`** (`obsidian-tools replicate` + `obsidian-tools drain`) — runs on the
+  operator's Mac under launchd, keeping the device-facing iCloud vault current from git, one-way and
+  non-destructively: device-side drift is captured to a durable local spool before anything is
+  overwritten. The drainer's destination is a deliberate stub (discard) until the work queue exists.
 
-BRAIN has exactly one process that ever writes the vault's files — a headless, in-cluster Obsidian instance,
-reached only through a permission-scoped MCP server (see [`DESIGN.md`](./DESIGN.md) for why). Every other
-component in this repository is a *client* of that one door:
+Still to build, each specified in the design and tracked on the roadmap: the work queue and its
+three processors (`batch-processor`, `promotion-processor`, `drift-processor`), the admission
+validator, and the lint pass.
 
-- **Vault worker** — ingest/promote, lint, and publish entrypoints, run as a scheduled job.
-- **Git committer** — turns the vault volume into git history; never writes vault content itself.
-- **Batch processor** — applies git patches from a queue through the MCP server, for bulk work too large to
-  run tool-call-by-tool-call.
-- **Drift-reconciliation channel** — dispatches device-side edits (typed directly into Obsidian on Mac/iOS)
-  back into the system as ordinary agent writes.
-- **Frontmatter validator** — a JSON-Schema validator enforcing the vault's schema at the promotion gate.
-- **Replication script** — runs on the user's Mac, not in the cluster; orchestrates `rsync` and `git` to keep
-  the iCloud-synced Obsidian vault on Mac/iOS current from the authoritative cluster copy.
+## Documentation
 
-None of these exist yet. Each lands as its own ticket — see the epic
-[`ppat/homelab-ops-kubernetes-apps#3439`](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3439) for
-sequencing, and [`docs/`](./docs/) for the design each of them implements.
+| Where | What |
+| --- | --- |
+| [`USE_CASES.md`](./USE_CASES.md) · [`DESIGN.md`](./DESIGN.md) · [`ROADMAP.md`](./ROADMAP.md) | Outcomes and acceptance criteria · pillars, invariants and the settled glossary · all the work in one place |
+| [`docs/adr/`](./docs/adr/README.md) | One decision per record: context, decision, alternatives, consequences |
+| [`docs/VERIFICATIONS.md`](./docs/VERIFICATIONS.md) | Every control's proving injection and answerable-by-doing check, past and pending |
+| [`docs/`](./docs/README.md) | The research canon behind the design, and the operator runbooks (`local-replicator.md`, `settings-lock.md`, `gui-access.md`) |
 
 ## Related repositories
 
-- [`ppat/obsidian-vault`](https://github.com/ppat/obsidian-vault) — the vault content itself (the markdown, not
-  the code that writes it).
-- [`ppat/homelab-ops-kubernetes-apps`](https://github.com/ppat/homelab-ops-kubernetes-apps) — deploys the
-  workloads this repository's code runs as, alongside the rest of the homelab.
+- [`ppat/obsidian-vault`](https://github.com/ppat/obsidian-vault) — the vault content itself (private).
+- [`ppat/homelab-ops-kubernetes-apps`](https://github.com/ppat/homelab-ops-kubernetes-apps) — the
+  deployment manifests (module `apps-ai`) for the in-cluster workloads built here.
+- [`ppat/homelab-ops-kubernetes-clusters`](https://github.com/ppat/homelab-ops-kubernetes-clusters) —
+  composes those modules onto the real clusters at pinned release tags.
 
 ## Development
 
@@ -57,15 +60,17 @@ mise exec -- uv run pytest
 pre-commit run --all-files
 ```
 
-CI runs the same checks — see [`.github/workflows/lint.yaml`](./.github/workflows/lint.yaml) and
+CI runs the same checks plus an offline link-and-anchor check — see
+[`.github/workflows/lint.yaml`](./.github/workflows/lint.yaml) and
 [`.github/workflows/test.yaml`](./.github/workflows/test.yaml).
 
 ## Releases
 
-Versioned independently via [release-please](https://github.com/googleapis/release-please) — merging a release
-PR cuts a tagged release and updates `CHANGELOG.md` automatically. Don't hand-edit `CHANGELOG.md`.
+Versioned via [release-please](https://github.com/googleapis/release-please) — merging a release PR
+cuts a tagged release and updates `CHANGELOG.md` automatically. Don't hand-edit `CHANGELOG.md`.
 
-## Language and tooling conventions
+## Conventions
 
-Runtime code is Python, managed with `uv`; shell is for CI/ops only, never runtime — see
-[`CLAUDE.md`](./CLAUDE.md) for the full set of working conventions for this repository.
+Runtime code is Python, managed with `uv`; shell is for CI/ops only, never runtime. The full working
+conventions for this repository — an agent's orientation included — are in
+[`CLAUDE.md`](./CLAUDE.md).
