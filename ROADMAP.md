@@ -14,6 +14,9 @@ are **[measured]** (read from a repo, an API, or a record that records its own m
 epic's phase table; where those disagreed with each other, the arbitration is recorded in
 [Records this roadmap supersedes](#records-this-roadmap-supersedes-or-arbitrates).
 
+**Acceptance.** Each unit's proving injections — the violation-injection test plans, past and
+pending — live in the [verification catalogue](./docs/VERIFICATIONS.md), keyed to the units below.
+
 **Identifiers.** Outcome identifiers — the [pipeline](./USE_CASES.md#axis-1--the-content-pipeline)
 [S1](./USE_CASES.md#s1--admitted)–[S4](./USE_CASES.md#s4--retrievable), [writers](./USE_CASES.md#axis-2--writers-connected) [W1](./USE_CASES.md#axis-2--writers-connected)–[W6](./USE_CASES.md#axis-2--writers-connected),
 [readers](./USE_CASES.md#axis-3--readers-connected) [R1](./USE_CASES.md#axis-3--readers-connected)–[R5](./USE_CASES.md#axis-3--readers-connected), and
@@ -185,7 +188,8 @@ now built against months of observed behaviour instead of guesses.
 
 Each unit serves exactly one outcome — a unit that served two could not move without dragging an
 outcome nobody was thinking about. Units with no ticket are real gaps, listed again in
-[Outcomes with no work behind them](#outcomes-with-no-work-behind-them).
+[Outcomes with no work behind them](#outcomes-with-no-work-behind-them). Pending injections per
+unit: the [verification catalogue](./docs/VERIFICATIONS.md).
 
 ### Group A — pipeline mechanisms
 
@@ -205,7 +209,8 @@ Zero of Group A is implemented [measured 2026-08-28].
   backpressure engagements countable.
 - [ ] **A3 — the promotion stream and `promotion-processor`** → [S3](./USE_CASES.md#s3--placed) · [apps#3444](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3444) · [V4](#v4--placement-through-its-first-pass)
   Real-time pointer draining; refuses any pointer outside `00-inbox/`; calls the admission validator
-  on every relocation.
+  on every relocation. *Criteria:* refused pointers counted — a rising count is exactly the
+  prompt-injection attempt the check exists to catch.
 - [ ] **A4 — the admission validator** → [S2](./USE_CASES.md#s2--sound) · [ot#6](https://github.com/ppat/obsidian-tools/issues/6) · [V2](#v2--the-safeguard-minimum)
   One shared admission check, three callers (promotion, batch, lint), two enforcement strengths;
   quarantine-never-delete with machine-readable reasons, counted. First pass: the mechanical checks
@@ -242,8 +247,9 @@ why each lands independently. [W1](./USE_CASES.md#axis-2--writers-connected) is 
   generates and enqueues patches.
 - [ ] **B2 — [W1](./USE_CASES.md#axis-2--writers-connected)-interactive: Claude Code's direct writes** → [W1](./USE_CASES.md#axis-2--writers-connected) · [apps#3445](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3445) · [V3](#v3--writers-on-iterate-in-production)
   Write keys on the agent handle; the (already-set, inert) path scope going live; optimistic-
-  concurrency wiring; the `PreToolUse` detective hook (this runner only); its promotion-stream
-  credential.
+  concurrency wiring; the runner's write hook installed as a detective control (this runner only —
+  the available hook fires after the write; whether the runner's blocking pre-write variant
+  replaces it is a recorded revisit); its promotion-stream credential.
 - [ ] **B3 — [W2](./USE_CASES.md#axis-2--writers-connected): the NAS NFS drop watcher** → [W2](./USE_CASES.md#axis-2--writers-connected) · **no ticket** · unscheduled
   Blocked on a design decision, not just a credential: see [Open decisions](#open-decisions).
 - [ ] **B4 — [W3](./USE_CASES.md#axis-2--writers-connected): OpenClaw write** → [W3](./USE_CASES.md#axis-2--writers-connected) · [apps#3445](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3445) · [V3](#v3--writers-on-iterate-in-production)
@@ -315,6 +321,8 @@ shared mechanisms nothing else owns. *Criteria distribute; shared mechanisms do 
   maximum-window and post-disable drain are hardening-band refinements.
 - [ ] **D5 — stronger container isolation** → [S1](./USE_CASES.md#s1--admitted) (a containment claim; arguable, flagged) ·
   [apps#3447](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3447) · [V6](#v6--harden-and-tighten-from-experience)
+  The named attempt: user-namespace isolation (`hostUsers: false`) over the vault volume; if the
+  storage layer's mounts cannot support it, the current accepted posture stays, deliberately.
 - [ ] **D6 — dashboards** → [O1](./USE_CASES.md#o1--measured) · **no ticket** · [V6](#v6--harden-and-tighten-from-experience)
   Views over what [O1](./USE_CASES.md#o1--measured) collects, built when the questions are real — a dashboard built before the
   questions are known displays the wrong things and is cheap to rebuild later. The one assigned

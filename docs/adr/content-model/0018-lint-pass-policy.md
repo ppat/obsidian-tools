@@ -24,9 +24,15 @@ who lives on a phone.
 - **The auto-fix boundary is drawn at judgment about meaning, not at ease of automation.**
   Mechanical breakage is fixed (key order, ISO dates, lowercase tags, banned characters, `updated:`
   stamping, unambiguous dead links); anything requiring a judgment is flagged only (contradictions,
-  stale claims, orphan disposition, near-duplicate merges, `trigger:`/`authority:` contradictions —
-  which field is wrong is itself a judgment — and any promotion).
-- **Findings surface in three tiers**: the full report in `_ops/lint/`; the **review digest** —
+  stale claims — via `reviewed:` age and the `refs:` staleness graph — orphan disposition,
+  near-duplicate merges, broken queries, a filename stem no longer matching its slug,
+  `trigger:`/`authority:` contradictions — which field is wrong is itself a judgment — and any
+  promotion). Deterministic checks run in code; contradiction and stale-claim detection is
+  judgment and runs through the gateway's models.
+- **Every normalisation change is logged to the audit trail** (`_ops/audit/`) — the third
+  granularity of history beside git and the append-only log.
+- **Findings surface in three tiers**: the full report in `_ops/lint/` (plus a one-line append to
+  the log); the **review digest** —
   ranked by damage (not recency), hard-capped at roughly seven items, pushed over WhatsApp with
   actionable replies (approve/skip/explain) that flow back through the ordinary gated path; and
   metrics. The cap and the push are the phone constraint taken seriously: the review loop closes

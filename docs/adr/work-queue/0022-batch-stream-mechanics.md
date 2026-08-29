@@ -37,6 +37,8 @@ applies each through the same gated MCP path as ordinary ingest.
   costs only time — unacked messages redeliver, nothing is lost. Exponential backoff with jitter, a
   cap on in-flight requests (likely one), a dead-letter path instead of infinite redelivery. The
   asymmetry is deliberate and one-way: bulk yields to interactive, never the reverse.
+- **Triggering policy:** a run starts when the stream exceeds a size threshold, or at least once a
+  day whenever non-empty — and only inside a permitted time window.
 - **The watchdog exists before the stream ever runs unattended.** If the processor dies while the
   agent handle is disabled for a run, every agent write stops silently and indefinitely — far worse
   than a slow batch. The smallest shape ships (a dumb re-enable); the maximum-window and

@@ -38,6 +38,11 @@ GUI (undocumented, subtly wrong exactly where it must be right); locking setting
 
 ## Consequences
 
+One display artefact worth knowing: a directory holding only a `.gitkeep` is *omitted* by the
+note-listing tool (dotfiles are ignored, so the directory reads as empty and is dropped, not
+reported empty) — the folder map is the schema file's contract regardless of what the listing
+shows, and writes into such directories succeed.
+
 One defect the record keeps for its lesson: the daily-note format key was **never actually
 written** — the checklist item was half-performed because the GUI already displayed the right
 default, so the requirement was satisfied by coincidence, invisible to inspection. That is why the

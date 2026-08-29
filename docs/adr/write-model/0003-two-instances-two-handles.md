@@ -25,7 +25,8 @@ instance would leak that instance's path scope to whoever held the other handle.
 per client on the agent handle, and two are worth recording: **n8n gets a narrow write grant, not
 read-only** — the founding research said read-only, but its daily-organise workflow needs writes,
 resolved as frontmatter-status updates plus appends to the log and nothing else (no queue access,
-and no write path to the global todo, which holds queries only); and **the human-facing browser
+and no write path to the global todo, which holds queries only — n8n reaches the gateway through
+its own SSRF allowlist, and only the gateway); and **the human-facing browser
 chat is read-only** — the human is not a writer
 ([the pillar](../../../DESIGN2.md#humans-originate-agents-act)). Batch runs disable
 the agent handle only; the ingestor handle stays live, which is what lets promotion keep draining

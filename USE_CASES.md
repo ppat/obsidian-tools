@@ -18,9 +18,9 @@ the important ones, which bubble up by salience or some other form of prominence
 automation: agents doing work on the owner's ideas, on the owner's behalf. Content enters through
 controlled paths, is checked for soundness, is routed to where it belongs, and is readable
 everywhere the owner actually is — a chat window on a phone, an agent's context window, or the
-native Obsidian app on a device that works offline. On both axes the human originates and agents act: a voice note, a dropped document, or
-tasked research arrives as an agent write; "find what relates to this note" comes back as an agent
-read. Direct human writes are extremely rare, deliberately; direct human reads are more common than
+native Obsidian app on a device that works offline. On both axes the human originates and agents
+act: a voice note, a dropped document, or tasked research arrives as an agent write; "find what
+relates to this note" comes back as an agent read. Direct human writes are extremely rare, deliberately; direct human reads are more common than
 direct human writes, though most human-motivated reading is still performed by agents.
 
 ## Governing constraints
@@ -227,8 +227,8 @@ is the only thing that should drive their position.
 **For any past window, the platform's behaviour can be answered from stored metrics and logs.**
 
 *Falsified by:* a question about a window already elapsed — write volume, gate-refusal rate, queue
-depth, inbox and quarantine depth, time-since-last-write, image age — that the metric store cannot
-answer.
+depth, inbox and quarantine depth, lint findings by class, replica lag, MCP error rate,
+time-since-last-write, image age — that the metric store cannot answer.
 
 *Why this outcome is unlike every other on this map:* it can only be falsified **retrospectively**,
 and by then the data is gone. A metric not collected is lost unrecoverably; a dashboard or an alert

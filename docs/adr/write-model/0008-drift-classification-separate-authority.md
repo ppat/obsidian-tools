@@ -23,11 +23,17 @@ total" was the wrong generalisation, and it would have made the drift path depen
 that does not exist until [A4](../../../ROADMAP.md#group-a--pipeline-mechanisms) ships. The
 device-side detector stays dumb by contract: it submits every path the comparison flags and judges
 nothing, so it can never silently drop a real edit. Classification is server-side, using signals
-decidable without guessing intent: location (drift on fixed-address contract files is presumed
-unintentional), schema damage (an edit that breaks validation is presumed unintentional anywhere),
-shape (whitespace-only, mid-word insertions, uncompensated truncation — legible because drift is a
-diff against a known baseline, not a snapshot), and contract violation (prose in a queries-only
-file). Once an edit survives, dispatch is dumb — it joins the ordinary ingest path and faces the
+decidable without guessing intent: location (drift on a fixed-address contract file — the log, the
+global todo, the schema file and its pointer, the templates and ops areas — is presumed
+unintentional, since the folder map already says humans don't author there), schema damage (an edit
+that breaks validation is presumed unintentional anywhere), shape (whitespace-only, mid-word
+insertions, uncompensated truncation — legible because drift is a diff against a known baseline,
+not a snapshot), and contract violation (prose in a queries-only file). **The home note
+(`00-index.md`) is deliberately carved out of the fixed-address list**: it is the one hand-curated
+root file (and carries the salience-audit checklist), so drift on it classifies like an ordinary
+content note — and the carve-out closes what would otherwise be that file's *only* mutation route,
+since it sits outside both MCP instances' write scopes and only drift or the GUI can ever change
+it. Once an edit survives, dispatch is dumb — it joins the ordinary ingest path and faces the
 validator like any other write.
 
 ## Alternatives considered

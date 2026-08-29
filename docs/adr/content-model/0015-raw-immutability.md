@@ -32,8 +32,10 @@ this boundary: a modification to a raw note never reaches it.
 
 ## Consequences
 
-The acceptance test for this behaviour tests `batch-processor`'s own logic, not an MCP-layer
-refusal — a code regression, not a misconfiguration, and the two are debugged differently. Known
+The exemption's poisoning risk returns if anyone ever validates or promotes raw *en masse* —
+promotion is inherently incremental and rate-limited, and a promotion batch larger than a triage
+session is the tripwire. The acceptance test for this behaviour tests `batch-processor`'s own
+logic, not an MCP-layer refusal — a code regression, not a misconfiguration, and the two are debugged differently. Known
 accepted residue until a third MCP instance exists
 ([ADR-0003](../write-model/0003-two-instances-two-handles.md)): other ingestor-handle holders could
 technically modify raw and are held back by scope discipline, not a backstop.
