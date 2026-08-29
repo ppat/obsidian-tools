@@ -1,7 +1,7 @@
 # 0025. The replication cycle: one parked clone, overlay-and-diff, spool-gated publish, tag advance
 
 **Status:** Accepted ·
-**Pillar:** [The device loop is non-destructive by ordering](../../../DESIGN2.md#the-device-loop-is-non-destructive-by-ordering-not-by-hope) ·
+**Pillar:** [The device loop is non-destructive by ordering](../../../DESIGN.md#the-device-loop-is-non-destructive-by-ordering-not-by-hope) ·
 **Serves:** [S4](../../../USE_CASES.md#s4--retrievable), [W6](../../../USE_CASES.md#axis-2--writers-connected) capture ·
 **Ticket:** [ot#3](https://github.com/ppat/obsidian-tools/issues/3) (closed; the shipped shape)
 
@@ -15,7 +15,7 @@ than silently replaced — the sequence is the reasoning.
 
 One cache clone, **parked at the `LAST_CHECKOUT` tag between cycles, is itself the baseline** — no
 second checkout. The ordering (diagrammed in
-[DESIGN2](../../../DESIGN2.md#the-device-loop-is-non-destructive-by-ordering-not-by-hope)): park and
+[DESIGN](../../../DESIGN.md#the-device-loop-is-non-destructive-by-ordering-not-by-hope)): park and
 prune → overlay the device tree onto the baseline (rsync in, `--delete`, excluding `.git` and
 `.obsidian` by **bare name** — a trailing slash is inert against a symlink or plain file, after
 which `--delete` destroys the real directory) → `git diff` *is* the drift enumeration, yielding

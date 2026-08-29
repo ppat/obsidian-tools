@@ -1,7 +1,7 @@
 # 0002. The GUI exception: one pod, dormant VNC, port-forward only
 
 **Status:** Accepted ·
-**Pillar:** [Exceptions are declared, never discovered](../../../DESIGN2.md#exceptions-are-declared-never-discovered)
+**Pillar:** [Exceptions are declared, never discovered](../../../DESIGN.md#exceptions-are-declared-never-discovered)
 
 ## Context
 

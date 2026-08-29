@@ -30,7 +30,7 @@ method = "get"
 # the build.
 accept = ["200", "202", "206", "429"]
 
-# ppat/obsidian-vault is private by design (docs/DESIGN.md "G3"), and this job's
+# ppat/obsidian-vault is private by design (ADR-0029, docs/adr/replication/), and this job's
 # GITHUB_TOKEN is scoped to the repository the workflow runs in -- it does not extend to
 # a *different* private repo. Confirmed with the real GITHUB_TOKEN inside Actions, not
 # inferred: https://github.com/ppat/obsidian-tools/actions/runs/33217007951 still 404s

@@ -1,7 +1,7 @@
 # BRAIN — Roadmap
 
 All the work in one place: what has been delivered, what remains, and how every piece ties to the
-outcomes in [`USE_CASES.md`](./USE_CASES.md) and the design in [`DESIGN2.md`](./DESIGN2.md). This is
+outcomes in [`USE_CASES.md`](./USE_CASES.md) and the design in [`DESIGN.md`](./DESIGN.md). This is
 the one top-level document that changes as work progresses; the other two are the stable contract it
 is measured against. It is organised around a [delivery posture](#delivery-posture) — value first,
 learn in production, harden later — and a [value path](#the-value-path) that sequences the work by

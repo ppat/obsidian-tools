@@ -1,7 +1,7 @@
 # 0009. Provenance is three fields: `source:` / `authority:` / `trigger:`
 
 **Status:** Accepted ·
-**Pillar:** [Provenance is three questions](../../../DESIGN2.md#provenance-is-three-questions-and-self-report-never-unlocks-a-gate) ·
+**Pillar:** [Provenance is three questions](../../../DESIGN.md#provenance-is-three-questions-and-self-report-never-unlocks-a-gate) ·
 **Serves:** [S1](../../../USE_CASES.md#s1--admitted), [S2](../../../USE_CASES.md#s2--sound)
 
 ## Context

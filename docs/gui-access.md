@@ -1,7 +1,7 @@
 # GUI access
 
 An operator runbook for reaching the headless Obsidian instance's own GUI in the
-cluster. This is **P8** (`DESIGN.md` section 1.3): a declared design exception, not a
+cluster. This is **P8** ([ADR-0002](./adr/write-model/0002-gui-exception-dormant-vnc.md)): a declared design exception, not a
 normal access path.
 
 **P8 has no server-side gate, no validation, and no record.** A write made here carries
@@ -120,8 +120,8 @@ already hold those files from a manual seed an hour earlier - that was luck from
 not a safety net. Do not treat git as a backup for GUI work until it is actually wired up
 as one.
 
-The full procedure lands in a later phase, once the committer exists (see `DESIGN.md`
-Phase 2 and the Commit section of `settings-lock.md`): at that point the instruction
+The full procedure lands in a later phase, once the committer exists (see [ADR-0028](./adr/replication/0028-settings-baseline-seed.md)
+and the Commit section of `settings-lock.md`): at that point the instruction
 becomes "force a commit before opening the GUI." Until then, there is no general recovery
 path for a mistake made here beyond whatever git already happens to hold.
 

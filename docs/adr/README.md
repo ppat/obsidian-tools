@@ -2,10 +2,10 @@
 
 One decision per record: its context, the decision, the alternatives rejected, and the
 consequences. The split with the top-level design is deliberate:
-[`DESIGN2.md`](../../DESIGN2.md) holds what would still be true if any individual reversible
+[`DESIGN.md`](../../DESIGN.md) holds what would still be true if any individual reversible
 decision had gone the other way; each record here holds one such decision. Together they capture
 the entire design — implemented parts as much as future ones. The vocabulary is
-[`DESIGN2.md`'s Glossary](../../DESIGN2.md#glossary); outcome identifiers are defined in
+[`DESIGN.md`'s Glossary](../../DESIGN.md#glossary); outcome identifiers are defined in
 [`USE_CASES.md`](../../USE_CASES.md), work units and value increments in
 [`ROADMAP.md`](../../ROADMAP.md).
 

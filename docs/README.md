@@ -1,26 +1,28 @@
-# Design canon
+# Design canon and research inputs
 
-This directory is the versioned home of BRAIN's design of record. It replaces the GitHub issue attachments
-these documents previously lived only as (`ppat/homelab-ops-kubernetes-apps#3439`), which was inconsistent
-with the project's own durability constraint: the design of a durability-focused system shouldn't itself be
-hostage to a third-party issue tracker's attachment storage.
-
-Read `DESIGN.md` first, and read it as current. Read the other three only for the reasoning behind it.
+This directory holds the research record behind BRAIN's design, the decision records, the
+verification catalogue, and the operational runbooks. **The design of record lives at the
+repository root**: [`DESIGN.md`](../DESIGN.md) (the pillars and invariants, with the settled
+Glossary), [`USE_CASES.md`](../USE_CASES.md) (the outcomes and their acceptance criteria), and
+[`ROADMAP.md`](../ROADMAP.md) (the work, its state, and the mapping between the two). The three
+documents that previously carried the design are retired; their content lives in that triad, in the
+decision records, and in the verification catalogue.
 
 ## Reading order and authority
 
 | Document | Role | Authority |
 | --- | --- | --- |
-| [`DESIGN.md`](./DESIGN.md) | The design itself: what BRAIN is, why it's shaped this way, what remains open | **Current design of record.** Supersedes CANON-1 and CANON-2 wherever they conflict with it. |
-| [`FINDINGS-v1-source-review.md`](./FINDINGS-v1-source-review.md) | A primary-source review conducted to check claims made in CANON-1 and CANON-2 against upstream documentation and repositories | Corrects specific claims in the two canon documents below — see "Corrections to canon" in that file. Superseded, in turn, by anything `DESIGN.md` says explicitly. |
-| [`CANON-1-designing-brain.md`](./CANON-1-designing-brain.md) | Research input: community practice for vaults written and organised by multiple agents | Research input, not current guidance on its own. Read through `DESIGN.md` and `FINDINGS-v1`, not standalone. |
-| [`CANON-2-mcp-research.md`](./CANON-2-mcp-research.md) | Research input: selecting an Obsidian MCP server | Research input, not current guidance on its own. Read through `DESIGN.md` and `FINDINGS-v1`, not standalone. |
+| [`../DESIGN.md`](../DESIGN.md) + [`adr/`](./adr/README.md) | The design: invariants in the design document, every reversible decision as a record | **Current design of record.** Supersedes the canon documents wherever they conflict |
+| [`VERIFICATIONS.md`](./VERIFICATIONS.md) | Every control's proving injection and answerable-by-doing check, past and pending | The acceptance layer; status per row |
+| [`FINDINGS-v1-source-review.md`](./FINDINGS-v1-source-review.md) | A primary-source review checking CANON-1/CANON-2 against upstream documentation and repositories | Corrects specific canon claims; superseded in turn by anything the design decides explicitly |
+| [`CANON-1-designing-brain.md`](./CANON-1-designing-brain.md) | Research input: community practice for vaults written and organised by multiple agents | Research input, not current guidance. Read through the design and FINDINGS, never standalone |
+| [`CANON-2-mcp-research.md`](./CANON-2-mcp-research.md) | Research input: selecting an Obsidian MCP server | Research input, not current guidance. Read through the design and FINDINGS, never standalone |
 
-The dependency runs one way: `DESIGN.md` was written by drawing on `FINDINGS-v1`, which was itself written to
-check claims made in `CANON-1` and `CANON-2`. Nothing later in that chain gets overridden by something earlier
-in it. A claim in a CANON document that `FINDINGS-v1` corrects, or that `DESIGN.md` decides differently, is
-superseded — the CANON documents are kept unedited as a historical record of what was researched, not as a
-document to reconcile against current decisions.
+The dependency runs one way: the design drew on `FINDINGS-v1`, which was written to check claims in
+`CANON-1` and `CANON-2`. Nothing later in that chain is overridden by something earlier in it. The
+canon documents are kept unedited as a historical record of what was researched (their internal
+links are maintained mechanically when files move, nothing more); a canon claim that FINDINGS
+corrects, or that the design decides differently, is superseded.
 
 ## Also in this directory, and not canon
 
@@ -52,19 +54,13 @@ found to be wrong or outdated against primary sources, including:
 
 - **CANON-1's claim that a Claude Code `PostToolUse` hook blocks a write that fails validation is false** — the
   tool has already run by the time that hook fires; only `PreToolUse` can block. This is the highest-severity
-  correction, and `DESIGN.md` §3 Gate 0 designs around it explicitly (a detective, not preventive, control at
-  that point).
+  correction, and the design builds around it explicitly: prevention lives at the curated boundary, the
+  runner hook is detective ([ADR-0007](./adr/write-model/0007-validation-placement.md)).
 - CANON-2's claim that `shanehull/obsidian-remote` published no pullable image was outdated — a pullable image
-  now exists — though `DESIGN.md` sets the project aside anyway, on different and stronger grounds (no GUI, own
-  bundled MCP server).
+  now exists — though the design sets the project aside anyway, on different and stronger grounds (no GUI, own
+  bundled MCP server; [ADR-0041](./adr/platform/0041-mcp-stack-selection.md)).
 - A discrepancy (not fully resolved) in CANON-2's claimed last-updated date for `StevenStavrakis/obsidian-mcp`
   against GitHub's own `pushed_at` timestamp.
 
-Treat any claim from CANON-1 or CANON-2 that isn't repeated or endorsed in `DESIGN.md` as unverified at best,
-and check `FINDINGS-v1` before relying on it.
-
-## Status
-
-No code in this repository exists yet — see the root [`README.md`](../README.md) and [`CLAUDE.md`](../CLAUDE.md)
-for what's here today. These documents describe the target design that the rest of this repository, once
-written, implements.
+Treat any claim from CANON-1 or CANON-2 that isn't repeated or endorsed by the current design as
+unverified at best, and check `FINDINGS-v1` before relying on it.

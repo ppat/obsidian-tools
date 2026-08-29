@@ -1,7 +1,7 @@
 # 0001. One writer, one door — and two-way device sync deleted rather than mitigated
 
 **Status:** Accepted ·
-**Pillar:** [One writer, one door](../../../DESIGN2.md#one-writer-one-door) ·
+**Pillar:** [One writer, one door](../../../DESIGN.md#one-writer-one-door) ·
 **Serves:** [S1](../../../USE_CASES.md#s1--admitted)
 
 ## Context

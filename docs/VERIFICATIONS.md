@@ -2,7 +2,7 @@
 
 Every control's proving injection and every answerable-by-doing check, past and pending. The
 project's acceptance standard is
-[violation injection](../DESIGN2.md#prove-controls-by-violation-injection-keep-claims-falsifiable):
+[violation injection](../DESIGN.md#prove-controls-by-violation-injection-keep-claims-falsifiable):
 a control is proven by deliberately creating the violation it exists to stop and watching it fire,
 never by observing that nothing bad happened. This catalogue is those test plans in one place —
 rekeyed from the retired phase numbering to the [roadmap's](../ROADMAP.md) units, so each pending

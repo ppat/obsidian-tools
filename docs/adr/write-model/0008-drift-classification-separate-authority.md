@@ -18,7 +18,7 @@ Classification is a stage inside `drift-processor`, **upstream of the common ing
 never a call into the validator**. The two answer different questions: *did a human mean this* is
 asked only of drift; *does this content meet the schema and provenance bar* is asked of everything,
 and stays the validator's sole job. The invariant is
-[one authority per question](../../../DESIGN2.md#one-authority-per-question) — "one authority
+[one authority per question](../../../DESIGN.md#one-authority-per-question) — "one authority
 total" was the wrong generalisation, and it would have made the drift path depend on a validator
 that does not exist until [A4](../../../ROADMAP.md#group-a--pipeline-mechanisms) ships. The
 device-side detector stays dumb by contract: it submits every path the comparison flags and judges
