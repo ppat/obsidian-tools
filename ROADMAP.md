@@ -31,11 +31,11 @@ work *units*, their outcome mapping, their dependencies, and their state; ticket
 execution detail. That means unit state is deliberately recorded in two places (here and on the
 tickets), and the two can diverge — the same failure that let two earlier documents disagree about
 the same work for weeks. The mitigations, owned by whoever updates either side: every ticket names
-the unit it serves (one unit per ticket, going forward); every unit here names its tickets; and the
+the unit it serves (one unit per ticket); every unit here names its tickets; and the
 **Position** line below is re-dated whenever the checklists are reconciled against the tickets, so
 staleness is detectable instead of silent.
 
-**Position: 2026-08-28.**
+**Position: 2026-08-29.**
 
 ## Delivery posture
 
@@ -203,11 +203,11 @@ Zero of Group A is implemented [measured 2026-08-28].
   subject outside its grant) before any processor exists.
   *[O1](./USE_CASES.md#o1--measured) criteria ride on it:* per-stream depth, ack, nack, dead-letter metrics collected and
   queryable.
-- [ ] **A2 — the batch stream and `batch-processor`** → [S1](./USE_CASES.md#s1--admitted) · [ot#5](https://github.com/ppat/obsidian-tools/issues/5) (code) + [apps#3444](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3444) (manifests) · [V1](#v1--content-in-content-readable)
+- [ ] **A2 — the batch stream and `batch-processor`** → [S1](./USE_CASES.md#s1--admitted) · [ot#5](https://github.com/ppat/obsidian-tools/issues/5) (code) + [apps#3875](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3875) (deploy) · [V1](#v1--content-in-content-readable)
   Strict FIFO; stale patches rejected to the producer; the raw layer's create-only enforcement;
   backpressure keyed on promotion-stream depth; dead-letter path. *Criteria:* raw-refusals and
   backpressure engagements countable.
-- [ ] **A3 — the promotion stream and `promotion-processor`** → [S3](./USE_CASES.md#s3--placed) · [apps#3444](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3444) · [V4](#v4--placement-through-its-first-pass)
+- [ ] **A3 — the promotion stream and `promotion-processor`** → [S3](./USE_CASES.md#s3--placed) · [ot#86](https://github.com/ppat/obsidian-tools/issues/86) (code) + [apps#3876](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3876) (deploy) · [V4](#v4--placement-through-its-first-pass)
   Real-time pointer draining; refuses any pointer outside `00-inbox/`; calls the admission validator
   on every relocation. *Criteria:* refused pointers counted — a rising count is exactly the
   prompt-injection attempt the check exists to catch.
@@ -216,22 +216,22 @@ Zero of Group A is implemented [measured 2026-08-28].
   quarantine-never-delete with machine-readable reasons, counted. First pass: the mechanical checks
   and the finance hard block, nothing speculative. See [Open decisions](#open-decisions) for the
   ratification this unit needs.
-- [ ] **A5 — the lint pass** → [S2](./USE_CASES.md#s2--sound) · [ot#6](https://github.com/ppat/obsidian-tools/issues/6) (code) + [apps#3445](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3445) (CronJob manifests) · [V2](#v2--the-safeguard-minimum)
+- [ ] **A5 — the lint pass** → [S2](./USE_CASES.md#s2--sound) · [ot#83](https://github.com/ppat/obsidian-tools/issues/83) (code) + [apps#3445](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3445) (CronJob manifests) · [V2](#v2--the-safeguard-minimum)
   Whole-vault conformance and hygiene; the `trigger:`/`authority:` consistency check; additive-only
   normalisation in the pass's own code; the review digest. Runs against whatever content exists —
   it does not depend on agent writes being open. *Criteria:* inbox depth, quarantine depth,
   rejection counts, unstamped-note counts emitted from the pass itself.
-- [ ] **A6 — the [S2](./USE_CASES.md#s2--sound) tolerance line** → [S2](./USE_CASES.md#s2--sound) · **no ticket** · [V2](#v2--the-safeguard-minimum)
+- [ ] **A6 — the [S2](./USE_CASES.md#s2--sound) tolerance line** → [S2](./USE_CASES.md#s2--sound) · [ot#84](https://github.com/ppat/obsidian-tools/issues/84) · [V2](#v2--the-safeguard-minimum)
   A written statement of tolerated badness, placed inside the linter — the instrument that makes
   "minimum confidence" falsifiable and keeps [V2](#v2--the-safeguard-minimum) from creeping toward scenario coverage. Written
   before A5 it is a specification; after, a retrofit onto behaviour that already became the
   de-facto answer.
-- [ ] **A7 — the drift stream and `drift-processor`** → [W6](./USE_CASES.md#axis-2--writers-connected) · [ot#4](https://github.com/ppat/obsidian-tools/issues/4) (code) + [apps#3444](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3444) (manifests) · [V5](#v5--humans-on-devices)
+- [ ] **A7 — the drift stream and `drift-processor`** → [W6](./USE_CASES.md#axis-2--writers-connected) · [ot#4](https://github.com/ppat/obsidian-tools/issues/4) (code) + [apps#3877](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3877) (deploy) · [V5](#v5--humans-on-devices)
   The intentionality classifier (server-side; the device stays dumb); reconciliation against
   upstream history **before** stamping `authority: human`; `matches_upstream` treated as evidence,
   never as a rule — the plausible reading discards genuine human deletions; dispatch through the
   narrow inbox-scoped handle.
-- [ ] **A8 — salience/confidence promotion, demotion, and note merging** → [S3](./USE_CASES.md#s3--placed) · **no ticket** · [V4](#v4--placement-through-its-first-pass)
+- [ ] **A8 — salience/confidence promotion, demotion, and note merging** → [S3](./USE_CASES.md#s3--placed) · [ot#85](https://github.com/ppat/obsidian-tools/issues/85) · [V4](#v4--placement-through-its-first-pass)
   [S3](./USE_CASES.md#s3--placed)'s advanced half, and where the platform's purpose lands: the mechanism by which important
   ideas bubble up for agents to work on. Its *first pass* is inside the definition of project done,
   so this is in-scope scope with zero coverage — the largest gap on this map. Scoped by the
@@ -242,27 +242,27 @@ Zero of Group A is implemented [measured 2026-08-28].
 Largely the same shape each time — a credential, a handle, agreement on the message form — which is
 why each lands independently. [W1](./USE_CASES.md#axis-2--writers-connected) is two connections through two mechanisms at two different gates.
 
-- [ ] **B1 — [W1](./USE_CASES.md#axis-2--writers-connected)-bulk: the Coder workspace onto the batch stream** → [W1](./USE_CASES.md#axis-2--writers-connected) · [apps#3444](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3444) · [V1](#v1--content-in-content-readable)
+- [ ] **B1 — [W1](./USE_CASES.md#axis-2--writers-connected)-bulk: the Coder workspace onto the batch stream** → [W1](./USE_CASES.md#axis-2--writers-connected) · [apps#3878](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3878) · [V1](#v1--content-in-content-readable)
   The only credential in the system permitted to enqueue patch-carrying work; the producer side that
   generates and enqueues patches.
-- [ ] **B2 — [W1](./USE_CASES.md#axis-2--writers-connected)-interactive: Claude Code's direct writes** → [W1](./USE_CASES.md#axis-2--writers-connected) · [apps#3445](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3445) · [V3](#v3--writers-on-iterate-in-production)
+- [ ] **B2 — [W1](./USE_CASES.md#axis-2--writers-connected)-interactive: Claude Code's direct writes** → [W1](./USE_CASES.md#axis-2--writers-connected) · [apps#3879](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3879) · [V3](#v3--writers-on-iterate-in-production)
   Write keys on the agent handle; the (already-set, inert) path scope going live; optimistic-
   concurrency wiring; the runner's write hook installed as a detective control (this runner only —
   the available hook fires after the write; whether the runner's blocking pre-write variant
   replaces it is a recorded revisit); its promotion-stream credential.
-- [ ] **B3 — [W2](./USE_CASES.md#axis-2--writers-connected): the NAS NFS drop watcher** → [W2](./USE_CASES.md#axis-2--writers-connected) · **no ticket** · unscheduled
+- [ ] **B3 — [W2](./USE_CASES.md#axis-2--writers-connected): the NAS NFS drop watcher** → [W2](./USE_CASES.md#axis-2--writers-connected) · [apps#3882](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3882) · unscheduled
   Blocked on a design decision, not just a credential: see [Open decisions](#open-decisions).
-- [ ] **B4 — [W3](./USE_CASES.md#axis-2--writers-connected): OpenClaw write** → [W3](./USE_CASES.md#axis-2--writers-connected) · [apps#3445](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3445) · [V3](#v3--writers-on-iterate-in-production)
+- [ ] **B4 — [W3](./USE_CASES.md#axis-2--writers-connected): OpenClaw write** → [W3](./USE_CASES.md#axis-2--writers-connected) · [apps#3880](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3880) · [V3](#v3--writers-on-iterate-in-production)
   Write keys, live path scope, promotion-stream credential. No pre-write hook exists for this writer
   — same shape as B2, less assurance, a property of the writer rather than a gap.
-- [ ] **B5 — [W4](./USE_CASES.md#axis-2--writers-connected): n8n write** → [W4](./USE_CASES.md#axis-2--writers-connected) · [apps#3445](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3445) · [V3](#v3--writers-on-iterate-in-production) — the identical shape, for n8n.
-- [ ] **B6 — [W5](./USE_CASES.md#axis-2--writers-connected): ad-hoc scripts** → [W5](./USE_CASES.md#axis-2--writers-connected) · **no ticket** · unscheduled
+- [ ] **B5 — [W4](./USE_CASES.md#axis-2--writers-connected): n8n write** → [W4](./USE_CASES.md#axis-2--writers-connected) · [apps#3881](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3881) · [V3](#v3--writers-on-iterate-in-production) — the identical shape, for n8n.
+- [ ] **B6 — [W5](./USE_CASES.md#axis-2--writers-connected): ad-hoc scripts** → [W5](./USE_CASES.md#axis-2--writers-connected) · [apps#3883](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3883) · unscheduled
   Plausibly free once B1/B2's credential shapes exist — but no record says so; the missing artifact
   is the judgement, not necessarily the work.
-- [ ] **B7 — [W6](./USE_CASES.md#axis-2--writers-connected): the drainer's real destination** → [W6](./USE_CASES.md#axis-2--writers-connected) · [ot#4](https://github.com/ppat/obsidian-tools/issues/4) · [V5](#v5--humans-on-devices)
+- [ ] **B7 — [W6](./USE_CASES.md#axis-2--writers-connected): the drainer's real destination** → [W6](./USE_CASES.md#axis-2--writers-connected) · [ot#87](https://github.com/ppat/obsidian-tools/issues/87) · [V5](#v5--humans-on-devices)
   Spool entries published to the drift stream, removed **only on JetStream ack**; the drift
   credential issued; ingress reachability (LAN, Tailscale).
-- [ ] **B8 — [R1](./USE_CASES.md#axis-3--readers-connected): the app rollout** → [R1](./USE_CASES.md#axis-3--readers-connected) · **no ticket** · [V5](#v5--humans-on-devices)
+- [ ] **B8 — [R1](./USE_CASES.md#axis-3--readers-connected): the app rollout** → [R1](./USE_CASES.md#axis-3--readers-connected) · [ot#88](https://github.com/ppat/obsidian-tools/issues/88) · [V5](#v5--humans-on-devices)
   Installing Obsidian on macOS and iOS, which requires resetting the device vault (iCloud copy
   *and* baseline tag) to day one. The one irreversible step on this map: at the reset, the settings
   baseline stops being inert and becomes real device configuration. Preconditions: [ot#47](https://github.com/ppat/obsidian-tools/issues/47) (baseline
@@ -278,10 +278,10 @@ Content is the **instrument** by which [S2](./USE_CASES.md#s2--sound)'s and [S3]
 capability — a lint pass over a near-empty vault reports nothing, and reports nothing whether it
 works or not. The one-unit-one-outcome rule is deliberately not forced here.
 
-- [ ] **C1 — the bulk import run** → [W1](./USE_CASES.md#axis-2--writers-connected) (its only demonstration) · **no ticket owns the run** · [V1](#v1--content-in-content-readable)
+- [ ] **C1 — the bulk import run** → [W1](./USE_CASES.md#axis-2--writers-connected) (its only demonstration) · [obsidian-vault#11](https://github.com/ppat/obsidian-vault/issues/11) · [V1](#v1--content-in-content-readable)
   Executing the one-time import of the scattered pile into the raw layer, through [B1](#group-b--connection-work) + [A2](#group-a--pipeline-mechanisms). The run
   proves [W1](./USE_CASES.md#axis-2--writers-connected); the corpus it produces is the instrument for [S2](./USE_CASES.md#s2--sound)/[S3](./USE_CASES.md#s3--placed) — and the first shipped value.
-- [ ] **C2 — curation to 100–200 notes** → *(instrument)* · **no ticket** · [V3](#v3--writers-on-iterate-in-production)
+- [ ] **C2 — curation to 100–200 notes** → *(instrument)* · [obsidian-vault#12](https://github.com/ppat/obsidian-vault/issues/12) · [V3](#v3--writers-on-iterate-in-production)
   Enough curated content for promotion decisions to be judgeable and every view to render non-empty.
 - [ ] **C3 — the definition-of-done gate** · [obsidian-vault#3](https://github.com/ppat/obsidian-vault/issues/3) · [V3](#v3--writers-on-iterate-in-production)
   Six checks against the 100–200-note vault: zero schema errors; views render non-empty; the inbox
@@ -313,17 +313,17 @@ shared mechanisms nothing else owns. *Criteria distribute; shared mechanisms do 
 - [ ] **D3 — the recovery drill** → [O2](./USE_CASES.md#o2--survives-its-failure-modes) · [apps#3447](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3447) · [V6](#v6--harden-and-tighten-from-experience), cheaper the earlier it runs
   Snapshot restore, independent git restore, probe-recovers-a-wedged-editor, and the
   pod-template-churn test of the single-writer window. Every subject is deployed today.
-- [ ] **D4 — batch-mode safety mechanisms** → [O2](./USE_CASES.md#o2--survives-its-failure-modes) · [ot#5](https://github.com/ppat/obsidian-tools/issues/5) + [apps#3447](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3447) · [V1](#v1--content-in-content-readable) (the watchdog); window +
+- [ ] **D4 — batch-mode safety mechanisms** → [O2](./USE_CASES.md#o2--survives-its-failure-modes) · [ot#5](https://github.com/ppat/obsidian-tools/issues/5) (watchdog) + [ot#89](https://github.com/ppat/obsidian-tools/issues/89) (window + drain) · [V1](#v1--content-in-content-readable) (the watchdog); window +
   drain may follow in [V6](#v6--harden-and-tighten-from-experience)
   The watchdog re-enabling the agent handle if `batch-processor` dies is **not deferrable**: it must
   exist before the batch stream runs unattended, because the failure it closes is silent and
   indefinite. The smallest shape that ships is enough — a dumb re-enable, not a framework. The
   maximum-window and post-disable drain are hardening-band refinements.
 - [ ] **D5 — stronger container isolation** → [S1](./USE_CASES.md#s1--admitted) (a containment claim; arguable, flagged) ·
-  [apps#3447](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3447) · [V6](#v6--harden-and-tighten-from-experience)
+  [apps#3884](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3884) · [V6](#v6--harden-and-tighten-from-experience)
   The named attempt: user-namespace isolation (`hostUsers: false`) over the vault volume; if the
   storage layer's mounts cannot support it, the current accepted posture stays, deliberately.
-- [ ] **D6 — dashboards** → [O1](./USE_CASES.md#o1--measured) · **no ticket** · [V6](#v6--harden-and-tighten-from-experience)
+- [ ] **D6 — dashboards** → [O1](./USE_CASES.md#o1--measured) · [apps#3885](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3885) · [V6](#v6--harden-and-tighten-from-experience)
   Views over what [O1](./USE_CASES.md#o1--measured) collects, built when the questions are real — a dashboard built before the
   questions are known displays the wrong things and is cheap to rebuild later. The one assigned
   slice: lint's own three numbers (drift rate, quarantine depth, inbox depth) belong to [A5](#group-a--pipeline-mechanisms).
@@ -334,42 +334,35 @@ collection that builds nothing by design).
 
 ### The mapping at a glance
 
-Outcomes down, work across — consolidated from the groups above. "Gap" marks work with no ticket.
+Outcomes down, work across — consolidated from the groups above. "Gap" marks work with no
+ticket; the reconciliation of 2026-08-29 left none.
 
 | Outcome | Delivered already by | Remaining units | Gaps |
 | --- | --- | --- | --- |
 | [S1](./USE_CASES.md#s1--admitted) Admitted | Substrate; content foundation (gate proven both directions) | [A1](#group-a--pipeline-mechanisms) · [A2](#group-a--pipeline-mechanisms) · [D5](#group-d--operability) (assignment arguable) | — |
-| [S2](./USE_CASES.md#s2--sound) Sound | Property types only | [A4](#group-a--pipeline-mechanisms) · [A5](#group-a--pipeline-mechanisms) · [A6](#group-a--pipeline-mechanisms) | [A6](#group-a--pipeline-mechanisms) |
-| [S3](./USE_CASES.md#s3--placed) Placed | — | [A3](#group-a--pipeline-mechanisms) · [A8](#group-a--pipeline-mechanisms) | [A8](#group-a--pipeline-mechanisms) |
+| [S2](./USE_CASES.md#s2--sound) Sound | Property types only | [A4](#group-a--pipeline-mechanisms) · [A5](#group-a--pipeline-mechanisms) · [A6](#group-a--pipeline-mechanisms) | — |
+| [S3](./USE_CASES.md#s3--placed) Placed | — | [A3](#group-a--pipeline-mechanisms) · [A8](#group-a--pipeline-mechanisms) | — |
 | [S4](./USE_CASES.md#s4--retrievable) Retrievable | Read handles; the whole replication chain | — (its human-device remainder is [R1](./USE_CASES.md#axis-3--readers-connected)'s) | — |
-| [W1](./USE_CASES.md#axis-2--writers-connected) Claude Code / workspace | — | [B1](#group-b--connection-work) · [B2](#group-b--connection-work) · [C1](#group-c--content-work) (the run is [W1](./USE_CASES.md#axis-2--writers-connected)'s only demonstration) | [C1](#group-c--content-work) |
-| [W2](./USE_CASES.md#axis-2--writers-connected) NAS drop | — | [B3](#group-b--connection-work) (blocked on a design decision) | [B3](#group-b--connection-work) |
+| [W1](./USE_CASES.md#axis-2--writers-connected) Claude Code / workspace | — | [B1](#group-b--connection-work) · [B2](#group-b--connection-work) · [C1](#group-c--content-work) (the run is [W1](./USE_CASES.md#axis-2--writers-connected)'s only demonstration) | — |
+| [W2](./USE_CASES.md#axis-2--writers-connected) NAS drop | — | [B3](#group-b--connection-work) (blocked on a design decision) | — |
 | [W3](./USE_CASES.md#axis-2--writers-connected) OpenClaw | Read-only key | [B4](#group-b--connection-work) | — |
 | [W4](./USE_CASES.md#axis-2--writers-connected) n8n | Read-only key | [B5](#group-b--connection-work) | — |
-| [W5](./USE_CASES.md#axis-2--writers-connected) ad-hoc scripts | — | [B6](#group-b--connection-work) (possibly nothing — the judgement is unrecorded) | [B6](#group-b--connection-work) |
+| [W5](./USE_CASES.md#axis-2--writers-connected) ad-hoc scripts | — | [B6](#group-b--connection-work) (possibly nothing — the judgement is unrecorded) | — |
 | [W6](./USE_CASES.md#axis-2--writers-connected) humans / device | Capture half, proven by injection | [A7](#group-a--pipeline-mechanisms) · [B7](#group-b--connection-work) | — |
-| [R1](./USE_CASES.md#axis-3--readers-connected) humans, native on device | Content reaches the device | [B8](#group-b--connection-work) | [B8](#group-b--connection-work) |
+| [R1](./USE_CASES.md#axis-3--readers-connected) humans, native on device | Content reaches the device | [B8](#group-b--connection-work) | — |
 | [R2](./USE_CASES.md#axis-3--readers-connected)–[R4](./USE_CASES.md#axis-3--readers-connected) agent readers | Delivered — no build work exists, correctly | — | — |
 | [R5](./USE_CASES.md#axis-3--readers-connected) humans, conversational | Delivered | — | — |
-| [O1](./USE_CASES.md#o1--measured) Measured | LiteLLM scrape groundwork (coverage unverified) | [D1](#group-d--operability) · [D2](#group-d--operability) · [D6](#group-d--operability), plus criteria riding on [A1](#group-a--pipeline-mechanisms)/[A2](#group-a--pipeline-mechanisms)/[A4](#group-a--pipeline-mechanisms)/[A5](#group-a--pipeline-mechanisms) | [D6](#group-d--operability) |
+| [O1](./USE_CASES.md#o1--measured) Measured | LiteLLM scrape groundwork (coverage unverified) | [D1](#group-d--operability) · [D2](#group-d--operability) · [D6](#group-d--operability), plus criteria riding on [A1](#group-a--pipeline-mechanisms)/[A2](#group-a--pipeline-mechanisms)/[A4](#group-a--pipeline-mechanisms)/[A5](#group-a--pipeline-mechanisms) | — |
 | [O2](./USE_CASES.md#o2--survives-its-failure-modes) Survives failure | — | [D3](#group-d--operability) · [D4](#group-d--operability) | — |
 | [O3](./USE_CASES.md#o3--alerting) Alerting | Non-outcome by standing ruling | — | — |
 
 ## Outcomes with no work behind them
 
-Findings, not a backlog — nothing here schedules anything. In descending order of consequence:
-
-1. **[A8](#group-a--pipeline-mechanisms)** — [S3](./USE_CASES.md#s3--placed)'s advanced half: first pass inside the definition of done, zero coverage in any repo.
-2. **[B8](#group-b--connection-work)** — the app rollout: the one delivery unit with no ticket and no assigned position anywhere,
-   and the sharpest because it is irreversible at the reset.
-3. **[B3](#group-b--connection-work)** — [W2](./USE_CASES.md#axis-2--writers-connected), the NAS drop: named by the owner in their own words; no work item, and no place in
-   the current authority model.
-4. **[B6](#group-b--connection-work)** — [W5](./USE_CASES.md#axis-2--writers-connected), ad-hoc scripts: possibly free, but no record of that judgement exists.
-5. **[A6](#group-a--pipeline-mechanisms)** — the [S2](./USE_CASES.md#s2--sound) tolerance line: accepted in principle, unrecorded; until it exists [S2](./USE_CASES.md#s2--sound)'s criterion
-   has no threshold.
-6. **[D6](#group-d--operability)** — dashboards: unassigned rather than deliberately dropped.
-7. **[C1](#group-c--content-work) and [C2](#group-c--content-work)** — the import *run* and the corpus: mechanisms have tickets; nobody owns performing
-   either.
+None — every unit above names its tickets (reconciled 2026-08-29). What remains open is
+decision-shaped rather than ticket-shaped, and lives in [Open decisions](#open-decisions):
+[B3](#group-b--connection-work)'s authority conflict ([apps#3882](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3882) is blocked on choosing among the four candidate
+shapes) and [B8](#group-b--connection-work)'s timing ([ot#88](https://github.com/ppat/obsidian-tools/issues/88) carries the preconditions; the owner's stated criterion
+is "enough content to read").
 
 ## Dependencies
 
@@ -440,8 +433,6 @@ Where a decision is recorded, the row cites its ADR number; records are resolved
 | Decision | Gates | Standing |
 | --- | --- | --- |
 | **Ratify the admission validator's placement** ([A4](#group-a--pipeline-mechanisms)): one shared check with three callers, fired at every crossing of the curated boundary; staging detective-only; raw exempt | [A4](#group-a--pipeline-mechanisms)'s unit shape; the answer to "where do validate/lint/digest kick in" | Adopted by these documents from [ot#6](https://github.com/ppat/obsidian-tools/issues/6) (the newer, explicit text) over older prose describing a scheduled-validator shape; recorded as ADR-0007, status proposed — the owner has not ratified it |
-| **Recut the three straddling tickets** ([ot#6](https://github.com/ppat/obsidian-tools/issues/6) → [A4](#group-a--pipeline-mechanisms) + [A5](#group-a--pipeline-mechanisms) + [A6](#group-a--pipeline-mechanisms) · [apps#3445](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3445) → [A5](#group-a--pipeline-mechanisms)'s deploy half + [B2](#group-b--connection-work) + [B4](#group-b--connection-work) + [B5](#group-b--connection-work) · [apps#3446](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3446) → criteria on [A1](#group-a--pipeline-mechanisms)/[A5](#group-a--pipeline-mechanisms) + [D1](#group-d--operability) + [D6](#group-d--operability)) and fix the false [apps#3446](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3446) → [apps#3445](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3445) edge — the single mechanism by which [O1](./USE_CASES.md#o1--measured) sat behind agent writes | Ticket hygiene; [O1](./USE_CASES.md#o1--measured)'s position | Cheap while nothing references the tickets from code — all three are at zero implementation |
-| **Fix [ot#6](https://github.com/ppat/obsidian-tools/issues/6)'s bare `Depends on #1 and #5` line** | The only unexplained ordering in either repo's ticket set | Under the shared-validator reading it runs backwards ([A2](#group-a--pipeline-mechanisms) calls [A4](#group-a--pipeline-mechanisms)); either invert it or record its reason |
 | **Resolve [W2](./USE_CASES.md#axis-2--writers-connected)'s authority conflict** ([B3](#group-b--connection-work)) | [W2](./USE_CASES.md#axis-2--writers-connected) | Four candidate shapes: the watcher inside the Coder workspace's trust boundary; a fourth stream; a narrow-handle writer announcing via promotion; or an n8n workflow (conversion already lives in n8n/OpenClaw). None chosen |
 | **When the apps go on** ([B8](#group-b--connection-work)) | [R1](./USE_CASES.md#axis-3--readers-connected), [ot#69](https://github.com/ppat/obsidian-tools/issues/69) | Owner's want; the stated criterion is "enough content to read". Preconditions [ot#47](https://github.com/ppat/obsidian-tools/issues/47), [ot#72](https://github.com/ppat/obsidian-tools/issues/72) |
 | **Batch staleness measurement** | [A2](#group-a--pipeline-mechanisms) | Deferred until real commit cadence and batch sizes are visible — a learn-from-prod decision by design; the flagged question is carried in ADR-0022 |
