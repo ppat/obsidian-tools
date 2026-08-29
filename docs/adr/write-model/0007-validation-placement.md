@@ -43,8 +43,9 @@ The review digest is downstream of the lint pass's *output*, not a gate on conte
 - **Prompt discipline alone** — instructions to a model are suggestions, not rules.
 - **Per-caller validators** — under that reading, a batch chunk entering curated space passes
   through *no* admission gate at all while wielding the widest handle in the system; that hole is
-  what the shared reading closes. This is also why the [ot#6](https://github.com/ppat/obsidian-tools/issues/6)
-  dependency line reads backwards ([ROADMAP, open decisions](../../../ROADMAP.md#open-decisions)).
+  what the shared reading closes. This is also why
+  [ot#6](https://github.com/ppat/obsidian-tools/issues/6)'s dependency line points *into* the
+  validator: its callers depend on it, never the reverse.
 
 ## Consequences
 
