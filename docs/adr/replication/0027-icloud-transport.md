@@ -44,4 +44,6 @@ nothing in the cluster can push to iOS. That is accepted *because* the conversat
 ([R5](../../../USE_CASES.md#axis-3--readers-connected)) is the primary, always-fresh phone reader;
 native reading is the rich, laggier complement. The whole tree is carried (markdown-only keeps the
 payload small — [ADR-0014](../content-model/0014-markdown-only-vault.md)), so no curated-subset
-replication is needed.
+replication is needed — and periodic replication (not continuous sync) is acceptable for the same
+two reasons: the payload is small, and the conversational plane absorbs the freshness-sensitive
+reading.

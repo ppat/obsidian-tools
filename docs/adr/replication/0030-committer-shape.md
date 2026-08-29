@@ -18,7 +18,10 @@ read-only>`. The vault PVC mounts read-only (content unwritable by construction)
 committer-owned PVC holds the repository. Three properties ride free: git's index and lock files
 stay off the soft-mounted NFS volume (the index is the file most sensitive to a failed write); the
 vault never grows a `.git` at all — so the editor never watches one and the device rsync has
-nothing to exclude; and no mount layering. The workload is a **CronJob**
+nothing to exclude; and no mount layering. The design also has the committer run
+*around every batch run*, not only on schedule — that trigger waits on the queue existing and is
+deliberately deferred; keeping a run a single idempotent command means only the invoker changes
+when it arrives. The workload is a **CronJob**
 (`concurrencyPolicy: Forbid`), not a long-lived Deployment — Jobs do not roll and there is nothing
 to evict between runs, which *dissolved* two open manifest questions (rollout strategy, eviction
 annotation) rather than answering them, and narrows the RWX multi-attach exposure to the moments a

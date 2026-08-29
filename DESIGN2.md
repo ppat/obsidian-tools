@@ -60,8 +60,8 @@ holds it up; the decisions that *implement* each one, and their alternatives, ar
 ### One writer, one door
 
 Exactly one process ever mutates vault content: the headless, in-cluster Obsidian instance. Every
-writer — every agent, every processor, lint — is a client of that process through a permission-
-scoped MCP door, never a second filesystem writer. Exactly three processes mount the volume at all,
+writer — every agent, every processor, lint — is a client of that process through a
+permission-scoped MCP door, never a second filesystem writer. Exactly three processes mount the volume at all,
 on disjoint or read-only slices: headless Obsidian (read-write on content), lint (read-only on
 content, for whole-vault visibility), and the committer (read-only on content, write-only on git's
 own metadata — held on a separate volume, so the vault never even grows a `.git`).
@@ -105,9 +105,9 @@ Every mechanism that would have needed a merge engine was deleted or reshaped so
 The platform exists to store the owner's knowledge, ideas, work and research, to share it between
 agents and/or the human, and to have agents *work on* the ideas captured there — the important ones
 bubbling up by salience or prominence, so that work happens on the owner's behalf without the owner
-driving every step. On both the write and the read axis, the human is the originator while an agent
-is almost always the actor. A voice note, a dropped document, tasked research: human-originated, arriving as agent
-writes. "What do these ideas have in common", "read the prior work behind this task":
+driving every step. On both the write and the read axis, the human is the originator while an
+agent is almost always the actor. A voice note, a dropped document, tasked research:
+human-originated, arriving as agent writes. "What do these ideas have in common", "read the prior work behind this task":
 human-originated, performed as agent reads. **Direct** human writes are rare edits, almost never
 creation — an owner ruling, load-bearing: any reasoning that assumes meaningful volume of *direct*
 human writes is wrong. Direct human reads (the device apps, the conversational surface) are real
@@ -115,9 +115,9 @@ and more common than direct writes, and still the minority of human-motivated re
 edit is not prevented and not discarded; it is captured as drift and re-enters the funnel as an
 ordinary ingest event, stamped as human-authored — `authority:` records whose claim content is,
 never whose hands typed it, which is how human-originated content and agent actors coexist without
-lying. The devices are read replicas plus a capture surface, and the GUI is a configuration-and-
-repair path, not an authoring one — if direct editing becomes the draw, the design has failed on
-its own terms.
+lying. The devices are read replicas plus a capture surface, and the GUI is a
+configuration-and-repair path, not an authoring one — if direct editing becomes the draw, the
+design has failed on its own terms.
 
 ### Layered content, one ownership contract
 
@@ -195,6 +195,7 @@ answers two:
 | Did a human *mean* to make this device edit | `drift-processor`'s classifier — asked only of drift, upstream of the validator, never merged with it |
 | What shape frontmatter takes | the lint pass's normalisation — in the scheduled pass, never on save, so the validator's approval cannot be silently reshaped afterwards |
 | Whether a promotion happens | the validator admits; agents and n8n only propose |
+| History | three granularities, deliberately three owners: git (the bytes), the append-only log (events), the audit trail in `_ops/audit/` (every normalisation change) |
 
 The corollary that resolves where validation "kicks in": **the admission validator fires at the
 curated boundary, on every write that crosses it, regardless of route or caller** — promotion out of
@@ -261,6 +262,8 @@ flowchart TB
 A control is proven by making it fire — writing where writing is forbidden, publishing to a subject
 the credential must not reach, planting the defect the linter must flag — never by observing that
 nothing bad happened. Several controls that "looked correct" here were only found wrong this way.
+Every control's proving injection, past and pending, lives in one place: the
+[verification catalogue](./docs/VERIFICATIONS.md).
 Two companion disciplines: **measured versus inferred** are always distinguished, and *authored*,
 *merged*, *released*, and *deployed-and-observed* are four different states never collapsed — this
 project's dominant failure mode has been unmeasured claims hardening into established fact.
@@ -355,8 +358,11 @@ Two planes, deliberately asymmetric:
 
 - **Plane A — conversational.** WhatsApp ↔ OpenClaw, and Open WebUI in a browser, reading the
   authoritative volume live through read-only handles. Always fresh, works anywhere, independent of
-  any device being awake. This is the primary phone surface, and it pushes (digests, due-today)
-  rather than waiting to be opened.
+  any device being awake. This is the primary phone surface, and it pushes rather than waiting to
+  be opened — two pushed surfaces, kept distinct: the **daily task digest** (n8n's daily organise
+  reads inbox and due-state, proposes `status:` transitions and hands a ranked digest to OpenClaw
+  for WhatsApp — proposals only; the admission validator alone decides promotion) and the lint
+  pass's **review digest** (below).
 - **Plane B — native Obsidian.** One-way chain: volume → committer → GitHub → `local-replicator` →
   iCloud → the Mac and iOS apps. Rich (backlinks, graph, offline), and laggier: device freshness is
   gated on the Mac waking, because only the Mac can write its own iCloud folder. The iCloud
@@ -498,7 +504,8 @@ different name, the retired synonym is noted.
   other entrypoints became `promotion-processor` and the committer's second remote).*
 - **The review digest** — the lint pass's ranked, hard-capped (~7 items) findings pushed over
   WhatsApp with actionable replies (approve/skip/explain); the human review loop. This is the
-  "digest" wherever older material pairs "lint/digest".
+  "digest" wherever older material pairs "lint/digest". Distinct from the **daily task digest** —
+  n8n's ranked what's-due/triage push over the same channel, which proposes and never admits.
 - **Quarantine** (`_ops/quarantine/`) — where a note failing validation goes, with a
   machine-readable reason; never deleted.
 - **The work queue** — three NATS JetStream streams, one per processor, each shipped with its

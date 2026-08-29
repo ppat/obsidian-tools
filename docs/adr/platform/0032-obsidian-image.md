@@ -26,7 +26,9 @@ pinned to stable** (which is what forced two plugins out of the set —
 [ADR-0017](../content-model/0017-plugin-set-tasks-dataview.md)); verified safe against silent
 drift: the vendor's release repo publishes no pre-releases, so automation cannot walk the pin onto
 a beta without a deliberate act. Everything is digest-pinned — the REST plugin's own history
-(a point release that briefly required a pre-release app build) is the standing illustration of why.
+(a point release that briefly required a pre-release app build) is the standing illustration of
+why — and an app or plugin upgrade is canaried in the headless instance before any device sees it,
+since a silently-empty view is the failure shape upgrades produce.
 
 ## Alternatives considered
 
