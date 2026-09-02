@@ -83,9 +83,11 @@ incident has already demonstrated; the recovery drill exercises it deliberately.
 Two paths bypass the gates, both on purpose, both named at the top rather than found later:
 
 - **The GUI exception.** A human at the headless instance's own GUI (reached only by
-  `kubectl port-forward`, dormant VNC) writes directly, with no validation and no provenance
-  stamping — because configuring Obsidian itself requires a GUI, and there is no other sanctioned
-  way. It is for configuration and repair; the lint pass is the only thing that ever sees such a
+  `kubectl port-forward`, dormant VNC) writes directly, with no provenance stamping and no
+  validation beyond what Obsidian itself enforces: the app refuses type-invalid values in manually
+  declared properties, and nothing more — enums, tag casing, and content correctness pass freely,
+  and undeclared properties are not type-checked at all [measured 2026-07-30]. The path exists
+  because configuring Obsidian itself requires a GUI, and there is no other sanctioned way. It is for configuration and repair; the lint pass is the only thing that ever sees such a
   write, after the fact. Rising use of this path is treated as evidence the write model is wrong,
   not as a discipline failure.
 - **The recovery exception.** Operator-triggered restore — from a volume snapshot or from git —
