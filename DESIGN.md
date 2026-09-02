@@ -415,9 +415,15 @@ Held here so they are not rediscovered; the roadmap carries their disposition, a
 records behind them (ADR-0006, ADR-0012, ADR-0022, ADR-0033 among others) are resolved through the
 [decision-record index](./docs/adr/README.md).
 
-- **NetworkPolicy enforcement on the platform has config-level evidence, not packet-level proof** —
-  and it is a sole control (see "Authority is carried by capability"). The definitive two-pod test has never been run. Parked by decision;
-  reopen only on new evidence.
+- **NetworkPolicy enforcement is packet-proven at cluster level; the vault namespace's own policy
+  objects rest on config-level evidence plus observed refusals** — and it is a sole control (see
+  "Authority is carried by capability"). Another project on the same cluster runs a standing
+  falsifiability probe for its own purposes — default-deny with positive controls, blocked and
+  reachable cases both asserted, continuously — which confirms the cluster enforces NetworkPolicy
+  and would surface a cluster-wide enforcement regression on its next cycle [measured 2026-09-02].
+  The dedicated in-namespace two-pod test remains unrun and parked: the standing probe
+  out-instruments a one-time test, and the residual — this namespace's specific policy objects
+  staying correct — is carried in the verification catalogue.
 - **Single-writer is guaranteed by Deployment shape, with an observed timing window** under rapid
   pod-template churn (see "One writer, one door"). The recovery drill covers it.
 - **Batch staleness measurement** (patch base commit vs per-file content hash) is flagged, not

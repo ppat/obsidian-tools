@@ -15,13 +15,16 @@ the vault that the chosen access model never uses.
 Close it by network isolation alone, stated as a **sole control rather than defence in depth**: the
 REST service is ClusterIP-only with no Ingress, inside a default-deny namespace, with an allow rule
 admitting only the MCP pods. The bearer token lives only in the MCP pods' secret. Because this is a
-sole control, whether the platform actually enforces NetworkPolicy is load-bearing: config-level
-evidence against the live cluster reads as enforced at moderate-to-high confidence (the disable
-flag absent from every node's recorded arguments, no replacement CNI owning enforcement, live
-policies selecting real pods), but the enforcement component fails *silently* if a node dependency
-is missing — leaving policies that exist and enforce nothing, indistinguishable through the API.
-Only a packet test settles it, and it has never been run. **Parked by standing decision; reopen only
-on new evidence.**
+sole control, whether the platform actually enforces NetworkPolicy is load-bearing. The enforcement
+dependency is packet-proven: another project on the same cluster runs a standing falsifiability
+probe for its own purposes — default-deny with positive controls, blocked and reachable cases both
+asserted, continuously — so a cluster-wide enforcement regression now surfaces on the probe's next
+cycle rather than never [measured 2026-09-02]. What remains config-level is this namespace's own
+policy objects staying correct (live policies selecting real pods, no replacement CNI owning
+enforcement), backed by the refusals observed from a non-MCP pod at substrate acceptance. The
+dedicated in-namespace two-pod test remains unrun. **Parked by standing decision, upheld on the new
+evidence: the standing probe out-instruments a one-time test, and the residual is the smallest it
+has been.**
 
 ## Alternatives considered
 
@@ -33,10 +36,11 @@ on new evidence.**
 
 ## Consequences
 
-- There is **no fallback** if enforcement turns out to be off — the one risk in the register whose
-  mitigation is "test before relying on it" rather than "watch for the symptom". Passive monitoring
-  cannot surface an unenforced policy.
-- CI cannot exercise this control at all (the test cluster's CNI enforces nothing), which is part of
+- There is **no fallback** behind this control. Cluster-wide enforcement loss is now watched-for —
+  the standing probe surfaces it — but a mangled or unselected policy object in this namespace
+  specifically remains invisible through the API: at that layer, no passive signal exists.
+- CI cannot exercise this control at all, permanently: the CI cluster's CNI is not the platform's
+  enforcement engine, so a passing kind packet test would validate the wrong machinery. This bounds
   the open CI-strategy decision
   ([apps#3440](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3440)).
 - The same reasoning generalises: network position is never an authority model
