@@ -46,3 +46,11 @@ idempotently on every run. Reads can fail transiently under NFS and are treated 
 retryable, not exceptional. Before this shipped, durability was luck — two GUI mishaps were
 recoverable only because a manual seed happened to have run an hour earlier; the committer is what
 turned "git has it" from coincidence into guarantee.
+
+The one-way-ness cuts the other way too, and it has already bitten: **the repo the committer
+pushes is derived, never an editing surface.** A change merged there by pull request touches
+nothing on the volume, and the next sync re-records the volume's copy — silently reverting the
+merge. Observed once: a schema ruling applied as a vault-repo pull request was reverted by the
+sync two days later, leaving the repo carrying the rejected text again with no error anywhere.
+Vault content changes only on the volume, through the doors (or the declared exceptions), and
+reaches git exclusively as sync commits.
