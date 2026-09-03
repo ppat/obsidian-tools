@@ -28,7 +28,16 @@ drift: the vendor's release repo publishes no pre-releases, so automation cannot
 a beta without a deliberate act. Everything is digest-pinned — the REST plugin's own history
 (a point release that briefly required a pre-release app build) is the standing illustration of
 why — and an app or plugin upgrade is canaried in the headless instance before any device sees it,
-since a silently-empty view is the failure shape upgrades produce.
+since a silently-empty view is the failure shape upgrades produce. The tag adds nothing to that
+pin: it tracks the upstream Obsidian version 1:1 — the shape Renovate's regex manager can follow —
+and is reused on every rebuild, so the digest is the only identity a build has. A rebuild has
+already exercised the distinction: baking the plugins republished the same tag under a new digest
+while the consuming module still pinned the old one, and deploying that would have brought the
+image up without Tasks and Dataview, silently, since plugin enablement fires only on the first
+seed of each plugin directory (Renovate's digest pinning closes such drift only on its own
+schedule, possibly after a deploy). Immutable per-build tags exist and are deliberately unused:
+not semver, they would need custom Renovate versioning that fights the regex manager, for no gain
+the digest does not already give.
 
 ## Alternatives considered
 
