@@ -46,6 +46,7 @@ All run on real hardware, 2026-08-28; full evidence in
 | iCloud propagates rsync-written files | Answered **yes**, from a second device | Proven 2026-08-28 |
 | "Optimize Mac Storage" off suffices against eviction | **Bounded answer only**: 45 files, zero dataless stubs, minutes after write — no eviction *in a short window*; cold-data behaviour needs elapsed time (§4) | Proven-as-bounded 2026-08-28 |
 | First real spool entry: identical shas with `matches_upstream: false` | The field means content-equality at the path, not revision equality — the misreading that would discard human deletions, settled empirically (ADR-0026) | Observed 2026-08-28 |
+| Configure an external diff tool or a textconv driver in the operator's global git config, drift an ordinary markdown file → the replaced patch is refused as uncaptured; publish and tag withheld (an empty patch is refused by the same check) | The capture gate's third condition, independent of the two above: a drift patch must be git's own patch format — a positive format check, standing behind per-invocation config pinning and environment scrubbing at the git seam (ADR-0046), because `git diff` output is operator-configurable in ways that can replace it wholesale | Proven — standing violation injections in the test suite (global external-diff, global textconv, repo-local and in-tree variants), re-proven on every run |
 
 ## 3. Pending — keyed to the unit that delivers the control
 
