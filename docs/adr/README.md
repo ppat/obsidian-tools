@@ -95,9 +95,10 @@ build state never lives here.
 | 0026 | [Spool upstream observations, and the one inference `matches_upstream` licenses](./replication/0026-spool-upstream-observations.md) | Accepted |
 | 0027 | [iCloud transport from a pull-only clone; git metadata outside iCloud; Sync rejected](./replication/0027-icloud-transport.md) | Accepted |
 | 0028 | [The settings baseline: a frozen seed, allowlist-captured, excluded from observation](./replication/0028-settings-baseline-seed.md) | Accepted |
-| 0029 | [Vault remotes: GitHub primary, NAS bare repo as independence insurance](./replication/0029-vault-remotes.md) | Accepted |
+| 0029 | [Vault remotes: GitHub primary, NAS bare repo as independence insurance](./replication/0029-vault-remotes.md) | Superseded |
 | 0030 | [The committer: a CronJob with a detached git dir, structurally unable to author](./replication/0030-committer-shape.md) | Accepted |
 | 0031 | [The apps staged out of replication; installing them is a deliberate day-one reset](./replication/0031-staged-app-rollout.md) | Accepted |
+| 0044 | [The vault has one git remote: GitHub](./replication/0044-vault-remote-github.md) | Accepted |
 
 ## Platform — `platform/`
 

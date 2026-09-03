@@ -37,7 +37,7 @@ always fresh, and native Obsidian on devices via a one-way replication chain.
 | **Headless Obsidian** + Local REST API | Be the only process that mutates vault content | Cluster | Live |
 | **MCP servers, two instances** (agent, ingestor) | Be the only scoped doors into the vault; each instance decides *where* a write may land | Cluster | Live |
 | **LiteLLM gateway, two handles** (agent, ingestor) | Decide *who* may call and which tools they see | Cluster | Live |
-| **Git committer** | Turn the vault volume into git history, pushed to GitHub and the NAS; never author content | Cluster (CronJob, every 15 min) | Live |
+| **Git committer** | Turn the vault volume into git history, pushed to GitHub; never author content | Cluster (CronJob, every 15 min) | Live |
 | **`local-replicator`** (+ its spool and drainer) | Keep the device-facing iCloud vault current from git, one-way and non-destructively; capture device-side drift before overwriting it | The operator's Mac (launchd, every 15 min) | Live |
 | **The work queue** — NATS JetStream; batch, promotion and drift streams | Carry deferred work to its processor, with per-producer credentials scoping who may publish where | Cluster | Unbuilt |
 | **`batch-processor`** | Apply patch-carrying bulk work through the gated write path; enforce the raw layer's create-only rule | Cluster | Unbuilt |
@@ -97,7 +97,7 @@ Two paths bypass the gates, both on purpose, both named at the top rather than f
 ### The volume is authoritative; git is derived history; no merge engine anywhere
 
 The one directory on the one volume is the authoritative copy. Git records and distributes — history
-outward to GitHub and the NAS, content onward to devices — and never writes back: there is no
+outward to GitHub, content onward to devices — and never writes back: there is no
 git-to-volume path anywhere in the system. Nothing anywhere merges: a stale batch patch is rejected
 back to its producer to regenerate; a divergent device edit is captured and re-enters as new input.
 Every mechanism that would have needed a merge engine was deleted or reshaped so it doesn't.
@@ -380,13 +380,12 @@ What must be up for what — the availability contract the two planes buy:
 | Conversational read, any device, anywhere | Cluster + internet + the chat surface |
 | Native Obsidian read on macOS or iOS | Nothing — the local iCloud copy, offline |
 | *Freshness* of the native copies | The Mac awake, plus cluster and network |
-| Disaster recovery | Either git remote, or volume snapshots |
+| Disaster recovery | The git remote, or volume snapshots |
 
 No capability of the cluster, and no conversational capability, requires any device to be awake;
 the one thing that does is native-copy freshness.
 
-The NAS holds a bare git repository as a second push target — independence insurance: a
-plain-markdown copy readable with zero tooling, no cluster, no third party. Because replicas are
+Because replicas are
 one-way and lag, the vault must stay readable without any query engine — plain markdown, plain YAML,
 and no note is ever a materialised cache of something computed elsewhere (the global todo is a
 query, never copied rows; task metadata uses the Tasks plugin's bracket format, settled vault-wide).
@@ -401,7 +400,6 @@ flowchart TB
     OCr -->|"reads live, read-only handle"| VOL
     WEB -->|"reads live, read-only handle"| VOL
     VOL -->|"git committer: read-only mount,<br/>commits and pushes every 15 min"| GH["GitHub bare repo"]
-    VOL -->|"the same committer pushes a second remote to"| NAS["NAS bare repo — independence insurance:<br/>readable with zero tooling, no cluster"]
     subgraph planeB["Plane B — native Obsidian: rich, offline, freshness gated on the Mac waking"]
         GH -->|"pulled by"| LRr["local-replicator (Mac, every 15 min)"]
         LRr -->|"rsync of the working tree, no .git,<br/>capture-gated (see the device loop)"| IC["iCloud vault directory —<br/>the vault both devices actually open"]
@@ -509,7 +507,7 @@ different name, the retired synonym is noted.
 - **The lint pass** — the scheduled whole-vault maintenance CronJob: conformance checks,
   additive-only normalisation, flag-vs-autofix boundary, and the only observer of GUI-exception
   writes. *Retired synonyms: "the maintenance pass", "the vault worker" (a dead component name whose
-  other entrypoints became `promotion-processor` and the committer's second remote).*
+  other entrypoint became `promotion-processor`).*
 - **The review digest** — the lint pass's ranked, hard-capped (~7 items) findings pushed over
   WhatsApp with actionable replies (approve/skip/explain); the human review loop. This is the
   "digest" wherever older material pairs "lint/digest". Distinct from the **daily task digest** —
@@ -532,7 +530,7 @@ different name, the retired synonym is noted.
 
 - **Plane A / Plane B** — the two read planes: conversational (always fresh, primary on the phone)
   and native Obsidian on devices (rich, laggier, Mac-gated freshness).
-- **The committer** — the CronJob committing the vault volume into git and pushing both remotes; it
+- **The committer** — the CronJob committing the vault volume into git and pushing it to GitHub; it
   produces history and never authors content.
 - **`local-replicator`** — the Mac-side launchd job running the replication cycle; the only
   component outside the cluster, watched by nothing.

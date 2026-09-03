@@ -1,6 +1,6 @@
 # 0029. The vault's remotes: GitHub primary, a NAS bare repo as independence insurance — and the separate publish job deleted
 
-**Status:** Accepted — with one stated, unresolved tension ·
+**Status:** Superseded — **Superseded by:** [ADR-0044](./0044-vault-remote-github.md) ·
 **Serves:** [S4](../../../USE_CASES.md#s4--retrievable), [O2](../../../USE_CASES.md#o2--survives-its-failure-modes)
 
 ## Context

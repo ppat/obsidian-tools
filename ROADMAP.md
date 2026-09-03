@@ -75,7 +75,7 @@ iterate-on-it-afterwards first pass; and post-done iterations are out of scope f
 | --- | --- |
 | Substrate (namespace, volume, headless Obsidian, both MCP instances, network isolation, secrets) | **Deployed and observed** (`apps-ai-v0.8.0`) [measured 2026-08-27] |
 | Content foundation (schema, skeleton, settings lock, property types; agents read-only) | **Deployed**, with one known defect: the daily-note `format` key was never written to the instance — satisfied only by Obsidian's default [measured 2026-08-27] |
-| Read replication (committer → GitHub + NAS → `local-replicator` → iCloud), capture gate included | **Deployed and observed**: committer every 15 min in-cluster; `local-replicator` under launchd since 2026-08-28, acceptance closed at 5 of 6 criteria, no component defect found [measured 2026-08-28] |
+| Read replication (committer → GitHub → `local-replicator` → iCloud), capture gate included | **Deployed and observed**: committer every 15 min in-cluster; `local-replicator` under launchd since 2026-08-28, acceptance closed at 5 of 6 criteria, no component defect found [measured 2026-08-28] |
 | Everything else (work queue, all three processors, validator, lint, connections, content, operability) | **Unbuilt** — zero NATS manifests, zero processor modules exist [measured 2026-08-28 by grep over both repos] |
 | **The delivery gap** | `v0.4.0` (2026-08-01) is the latest release and what runs everywhere; `main` is 15 commits ahead, including the `.obsidian/` overlay fix ([ot#71](https://github.com/ppat/obsidian-tools/pull/71)); release PR [`ot#54`](https://github.com/ppat/obsidian-tools/pull/54) (v0.5.0) open since 2026-08-08. Until it ships and the Mac is upgraded, "fixed" means "merged", nothing stronger |
 
