@@ -1,7 +1,5 @@
 """The crash-injection stateful harness for local-replicator (ADR-0025, ADR-0026 and the Plane
-B): the highest-value deferred testing mechanism named in
-/home/coder/.claude/tmp/obsidian-brain/notes/decision-testing-strategy-for-obsidian-tools.md,
-implemented here.
+B): the highest-value deferred testing mechanism, implemented here.
 
 **The shape, and why it's coarse.** A synthetic *crash* action is inserted into the operation
 alphabet alongside the real ones (a device-side edit, an upstream commit landing on origin, a

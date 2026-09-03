@@ -21,8 +21,7 @@ from obsidian_tools.vault_git.runner import GitRunner
 
 # --- Hypothesis profiles ---------------------------------------------------------------------
 #
-# Three CI-discipline mitigations, all agreed rather than optional (see
-# /home/coder/.claude/tmp/obsidian-brain/notes/decision-testing-strategy-for-obsidian-tools.md):
+# Three CI-discipline mitigations, all agreed rather than optional:
 # a run must be reproducible so a property finding a real bug at random on an unrelated PR doesn't
 # read as CI flakiness; a case discovered once must be remembered rather than re-earned by luck on
 # every later run; and deep search belongs out-of-band, not on every PR's critical path.
