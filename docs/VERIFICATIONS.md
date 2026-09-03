@@ -71,6 +71,13 @@ All run on real hardware, 2026-08-28; full evidence in
 | A finance note with an unsourced number → quarantined | The evidence-keyed hard block (ADR-0010) | A4 |
 | Enqueue a pointer naming a curated path onto the promotion stream → refused by the pointer-target check, never promoted or archived | The check that stops a prompt-injected agent borrowing the widest handle; its refusal count is A3's standing metric | A3 |
 
+### The drift stream and `drift-processor` ([A7](../ROADMAP.md#group-a--pipeline-mechanisms), [B7](../ROADMAP.md#group-b--connection-work))
+
+| Injection | Proves | Pending on |
+| --- | --- | --- |
+| Kill a cycle between publish and tag-advance; run the next cycle; let the re-read content transit the drift stream → `drift-processor` reconciles it against upstream history and does **not** stamp `authority: human` | The crash window that mints false human authority: publish and tag-advance are non-atomic by design, so the next cycle re-reads the system's own published content as device drift (ADR-0025, ADR-0026); reconcile-before-stamping (ADR-0008) is the chosen containment. Sequence-dependent — found only by crash-injection after every example test, hand-written crash test, property, and adversarial review missed it — so it is proven by firing, never by review | A7 (+ B7, for the stream transit) |
+| Spool a genuine human deletion whose path-content matches upstream; dispatch it → the deletion survives classification, never discarded | `matches_upstream` is evidence, never a rule: it asserts content-equality at the path, not revision equality — the rule-reading discards exactly the human deletions it looks safest on (ADR-0026) | A7 |
+
 ### Open writes ([B2](../ROADMAP.md#group-b--connection-work), [B4](../ROADMAP.md#group-b--connection-work), [B5](../ROADMAP.md#group-b--connection-work))
 
 | Injection | Proves | Pending on |
