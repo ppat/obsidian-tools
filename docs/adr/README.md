@@ -57,6 +57,7 @@ build state never lives here.
 | 0006 | [NetworkPolicy as the sole control on the undisableable second MCP endpoint](./write-model/0006-networkpolicy-sole-control.md) | Accepted |
 | 0007 | [One shared admission validator, three callers, fired at every curated-boundary crossing](./write-model/0007-validation-placement.md) | **Proposed** |
 | 0008 | [Drift intentionality is a separate authority, upstream of the validator](./write-model/0008-drift-classification-separate-authority.md) | Accepted |
+| 0045 | [Write-scope composition: enumerated allowlists, entries mirroring grants, the schema file outside every scope](./write-model/0045-write-scope-composition.md) | Accepted |
 
 ## Content model — `content-model/`
 
