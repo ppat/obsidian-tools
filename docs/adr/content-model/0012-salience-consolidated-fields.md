@@ -21,7 +21,11 @@ time), and a way to tell a note it already folded from one it has not.
   coarser enum destroys an ordering that cannot be recaptured later. Values are **never thresholded
   absolutely** — the pass min-max normalises within each candidate batch, so miscalibration is
   harmless and the failure that matters is discrimination collapse, which the pole-anchored rubric
-  defends against. Recomputable (only when `updated:` moved), elicited in its own model call.
+  defends against. Recomputable only when `updated:` moved — never on access or retrieval — and
+  elicited in its own model call. The recompute gate is load-bearing, not tidiness: the published
+  precedent for a per-note importance score (Generative Agents) updates recency on retrieval in
+  its own shipped code, so promotion feeds back into the promotion criterion; gating on `updated:`
+  forecloses that loop.
 - **`consolidated:` — a date, not a boolean.** Comparing against `updated:` makes a re-edited note
   eligible again automatically; `true` would strand a note after its first fold. Not part of
   `status:` (a note can be evergreen *and* consolidated); distinct from `reviewed:` (different
@@ -29,7 +33,11 @@ time), and a way to tell a note it already folded from one it has not.
 - **The audit, kept from the strongest counter-argument:** field studies of two-axis rating show
   ~87% of ratings collapse onto the diagonal despite instructions to rate independently — so
   `salience:` may end up tracking `confidence:` and cost a model call for a column the vault
-  already had. **At roughly 200 notes, measure their correlation; if they track, `salience:` is
+  already had. Two more strands back the removal arm: successor memory systems (Letta, A-MEM, Zep,
+  mem0) carry no static importance field at all — A-MEM, closest in shape to this vault, uses link
+  structure instead — and in published critique a once-assigned, never-outcome-updated importance
+  score measured ρ=0.00 against true utility where an outcome-updated one reached ρ=0.89. **At
+  roughly 200 notes, measure their correlation; if they track, `salience:` is
   removed.** Recorded as an [open decision](../../../ROADMAP.md#open-decisions) so it happens
   rather than being remembered.
 
@@ -42,5 +50,8 @@ Floats and coarser enums (above); deriving salience from existing fields (nothin
 
 Treated as a coarse ordering within one batch it earns its place; treated as a measurement it
 misleads — no study validates LLM importance ratings for memory items against human judgement, and
-human inter-annotator agreement on the construct is only moderate. Neither field is ever written
+human inter-annotator agreement on the construct is only moderate. The strongest published
+predictor of what deserves keeping is provenance — user-stated over model-stated, learned weight
+0.64 in the closest study — which the schema already stores as `authority:`; the roll-up pass's
+best signal exists before `salience:` is ever scored. Neither field is ever written
 empty to hold a slot: an empty value is indistinguishable from a real low one.
