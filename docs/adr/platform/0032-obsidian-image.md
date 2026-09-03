@@ -15,10 +15,19 @@ one and forfeit path-scoped writes.
 
 ## Decision
 
-Build our own: Debian slim, multi-stage, digest-pinned; Obsidian and the REST API plugin baked in
-as a seed; Xvfb; `x11vnc` installed but dormant ([ADR-0002](../write-model/0002-gui-exception-dormant-vnc.md));
+Build our own: Debian slim, multi-stage, digest-pinned; Obsidian and a fixed, minimally selective
+plugin set baked in as a seed; Xvfb;
+`x11vnc` installed but dormant ([ADR-0002](../write-model/0002-gui-exception-dormant-vnc.md));
 non-root throughout (uid 1000 from boot, `tini` as PID 1, no supervisor, no sudo — no
 root-then-drop pass to narrow later, no `PUID`/`PGID` because there is no handoff to align).
+The plugin set is the REST API plugin by necessity (it cannot be installed through a gateway that
+does not exist yet, and serves only the headless instance) and
+[ADR-0017](../content-model/0017-plugin-set-tasks-dataview.md)'s Tasks and Dataview by choice —
+Renovate-tracked versions, disaster recovery reproducing the set, one less step on an already-long
+manual checklist — cut to what the headless instance needs while remaining a useful first seed for
+the device apps; a device may layer further plugins locally for the human consumption path, its
+`.obsidian/` being its own after seeding
+([ADR-0028](../replication/0028-settings-baseline-seed.md)).
 "Auto-trusted" required real engineering, not a file drop: the Restricted Mode flag lives in the
 Electron renderer's localStorage, keyed per vault install, so trust is established at boot over
 Chrome DevTools Protocol — the same runtime API the UI's own toggle calls. **The app version is
@@ -48,7 +57,12 @@ Electron runtime figures — accepted knowingly, with the fallback named rather 
 
 ## Consequences
 
-We own the dependency set the community images would have documented for us. A green image build
+We own the dependency set the community images would have documented for us. Baking carries a
+two-sided entrypoint discipline: plugin code is force-copied on every start — the files are build
+artifacts behind a Renovate pin, and copy-if-absent would strand a version bump on any vault that
+had already booted — while enablement is ensured every start only for the load-bearing REST
+plugin; the community plugins enable on first seed alone, so a deliberate disable at the GUI is
+never silently reverted by a restart. A green image build
 proves nothing about the runtime path (Xvfb, CDP attach, REST binding) — a recorded gap that shaped
 the CI-strategy question ([apps#3440](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3440)).
 The GUI exists at zero standing cost, attached on demand to the display the running process already
