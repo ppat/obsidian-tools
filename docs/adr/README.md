@@ -109,6 +109,7 @@ build state never lives here.
 | 0035 | [Tooling: Python with uv; one repository, one package](./platform/0035-tooling-python-one-repo.md) | Accepted |
 | 0040 | [Content foundation provisioning: manual seed, mode discipline, day-one settings lock](./platform/0040-first-seed-and-settings-lock.md) | Accepted |
 | 0041 | [The MCP stack selection, and the REST-bridge/filesystem-native fork it resolved](./platform/0041-mcp-stack-selection.md) | Accepted |
+| 0043 | [Paths handed to git are always literal-marked pathspecs](./platform/0043-git-pathspecs-literal.md) | Accepted |
 
 ## Operability — `operability/`
 

@@ -34,7 +34,9 @@ recurs one level down: **a bare directory prefix inside an allowlist is a denyli
 clothes** — admitting every future file underneath it sight unseen — so the allowlist is file-glob
 and depth-bounded (a `.css` at any depth; every `.json`-admitting rule depth-bounded), and themes
 are third-party code arriving through the ungated GUI, so "nothing secret would land there" is not
-a claim available.
+a claim available. The chain has a third link at the consuming step: the forced add's pathspecs are
+re-interpreted by git as patterns unless literal-marked — the observed bypass and the codebase-wide
+rule that closes it are [ADR-0043](../platform/0043-git-pathspecs-literal.md)'s.
 
 **Observation is scoped to what publication can act on.** The overlay excludes `.obsidian/`
 entirely ([ot#71](https://github.com/ppat/obsidian-tools/pull/71)): a directory no publish can
