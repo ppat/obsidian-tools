@@ -21,11 +21,15 @@ observability-last ordering. Signals ride as acceptance criteria on the units ab
 mechanisms do not); dashboards wait until the questions are real, because one built before that
 displays the wrong things and is cheap to rebuild later.
 
-Three hard-won signal rules travel with this record: **watch the absence of writes, not only
+Four hard-won signal rules travel with this record: **watch the absence of writes, not only
 errors** — the editor can wedge without raising one, and silence is the dangerous state;
 **watch image age, not "a newer version exists"** — the risk is maintenance lapsing entirely, and
-"newer exists" is permanently true and low-signal; and **watch unreviewed-finding age, not finding
-count** — the review loop's death shows as findings growing old, not numerous. A third is structural: a write-gate refusal
+"newer exists" is permanently true and low-signal; **watch unreviewed-finding age, not finding
+count** — the review loop's death shows as findings growing old, not numerous; and **watch read
+volume, not write volume alone** — reading is agent-heavy by design, so the signal is the whole
+read side (the agent readers and the conversational surface alike) declining while writes
+continue: the vault becoming a write-only landfill, the pre-mortem's highest-probability,
+highest-impact failure, and silent in every other signal here. A fifth is structural: a write-gate refusal
 returns HTTP 200 with the error inside the envelope, so **no HTTP-level metric can ever observe
 the write gate** — queue metrics cover stream-borne traffic as queue-native facts; the direct
 write path needs its own instrument ([D2](../../../ROADMAP.md#group-d--operability)).
