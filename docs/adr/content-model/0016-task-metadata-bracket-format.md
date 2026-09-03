@@ -29,5 +29,10 @@ dissolved on source inspection.
 ## Consequences
 
 The global todo stays a query over checklist items that live once, in the note that owns the work —
-no materialised task list is ever written. A formatter mangling bracket syntax is a known open
-risk; there is no converter, and mixed formats would be the symptom to watch for.
+no materialised task list is ever written. A formatter mangling bracket syntax is a known risk
+with a named mechanism: the format depends on an invisible two-space separator, and at least one
+common formatter was reproduced silently collapsing it — the field then reads as absent, so the
+hazard is stated as a hard rule in the vault's schema file, where an agent writing a task line
+finds it. There is no converter and none is coming — the upstream request for mixed-format
+support was closed as not-planned — so mixed formats would be the symptom to watch for, and the
+choice is permanent in practice, not merely expensive to reverse.
