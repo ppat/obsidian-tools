@@ -3,9 +3,8 @@
 name: test-hypothesis-deep
 
 # Deep, out-of-band Hypothesis search -- the third of three agreed CI-discipline mitigations for
-# property-based tests (tests/conftest.py's own comment carries the full reasoning; the strategy
-# note this stems from is /home/coder/.claude/tmp/obsidian-brain/notes/decision-testing-strategy-
-# for-obsidian-tools.md). An order of magnitude more examples than any PR run should pay for
+# property-based tests (tests/conftest.py's own comment carries the full reasoning). An order of
+# magnitude more examples than any PR run should pay for
 # (tests/conftest.py's "deep" profile), on a schedule rather than gating every PR -- and the one
 # place the crash-injection stateful harness (test_local_replicator_crash_injection.py, marked
 # `slow` and excluded from the ordinary `test` job) actually runs. Findings land in the same

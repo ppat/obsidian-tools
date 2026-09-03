@@ -111,10 +111,6 @@ lychee.toml · mise.toml · pyproject.toml · commitlint.config.js · release-pl
 
 ## Gotchas that cost real effort
 
-- **Code docstrings still cite sections of the deleted `docs/DESIGN.md`** (61 sites; a dedicated
-  sweep is planned). Resolve any such citation through [`DESIGN.md`](./DESIGN.md) and
-  [the decision-record index](./docs/adr/README.md) — the content all survives; only the addresses
-  are stale.
 - **A green `build-image` run proves nothing about the runtime path** — Xvfb, CDP auto-trust and
   REST binding are exercised only by a real deployment, never by the image build.
 - **A write-gate refusal is HTTP 200** with the error inside the JSON-RPC envelope — no HTTP-level
