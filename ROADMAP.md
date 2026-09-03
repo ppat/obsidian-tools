@@ -35,7 +35,7 @@ the unit it serves (one unit per ticket); every unit here names its tickets; and
 **Position** line below is re-dated whenever the checklists are reconciled against the tickets, so
 staleness is detectable instead of silent.
 
-**Position: 2026-08-29.**
+**Position: 2026-09-03.**
 
 ## Delivery posture
 
