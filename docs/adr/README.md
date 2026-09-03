@@ -112,6 +112,7 @@ build state never lives here.
 | 0040 | [Content foundation provisioning: manual seed, mode discipline, day-one settings lock](./platform/0040-first-seed-and-settings-lock.md) | Accepted |
 | 0041 | [The MCP stack selection, and the REST-bridge/filesystem-native fork it resolved](./platform/0041-mcp-stack-selection.md) | Accepted |
 | 0043 | [Paths handed to git are always literal-marked pathspecs](./platform/0043-git-pathspecs-literal.md) | Accepted |
+| 0046 | [Git through the real CLI, behind one seam](./platform/0046-git-cli-one-seam.md) | Accepted |
 
 ## Operability — `operability/`
 

@@ -29,8 +29,6 @@ config verified independently against upstream.
 
 ## Consequences
 
-Real git via the CLI is preferred over library bindings (this system is one node in a distributed
-git system; the bindings would remove some bug classes while forking behaviour from every other
-node's git). The version string reported by the installed package does not track the release tag —
+The version string reported by the installed package does not track the release tag —
 deployment records the tag out of band
 ([ot#66](https://github.com/ppat/obsidian-tools/issues/66) carries the consequences).
