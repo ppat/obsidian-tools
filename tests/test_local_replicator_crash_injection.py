@@ -9,11 +9,10 @@ cycle, a drain), so Hypothesis can place it anywhere in a generated sequence -- 
 the harness "crash-injection" rather than just "more integration tests." The crash granularity is
 component-level -- *between* `cycle.py`'s named steps (before the overlay, before the fetch, before
 the checkout-forward, before the publish, before the tag advance), never inside a git or rsync
-invocation itself. `research-property-based-testing-practice.md` §4 records the evidenced reason:
-Amazon's ShardStore paper found a coarse, component-level crash model catches substantially the
-same bugs as an exhaustive syscall-level fault injector, at a fraction of the cost -- and this
-project does not mock, so a syscall-level injector here would mean faking git and rsync internals,
-exactly the kind of belief-encoding the doctrine rules out.
+invocation itself. The evidenced reason: Amazon's ShardStore paper found a coarse, component-level
+crash model catches substantially the same bugs as an exhaustive syscall-level fault injector, at a
+fraction of the cost -- and this project does not mock, so a syscall-level injector here would mean
+faking git and rsync internals, exactly the kind of belief-encoding the doctrine rules out.
 
 **How a crash is injected, concretely.** `cycle.py` calls its collaborators (`overlay`, `publish`,
 `fetch_origin`, `checkout_forward`, `advance_last_checkout`) by name, imported into its own module
