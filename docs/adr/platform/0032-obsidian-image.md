@@ -30,7 +30,12 @@ the device apps; a device may layer further plugins locally for the human consum
 ([ADR-0028](../replication/0028-settings-baseline-seed.md)).
 "Auto-trusted" required real engineering, not a file drop: the Restricted Mode flag lives in the
 Electron renderer's localStorage, keyed per vault install, so trust is established at boot over
-Chrome DevTools Protocol — the same runtime API the UI's own toggle calls. **The app version is
+Chrome DevTools Protocol — the same runtime API the UI's own toggle calls. Establishing trust that
+way has a standing residue: the Chromium remote-debugging port the entrypoint opens for that call —
+Electron's CDP endpoint, through which anything attached can script the renderer and therefore
+drive the editor — stays open for the process's lifetime, loopback-only inside the pod, because
+closing it would require restarting Obsidian after trust is granted: a second launch and a
+supervisor, against the one-process design. The pod's network isolation is what bounds it. **The app version is
 pinned to stable** (which is what forced two plugins out of the set —
 [ADR-0017](../content-model/0017-plugin-set-tasks-dataview.md)); verified safe against silent
 drift: the vendor's release repo publishes no pre-releases, so automation cannot walk the pin onto
