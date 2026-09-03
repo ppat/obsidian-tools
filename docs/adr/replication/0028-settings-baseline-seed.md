@@ -25,6 +25,19 @@ the others structurally cannot:
 | `skip-worktree` on each baselined file (per-clone, reapplied every run) | Does an ordinary add re-stage a *change* to an already-captured file? (git never consults ignore rules for tracked files) |
 | The forced add's own **allowlist pathspec** | The one add that deliberately overrides every ignore rule is constrained by nothing else |
 
+The mechanisms key on different things, deliberately, and the asymmetry is load-bearing: the
+**allowlist** decides what enters git, once, at capture; the freeze answers a different question —
+on every run the committer reapplies `skip-worktree` to **whatever `.obsidian/` files git already
+tracks**, without asking how they got there or whether the allowlist would admit them; and the
+device seed filters by the **allowlist again**. The
+symmetric reading — protection scoped to the same list that decides capture — is the natural one
+and is wrong (a pinned test predating the question holds the asymmetry). Both halves matter: the
+freeze-on-tracked side means a hand-authored addition to the tracked baseline is protected like
+any captured file — the one kind of vault-repo commit the sync does *not* revert
+([ADR-0030](./0030-committer-shape.md)) — and the seed-on-allowlist side means a tracked file the
+allowlist does not name never reaches a device, so a baseline correction is complete only when the
+allowlist names it too.
+
 **The allowlist is a security property, not tidiness.** A denylist would have committed the REST
 API bearer token — the path-unscoped, write-anywhere credential — into permanent history on two
 remotes and onto every device, because `data.json` is the conventional settings filename for
