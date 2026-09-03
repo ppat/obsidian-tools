@@ -15,17 +15,16 @@ is exactly what this module assembles.
 
 **GitHub's current host keys come from `https://api.github.com/meta`** (the `ssh_keys` field) —
 TLS-verified HTTPS straight to GitHub, a better trust root than a value pinned into a secret
-months ago by whoever last remembered to update it. Other hosts (e.g. the NAS) publish their key
-nowhere fetchable, so those come from operator-supplied configuration instead
-(`GIT_SSH_KNOWN_HOSTS_EXTRA` — see `obsidian_tools/config.py`) and are appended verbatim: plain
-config, not a secret, same as the GitHub keys are once fetched.
+months ago by whoever last remembered to update it. A host that publishes its key nowhere fetchable
+is covered instead by operator-supplied configuration (`GIT_SSH_KNOWN_HOSTS_EXTRA` — see
+`obsidian_tools/config.py`), appended verbatim: plain config, not a secret, same as the GitHub keys
+are once fetched.
 
 The fetch is deliberately narrow: a short timeout, no retries, and skipped entirely when no
-configured remote is `github.com` (see `any_remote_is_github`) — this component's core job doesn't
-need GitHub to be reachable when every remote it actually pushes to is reachable another way. When
-the fetch *is* needed, a failure raises `KnownHostsError` rather than falling back to an unverified
-connection — the caller must fail the run, not push over an unknown host key (see
-`obsidian_tools/commands/commit.py::run`).
+configured remote is `github.com` (see `any_remote_is_github`) — it is a consequence of which
+remotes a run actually has, not an unconditional startup step. When the fetch *is* needed, a failure
+raises `KnownHostsError` rather than falling back to an unverified connection — the caller must fail
+the run, not push over an unknown host key (see `obsidian_tools/commands/commit.py::run`).
 """
 
 from __future__ import annotations

@@ -5,10 +5,9 @@ scheduled run can fetch incrementally instead of re-cloning the vault's full his
 that is the only reason it is a PVC rather than an `emptyDir`. Nothing here may assume it survives
 between runs: it can be lost or re-provisioned at any point, and a lost cache must be *recovered by
 fetching origin's existing history*, never by re-initialising a fresh root commit. Re-rooting would
-silently fork history — the next push would either be rejected as non-fast-forward, or, worse,
-succeed against a NAS remote that happened to accept an unrelated root and leave the two remotes
-permanently divergent while the vault volume itself looked perfectly fine. "It's a PVC, therefore
-it's state" is exactly the assumption a future maintainer will otherwise make here — it's wrong.
+silently fork history — the next push would be rejected as non-fast-forward while the vault volume
+itself looked perfectly fine. "It's a PVC, therefore it's state" is exactly the assumption a future
+maintainer will otherwise make here — it's wrong.
 
 Every step below must converge correctly whether `git_dir` is a fresh, empty directory or one
 carrying a previous run's state:
@@ -52,7 +51,6 @@ def provision_repository(
     author_name: str,
     author_email: str,
     origin_url: str,
-    nas_url: str | None,
 ) -> None:
     """Bring `runner`'s git-dir to a valid, up-to-date-with-origin state. Safe to call every run."""
     runner.git_dir.mkdir(parents=True, exist_ok=True)
@@ -80,8 +78,6 @@ def provision_repository(
     runner.run(["config", "user.email", author_email])
 
     _ensure_remote(runner, "origin", origin_url)
-    if nas_url is not None:  # the NAS remote is optional (config.py's CommitConfig.nas_url)
-        _ensure_remote(runner, "nas", nas_url)
 
     ref_advanced = _sync_branch_from_origin(runner, branch)
 
@@ -169,8 +165,8 @@ def _sync_branch_from_origin(runner: GitRunner, branch: str) -> bool:
     if action in (SyncAction.NO_REMOTE_HISTORY, SyncAction.UP_TO_DATE, SyncAction.LOCAL_AHEAD):
         # NO_REMOTE_HISTORY: origin has no history for this branch yet; the first commit roots it.
         # LOCAL_AHEAD: a previous run committed but its push failed. Leave it — the push step
-        # retries against both remotes on every run regardless of whether this cycle produced a new
-        # commit, so a stuck local-only commit catches up on its own.
+        # runs on every run regardless of whether this cycle produced a new commit, so a stuck
+        # local-only commit catches up on its own.
         return False
 
     if action is SyncAction.ROOT_LOCAL_FROM_REMOTE:

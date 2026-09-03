@@ -338,7 +338,7 @@ instance supports, not a mirror of that instance's evolving state. So the baseli
 forced add — but **the pathspec must be an allowlist, never a denylist naming only the two
 workspace files.** A denylist here would commit
 `.obsidian/plugins/obsidian-local-rest-api/data.json` — the file holding the vault's Local
-REST API bearer token ([ADR-0028](./adr/replication/0028-settings-baseline-seed.md)) — into permanent history on both remotes,
+REST API bearer token ([ADR-0028](./adr/replication/0028-settings-baseline-seed.md)) — into permanent history on the vault's remote,
 pulled to the Mac clone and published into iCloud and onto the phone (caught by review
 before this ever ran; see `ppat/obsidian-tools#3`). `data.json` is the conventional
 filename for *every* Obsidian plugin's settings, so a denylist would have to enumerate

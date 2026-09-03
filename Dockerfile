@@ -67,8 +67,7 @@ RUN rm -f /etc/apt/apt.conf.d/docker-clean && \
 #   library (see obsidian_tools/vault_git/runner.py — the detached --git-dir/--work-tree
 #   invocation this whole component is built around is a git CLI concept, not a library one).
 # openssh-client: provides `ssh`, invoked via GIT_SSH_COMMAND (obsidian_tools/vault_git/ssh.py)
-#   for both remotes, over one mounted key — see that module for why host key checking is never
-#   disabled here.
+#   over the one mounted key — see that module for why host key checking is never disabled here.
 # tini: this image owns PID 1 directly (no s6-overlay, no init supervisor, no start-as-root-then-
 #   drop dance); tini reaps and forwards signals cleanly for the short git child processes this
 #   CLI spawns, which matters even for a one-shot CronJob pod that can be terminated mid-run.

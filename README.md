@@ -12,7 +12,7 @@ Two components are shipped and running (`v0.4.0` released; later fixes are merge
 release — see [`ROADMAP.md`](./ROADMAP.md) for the delivery gap and everything below):
 
 - **The git committer** (`obsidian-tools commit`) — runs in-cluster on a schedule, turning the vault
-  volume into git history pushed to two remotes. It never authors content.
+  volume into git history pushed to the vault's GitHub remote. It never authors content.
 - **`local-replicator`** (`obsidian-tools replicate` + `obsidian-tools drain`) — runs on the
   operator's Mac under launchd, keeping the device-facing iCloud vault current from git, one-way and
   non-destructively: device-side drift is captured to a durable local spool before anything is

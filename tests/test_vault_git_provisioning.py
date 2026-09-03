@@ -3,15 +3,13 @@
 The critical property under test: the git-dir is a derivable cache, not durable state. A lost or
 re-provisioned cache must recover by fetching origin's existing history, never by re-initialising a
 fresh, divergent root commit — see the module's own docstring and ppat/obsidian-tools#3 for the
-incident this guards against (a re-rooted cache would either fail to push as non-fast-forward, or
-succeed against a remote that happened to accept the new root and leave the two remotes permanently,
-silently forked).
+incident this guards against: a re-rooted cache would fail to push as non-fast-forward, while the
+vault volume itself looked perfectly fine.
 """
 
 from __future__ import annotations
 
 import shutil
-import subprocess
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,7 +22,7 @@ from obsidian_tools.vault_git.provisioning import GitDivergenceError, provision_
 from obsidian_tools.vault_git.runner import GitRunner
 
 
-def _provision(git_dir: Path, work_tree: Path, *, origin_url: str, nas_url: str | None) -> GitRunner:
+def _provision(git_dir: Path, work_tree: Path, *, origin_url: str) -> GitRunner:
     runner = make_runner(git_dir, work_tree)
     provision_repository(
         runner,
@@ -32,7 +30,6 @@ def _provision(git_dir: Path, work_tree: Path, *, origin_url: str, nas_url: str 
         author_name="test-committer",
         author_email="test-committer@example.invalid",
         origin_url=origin_url,
-        nas_url=nas_url,
     )
     return runner
 
@@ -50,14 +47,11 @@ def _add_vault_file(vault_dir: Path, relative: str, content: str) -> None:
     path.write_text(content)
 
 
-def test_provisioning_is_idempotent(
-    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
-) -> None:
-    nas = make_bare_repo()
+def test_provisioning_is_idempotent(tmp_path: Path, seeded_origin: Path, vault_dir: Path) -> None:
     git_dir = tmp_path / "git-dir"
 
-    _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
-    _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
+    _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
 
     assert commit_count(git_dir) == 1  # only origin's pre-existing seed commit; provisioning alone commits nothing
 
@@ -66,27 +60,24 @@ def test_first_run_against_an_empty_origin_roots_cleanly(
     tmp_path: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
 ) -> None:
     origin = make_bare_repo()  # genuinely empty, no commits at all
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
 
-    runner = _provision(git_dir, vault_dir, origin_url=str(origin), nas_url=str(nas))
+    runner = _provision(git_dir, vault_dir, origin_url=str(origin))
     results = _cycle(runner)
 
     assert all(result.ok for result in results)
     assert commit_count(origin) == 1
-    assert commit_count(nas) == 1
 
 
 def test_recovers_from_wiped_cache_by_fetching_not_reinitialising(
-    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+    tmp_path: Path, seeded_origin: Path, vault_dir: Path
 ) -> None:
     """The scenario the PVC-as-cache correction exists to prevent."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     original_root_sha = rev_list_root(seeded_origin)
 
     # Cycle 1: a normal run against a freshly-provisioned cache.
-    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
     _add_vault_file(vault_dir, "10-areas/homelab.md", "# Homelab\n")
     results_1 = _cycle(runner)
     assert all(result.ok for result in results_1)
@@ -94,12 +85,12 @@ def test_recovers_from_wiped_cache_by_fetching_not_reinitialising(
     assert rev_list_root(git_dir) == original_root_sha
 
     # Simulate a lost/re-provisioned PVC: the git-dir cache vanishes entirely. The vault volume's
-    # content is untouched, and origin/nas still hold everything cycle 1 pushed.
+    # content is untouched, and origin still holds everything cycle 1 pushed.
     shutil.rmtree(git_dir)
     _add_vault_file(vault_dir, "10-areas/homelab2.md", "# Homelab 2\n")
 
     # Cycle 2: provisioning must recover by fetching origin's history, not by re-rooting.
-    runner_2 = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    runner_2 = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
     results_2 = _cycle(runner_2)
 
     # A genuinely re-rooted cache would be rejected here as non-fast-forward. Succeeding is part
@@ -109,38 +100,33 @@ def test_recovers_from_wiped_cache_by_fetching_not_reinitialising(
     assert rev_list_root(git_dir) == original_root_sha  # single lineage, never re-rooted
     assert commit_count(git_dir) == 3
     assert commit_count(seeded_origin) == 3  # origin received both cycles' commits, linearly
-    assert commit_count(nas) == 3
 
 
 def test_a_stuck_unpushed_commit_is_not_discarded_on_the_next_provision(
-    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+    tmp_path: Path, seeded_origin: Path, vault_dir: Path
 ) -> None:
     """A previous run may have committed locally and then failed to push. The next provisioning
     pass must leave that local-only commit alone (never rewind it), so the next push catches up."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
 
-    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
     _add_vault_file(vault_dir, "10-areas/homelab.md", "# Homelab\n")
     stage_all(runner)
     create_commit(runner, cycle_time=datetime.now(UTC))  # committed locally, deliberately not pushed
 
     local_sha_before = runner.rev_parse_or_none("refs/heads/main")
 
-    runner_2 = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    runner_2 = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
 
     assert runner_2.rev_parse_or_none("refs/heads/main") == local_sha_before  # not rewound to origin
     assert commit_count(git_dir) == 2
     assert commit_count(seeded_origin) == 1  # origin never received it
 
 
-def test_diverged_local_and_origin_history_raises(
-    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
-) -> None:
-    nas = make_bare_repo()
+def test_diverged_local_and_origin_history_raises(tmp_path: Path, seeded_origin: Path, vault_dir: Path) -> None:
     git_dir = tmp_path / "git-dir"
 
-    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
     _add_vault_file(vault_dir, "10-areas/homelab.md", "# Homelab\n")
     _cycle(runner)  # local now matches origin (pushed)
 
@@ -168,26 +154,4 @@ def test_diverged_local_and_origin_history_raises(
     create_commit(runner, cycle_time=datetime.now(UTC))
 
     with pytest.raises(GitDivergenceError):
-        _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
-
-
-def test_no_nas_url_never_creates_a_nas_remote(tmp_path: Path, seeded_origin: Path, vault_dir: Path) -> None:
-    """The NAS remote is optional (config.py's `CommitConfig.nas_url`) -- provisioning must not
-    merely fail to push to a "nas" remote when it's unconfigured, it must never create one at all."""
-    git_dir = tmp_path / "git-dir"
-
-    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=None)
-    _add_vault_file(vault_dir, "10-areas/homelab.md", "# Homelab\n")
-    stage_all(runner)
-    create_commit(runner, cycle_time=datetime.now(UTC))
-    results = push_all(runner, branch="main", remotes=("origin",))  # only what's actually configured
-
-    assert [result.remote for result in results] == ["origin"]
-    assert all(result.ok for result in results)
-    result = subprocess.run(
-        ["git", f"--git-dir={git_dir}", "config", "--local", "--get", "remote.nas.url"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode != 0  # never created, not merely unpushed
+        _provision(git_dir, vault_dir, origin_url=str(seeded_origin))

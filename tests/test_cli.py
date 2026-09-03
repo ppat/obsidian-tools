@@ -31,7 +31,6 @@ def test_no_subcommand_is_an_error() -> None:
 
 def test_main_returns_config_error_exit_code_when_required_env_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GIT_REMOTE_ORIGIN_URL", raising=False)
-    monkeypatch.delenv("GIT_REMOTE_NAS_URL", raising=False)
 
     assert main(["commit"]) == 2
 
@@ -115,7 +114,6 @@ def test_main_stops_gracefully_and_returns_143_on_sigterm(monkeypatch: pytest.Mo
 
     monkeypatch.setattr(cli.commit_command, "run", _raise_shutdown)
     monkeypatch.setenv("GIT_REMOTE_ORIGIN_URL", "git@github.com:ppat/obsidian-vault.git")
-    monkeypatch.setenv("GIT_REMOTE_NAS_URL", "git@nas:vault.git")
 
     previous = signal.getsignal(signal.SIGTERM)
     try:

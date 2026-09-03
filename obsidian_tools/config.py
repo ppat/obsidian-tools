@@ -22,13 +22,6 @@ def get_env(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
 
-def get_env_optional(name: str) -> str | None:
-    """`None` when `name` is unset or set to an empty string, distinguishing "not configured" from
-    an empty override. Used for genuinely optional configuration (`CommitConfig.nas_url`) — unlike
-    `get_env`, there is no sensible non-empty default to fall back to."""
-    return os.environ.get(name) or None
-
-
 def require_env(name: str) -> str:
     value = os.environ.get(name)
     if not value:
@@ -56,9 +49,6 @@ class CommitConfig:
     author_name: str
     author_email: str
     origin_url: str
-    # `None` when the NAS remote isn't configured at all -- see `from_env`'s comment on
-    # GIT_REMOTE_NAS_URL for why that's a legitimate, supported run rather than a missing setting.
-    nas_url: str | None
     ssh_key_path: str
     # Where the assembled `known_hosts` file is written and then read back from for
     # `GIT_SSH_COMMAND`'s `UserKnownHostsFile` -- not a path to a pre-existing mounted file anymore
@@ -66,7 +56,7 @@ class CommitConfig:
     # /etc/obsidian-tools/git-ssh/ because the latter sits on the read-only root filesystem; $HOME
     # is the writable emptyDir this process actually has.
     ssh_known_hosts_path: str
-    # Verbatim extra `known_hosts` lines (e.g. the NAS's host key, published nowhere fetchable) --
+    # Verbatim extra `known_hosts` lines for a host that publishes its key nowhere fetchable --
     # appended as-is to the fetched GitHub keys. See known_hosts.py's module docstring.
     ssh_known_hosts_extra: str
     max_deletion_fraction: float
@@ -93,14 +83,6 @@ class CommitConfig:
             author_name=get_env("GIT_COMMIT_AUTHOR_NAME", "brain-committer"),
             author_email=get_env("GIT_COMMIT_AUTHOR_EMAIL", "brain-committer@noreply.invalid"),
             origin_url=require_env("GIT_REMOTE_ORIGIN_URL"),
-            # Unlike origin, genuinely optional: the NAS is a second push target for independence
-            # insurance (ADR-0029), not something the committer needs to do its
-            # primary job. Requiring it up front would also require, before the component could run
-            # even once, everything the NAS remote depends on -- SSH access to the NAS, an
-            # authorized_keys entry, a bare repository created by hand, and a host key published
-            # nowhere (see GIT_SSH_KNOWN_HOSTS_EXTRA above). `run()` logs which remotes are
-            # configured either way; see obsidian_tools/commands/commit.py.
-            nas_url=get_env_optional("GIT_REMOTE_NAS_URL"),
             ssh_key_path=get_env("GIT_SSH_KEY_PATH", "/etc/obsidian-tools/git-ssh/id_ed25519"),
             ssh_known_hosts_path=get_env("GIT_SSH_KNOWN_HOSTS_PATH", os.path.expanduser("~/.ssh/known_hosts")),
             ssh_known_hosts_extra=get_env("GIT_SSH_KNOWN_HOSTS_EXTRA", ""),

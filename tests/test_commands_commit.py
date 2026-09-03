@@ -1,7 +1,7 @@
 """End-to-end tests for the `commit` subcommand's orchestration (obsidian_tools/commands/commit.py):
 provisioning, staging, committing, pushing, and the two failure-mode behaviours a CronJob run
-depends on — a persistent read failure must fail the run without a partial commit, and a push
-failure on one remote must not block the other while still failing the run overall.
+depends on — a persistent read failure must fail the run without a partial commit, and a failed
+push must fail the run while leaving the commit in place for the next one to carry.
 """
 
 from __future__ import annotations
@@ -11,7 +11,6 @@ import os
 import shutil
 import stat
 import subprocess
-from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -36,7 +35,6 @@ def _config(
     vault_dir: Path,
     *,
     origin_url: str,
-    nas_url: str | None,
     max_deletion_fraction: float = DEFAULT_MAX_DELETION_FRACTION,
 ) -> CommitConfig:
     return CommitConfig(
@@ -46,7 +44,6 @@ def _config(
         author_name="test-committer",
         author_email="test-committer@example.invalid",
         origin_url=origin_url,
-        nas_url=nas_url,
         # Local file-path remotes in these tests never actually shell out over SSH, so this path is
         # never opened as a key; it only needs to exist as a string for build_ssh_command to format.
         ssh_key_path="/dev/null",
@@ -62,7 +59,6 @@ def _config(
 def test_known_hosts_fetch_failure_fails_the_run_without_touching_git_at_all(
     tmp_path: Path,
     seeded_origin: Path,
-    make_bare_repo: Callable[[], Path],
     vault_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -73,7 +69,6 @@ def test_known_hosts_fetch_failure_fails_the_run_without_touching_git_at_all(
     `test_vault_git_known_hosts.py` proves `assemble_known_hosts` itself raises and writes nothing;
     this proves `run()` catches that, logs it, and returns non-zero *before* provisioning ever
     touches git -- not merely that some later git call then fails."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     (vault_dir / "10-areas").mkdir()
     (vault_dir / "10-areas" / "note.md").write_text("# Note\n")
@@ -85,7 +80,7 @@ def test_known_hosts_fetch_failure_fails_the_run_without_touching_git_at_all(
     monkeypatch.setattr(commit_command, "assemble_known_hosts", _raise)
 
     with caplog.at_level(logging.ERROR):
-        exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas)))
+        exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin)))
 
     assert exit_code == 1
     assert commit_count(seeded_origin) == commits_before  # nothing pushed
@@ -94,27 +89,22 @@ def test_known_hosts_fetch_failure_fails_the_run_without_touching_git_at_all(
     assert "known_hosts_failed" in events
 
 
-def test_full_cycle_commits_and_pushes_to_both_remotes(
-    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
-) -> None:
-    nas = make_bare_repo()
+def test_full_cycle_commits_and_pushes_to_origin(tmp_path: Path, seeded_origin: Path, vault_dir: Path) -> None:
     git_dir = tmp_path / "git-dir"
     (vault_dir / "10-areas").mkdir()
     (vault_dir / "10-areas" / "note.md").write_text("# Note\n")
 
-    exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas)))
+    exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin)))
 
     assert exit_code == 0
     assert commit_count(seeded_origin) == 2
-    assert commit_count(nas) == 2
 
 
 def test_repeated_runs_with_no_new_content_stay_exit_zero_with_no_empty_commits(
-    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+    tmp_path: Path, seeded_origin: Path, vault_dir: Path
 ) -> None:
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
-    config = _config(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    config = _config(git_dir, vault_dir, origin_url=str(seeded_origin))
 
     assert commit_command.run(config) == 0
     commits_after_first_run = commit_count(seeded_origin)
@@ -126,7 +116,6 @@ def test_repeated_runs_with_no_new_content_stay_exit_zero_with_no_empty_commits(
 def test_persistent_read_failure_exits_nonzero_without_partial_commit(
     tmp_path: Path,
     seeded_origin: Path,
-    make_bare_repo: Callable[[], Path],
     vault_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -135,7 +124,6 @@ def test_persistent_read_failure_exits_nonzero_without_partial_commit(
     monkeypatch.setattr(retry_module, "DEFAULT_RETRIES", 2)
     monkeypatch.setattr(retry_module, "DEFAULT_BASE_DELAY_SECONDS", 0.01)
 
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     before = commit_count(seeded_origin)
 
@@ -145,7 +133,7 @@ def test_persistent_read_failure_exits_nonzero_without_partial_commit(
     unreadable.chmod(0)  # a real, persistent read failure — not mocked; this uid owns but can't read it
 
     try:
-        exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas)))
+        exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin)))
     finally:
         unreadable.chmod(stat.S_IRUSR | stat.S_IWUSR)  # restore so tmp_path cleanup can remove it
 
@@ -157,7 +145,6 @@ def test_persistent_read_failure_exits_nonzero_without_partial_commit(
 def test_persistent_read_failure_is_logged_as_a_vault_problem_not_a_lock(
     tmp_path: Path,
     seeded_origin: Path,
-    make_bare_repo: Callable[[], Path],
     vault_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -174,7 +161,6 @@ def test_persistent_read_failure_is_logged_as_a_vault_problem_not_a_lock(
     monkeypatch.setattr(retry_module, "DEFAULT_RETRIES", 2)
     monkeypatch.setattr(retry_module, "DEFAULT_BASE_DELAY_SECONDS", 0.01)
 
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
 
     (vault_dir / "10-areas").mkdir()
@@ -184,7 +170,7 @@ def test_persistent_read_failure_is_logged_as_a_vault_problem_not_a_lock(
 
     try:
         with caplog.at_level(logging.ERROR):
-            exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas)))
+            exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin)))
     finally:
         unreadable.chmod(stat.S_IRUSR | stat.S_IWUSR)  # restore so tmp_path cleanup can remove it
 
@@ -203,7 +189,6 @@ def test_persistent_read_failure_is_logged_as_a_vault_problem_not_a_lock(
 def test_transient_read_failure_recovers_and_still_commits(
     tmp_path: Path,
     seeded_origin: Path,
-    make_bare_repo: Callable[[], Path],
     vault_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -211,7 +196,6 @@ def test_transient_read_failure_recovers_and_still_commits(
     monkeypatch.setattr(retry_module, "DEFAULT_RETRIES", 5)
     monkeypatch.setattr(retry_module, "DEFAULT_BASE_DELAY_SECONDS", 0.01)
 
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     (vault_dir / "10-areas").mkdir()
     flaky = vault_dir / "10-areas" / "flaky.md"
@@ -226,7 +210,7 @@ def test_transient_read_failure_recovers_and_still_commits(
 
     monkeypatch.setattr(retry_module.time, "sleep", fix_permissions_then_sleep)
 
-    exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas)))
+    exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin)))
 
     assert exit_code == 0
     assert commit_count(seeded_origin) == 2
@@ -235,7 +219,6 @@ def test_transient_read_failure_recovers_and_still_commits(
 def test_a_vault_directory_absent_from_the_volume_degrades_instead_of_dying_at_the_first_git_call(
     tmp_path: Path,
     seeded_origin: Path,
-    make_bare_repo: Callable[[], Path],
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -257,14 +240,13 @@ def test_a_vault_directory_absent_from_the_volume_degrades_instead_of_dying_at_t
     monkeypatch.setattr(retry_module, "DEFAULT_RETRIES", 2)
     monkeypatch.setattr(retry_module, "DEFAULT_BASE_DELAY_SECONDS", 0.01)
 
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     mount_root = tmp_path / "vault-mount"  # stands in for /vault, the volume mount itself
     mount_root.mkdir()
     vault_dir = mount_root / "brain"  # deliberately never created: the vault directory isn't there yet
 
     with caplog.at_level(logging.INFO):
-        exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas)))
+        exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin)))
 
     assert exit_code == 1
     events = [getattr(record, "event", None) for record in caplog.records]
@@ -284,21 +266,19 @@ def test_a_vault_directory_absent_from_the_volume_degrades_instead_of_dying_at_t
     [record] = [r for r in caplog.records if getattr(r, "event", None) == "stage_failed_work_tree_unusable"]
     assert "git-dir cache volume" not in record.getMessage().split("not the")[0]  # points at the vault volume
 
-    # push_all still ran, against both remotes.
+    # push_all still ran.
     assert [getattr(r, "remote", None) for r in caplog.records if getattr(r, "event", None) == "push_succeeded"] == [
-        "origin",
-        "nas",
+        "origin"
     ]
 
 
 def test_stale_index_lock_from_a_killed_run_is_cleared_and_the_next_run_recovers(
-    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+    tmp_path: Path, seeded_origin: Path, vault_dir: Path
 ) -> None:
     """A run that gets SIGKILLed mid `add`/`commit`/`reset` leaves `$GIT_DIR/index.lock` behind
     (see obsidian_tools/vault_git/provisioning.py). With `concurrencyPolicy: Forbid` and a
     single-writer RWO cache PVC, that lock can only be a corpse — the next run must clear it and
     proceed rather than wedging forever on "Unable to create '.../index.lock': File exists"."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     git_dir.mkdir(parents=True)
     (git_dir / "index.lock").write_text("")  # simulates a run killed mid write, before cleaning up
@@ -306,7 +286,7 @@ def test_stale_index_lock_from_a_killed_run_is_cleared_and_the_next_run_recovers
     (vault_dir / "10-areas").mkdir()
     (vault_dir / "10-areas" / "note.md").write_text("# Note\n")
 
-    exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas)))
+    exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin)))
 
     assert exit_code == 0
     assert not (git_dir / "index.lock").exists()
@@ -314,7 +294,7 @@ def test_stale_index_lock_from_a_killed_run_is_cleared_and_the_next_run_recovers
 
 
 def test_stale_config_head_and_branch_locks_from_a_killed_run_are_all_cleared(
-    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+    tmp_path: Path, seeded_origin: Path, vault_dir: Path
 ) -> None:
     """A SIGKILL can strand more than `index.lock`: `config.lock`, `HEAD.lock` and
     `refs/heads/<branch>.lock` are each left behind by the same failure mode, at whatever git
@@ -322,7 +302,6 @@ def test_stale_config_head_and_branch_locks_from_a_killed_run_are_all_cleared(
     run's provisioning with exit 1, and `HEAD.lock`/`refs/heads/main.lock` wedge it with an
     uncaught `GitCommandError` traceback. Clearing only `index.lock`, as an earlier revision did,
     leaves the other three to wedge every later run permanently."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     git_dir.mkdir(parents=True)
     (git_dir / "index.lock").write_text("")
@@ -334,7 +313,7 @@ def test_stale_config_head_and_branch_locks_from_a_killed_run_are_all_cleared(
     (vault_dir / "10-areas").mkdir()
     (vault_dir / "10-areas" / "note.md").write_text("# Note\n")
 
-    exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas)))
+    exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin)))
 
     assert exit_code == 0
     assert not (git_dir / "index.lock").exists()
@@ -347,7 +326,6 @@ def test_stale_config_head_and_branch_locks_from_a_killed_run_are_all_cleared(
 def test_commit_failure_is_caught_and_logged_rather_than_propagating(
     tmp_path: Path,
     seeded_origin: Path,
-    make_bare_repo: Callable[[], Path],
     vault_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -356,7 +334,6 @@ def test_commit_failure_is_caught_and_logged_rather_than_propagating(
     at all: `create_commit`'s `GitCommandError` propagated straight out of `run()` as a bare,
     uncaught traceback instead of a logged, attributable event. The commit path must catch it, log
     it, still let a prior run's stuck-unpushed commit's push catch up, and fail the run cleanly."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     (vault_dir / "10-areas").mkdir()
     (vault_dir / "10-areas" / "note.md").write_text("# Note\n")
@@ -372,23 +349,20 @@ def test_commit_failure_is_caught_and_logged_rather_than_propagating(
 
     monkeypatch.setattr(commit_command, "create_commit", _raise_locked)
 
-    exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas)))
+    exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin)))
 
     assert exit_code == 1
     assert commit_count(seeded_origin) == 1  # only the pre-existing seed commit; nothing landed
 
 
-def test_emptied_vault_refuses_to_commit_a_mass_deletion(
-    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
-) -> None:
+def test_emptied_vault_refuses_to_commit_a_mass_deletion(tmp_path: Path, seeded_origin: Path, vault_dir: Path) -> None:
     """The volume coming back genuinely empty (a re-provisioned or blank-restored PVC, a mis-set
     OBSIDIAN_VAULT_DIR, running before the volume is seeded) must not be committed and pushed as a
     wholesale deletion of the vault's history — `DESIGN.md`'s "fail loud, destroy nothing"
     applies nowhere more than to the one component whose entire job is durability. Content stays
     recoverable in git history either way; the point is that this run must not push the deletion."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
-    config = _config(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    config = _config(git_dir, vault_dir, origin_url=str(seeded_origin))
 
     (vault_dir / "10-areas").mkdir()
     for i in range(4):
@@ -473,7 +447,6 @@ def test_is_index_lock_error_does_not_misattribute_a_full_or_read_only_git_dir()
 def test_a_full_or_read_only_git_dir_volume_is_logged_distinctly_from_a_vault_read_failure(
     tmp_path: Path,
     seeded_origin: Path,
-    make_bare_repo: Callable[[], Path],
     vault_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -494,7 +467,6 @@ def test_a_full_or_read_only_git_dir_volume_is_logged_distinctly_from_a_vault_re
     Matches this file's existing precedent for testing this path
     (`test_commit_failure_is_caught_and_logged_rather_than_propagating` monkeypatches
     `create_commit` the same way, for the analogous HEAD.lock/refs-lock case)."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     (vault_dir / "10-areas").mkdir()
     (vault_dir / "10-areas" / "note.md").write_text("# Note\n")
@@ -507,7 +479,7 @@ def test_a_full_or_read_only_git_dir_volume_is_logged_distinctly_from_a_vault_re
     monkeypatch.setattr(commit_command, "stage_all", _raise_git_dir_volume_error)
 
     with caplog.at_level(logging.ERROR):
-        exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas)))
+        exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin)))
 
     assert exit_code == 1
     events = [getattr(record, "event", None) for record in caplog.records]
@@ -522,52 +494,41 @@ def test_a_full_or_read_only_git_dir_volume_is_logged_distinctly_from_a_vault_re
     assert "persistent vault read error" not in message
 
 
-def test_push_failure_on_one_remote_still_attempts_the_other_and_run_exits_nonzero(
+def test_push_failure_exits_nonzero_and_leaves_the_local_commit_for_the_next_run(
     tmp_path: Path, seeded_origin: Path, vault_dir: Path
 ) -> None:
+    """A push that fails must not be swallowed: the run exits non-zero, and the commit it already
+    took stays in the git-dir cache so the next scheduled run pushes it (`vault_git/commit.py` --
+    pushing is unconditional precisely so a stuck backlog catches itself up).
+
+    The failure is real git, not a mock: origin here is an ordinary checked-out clone rather than a
+    bare repository, so `git fetch` during provisioning succeeds while `git push` is refused by
+    `receive.denyCurrentBranch`. That reaches the push failure through the same code path a genuine
+    one would, after provisioning and committing have both succeeded."""
     git_dir = tmp_path / "git-dir"
-    broken_nas_url = str(tmp_path / "does-not-exist.git")
+    non_bare_origin = tmp_path / "non-bare-origin"
+    subprocess.run(["git", "clone", "-q", str(seeded_origin), str(non_bare_origin)], check=True)
+    # Pinned rather than inherited: `refuse` is git's default, but it resolves through system and
+    # global config too, and an override there would make the push succeed -- leaving this test red
+    # for a reason unrelated to anything it covers.
+    subprocess.run(
+        ["git", "-C", str(non_bare_origin), "config", "receive.denyCurrentBranch", "refuse"],
+        check=True,
+    )
 
     (vault_dir / "10-areas").mkdir()
     (vault_dir / "10-areas" / "note.md").write_text("# Note\n")
 
-    exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=broken_nas_url))
+    exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(non_bare_origin)))
 
     assert exit_code == 1
-    assert commit_count(seeded_origin) == 2  # origin still received the commit despite nas failing
-
-
-def test_no_nas_configured_pushes_to_origin_only_and_exits_zero(
-    tmp_path: Path, seeded_origin: Path, vault_dir: Path
-) -> None:
-    """The NAS is a second push target for independence insurance, not something the committer
-    needs to do its primary job (ADR-0029) -- an operator who hasn't set up the
-    NAS's SSH access, authorized_keys entry, bare repo, and host key yet must still be able to run
-    this component against GitHub alone. Regression test for `GIT_REMOTE_NAS_URL` going from
-    `require_env` to optional (config.py's `CommitConfig.nas_url`)."""
-    git_dir = tmp_path / "git-dir"
-    (vault_dir / "10-areas").mkdir()
-    (vault_dir / "10-areas" / "note.md").write_text("# Note\n")
-
-    exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=None))
-
-    assert exit_code == 0
-    assert commit_count(seeded_origin) == 2
-    # No remote named "nas" was ever added to the cache git-dir -- provisioning must not have
-    # attempted one, not merely have failed to push to one.
-    result = subprocess.run(
-        ["git", f"--git-dir={git_dir}", "config", "--local", "--get", "remote.nas.url"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode != 0
+    assert commit_count(git_dir) == 2  # the commit was taken and is still there for the next run
+    assert commit_count(non_bare_origin / ".git") == 1  # and nothing reached the push target
 
 
 def test_configured_remotes_are_logged_plainly_not_as_a_degraded_warning(
     tmp_path: Path,
     seeded_origin: Path,
-    make_bare_repo: Callable[[], Path],
     vault_dir: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -578,7 +539,7 @@ def test_configured_remotes_are_logged_plainly_not_as_a_degraded_warning(
     (vault_dir / "10-areas" / "note.md").write_text("# Note\n")
 
     with caplog.at_level(logging.INFO):
-        commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=None))
+        commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin)))
 
     [record] = [r for r in caplog.records if getattr(r, "event", None) == "remotes_configured"]
     assert record.levelno == logging.INFO
@@ -586,18 +547,8 @@ def test_configured_remotes_are_logged_plainly_not_as_a_degraded_warning(
     assert "degraded" not in record.getMessage().lower()
     assert "warn" not in record.getMessage().lower()
 
-    caplog.clear()
-    nas = make_bare_repo()
-    with caplog.at_level(logging.INFO):
-        commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas)))
 
-    [record] = [r for r in caplog.records if getattr(r, "event", None) == "remotes_configured"]
-    assert tuple(record.remotes) == ("origin", "nas")  # type: ignore[attr-defined]
-
-
-def test_non_utf8_filename_does_not_wedge_the_committer(
-    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
-) -> None:
+def test_non_utf8_filename_does_not_wedge_the_committer(tmp_path: Path, seeded_origin: Path, vault_dir: Path) -> None:
     """LATENT (`#22`): `b"caf\\xe9.md"` is a legal filename on a POSIX filesystem but not valid
     UTF-8. `GitRunner.run` used to decode subprocess output with plain `text=True` (strict UTF-8),
     so `git ls-tree -z`/`git diff --cached --name-status -z` -- called from
@@ -607,7 +558,6 @@ def test_non_utf8_filename_does_not_wedge_the_committer(
     recurring identically every cycle since the file persists on the volume -- the same
     permanent-wedge shape as the symlinked-plugin-directory bug, just triggered by content instead
     of by structure."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     (vault_dir / "10-areas").mkdir()
     (vault_dir / "10-areas" / "note.md").write_text("# Note\n")
@@ -616,7 +566,7 @@ def test_non_utf8_filename_does_not_wedge_the_committer(
     os.write(fd, "# Café\n".encode())
     os.close(fd)
 
-    exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas)))
+    exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin)))
 
     assert exit_code == 0
     assert commit_count(seeded_origin) == 2
@@ -625,7 +575,6 @@ def test_non_utf8_filename_does_not_wedge_the_committer(
 def test_max_deletion_fraction_env_var_actually_reaches_the_mass_deletion_guard(
     tmp_path: Path,
     seeded_origin: Path,
-    make_bare_repo: Callable[[], Path],
     vault_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -641,7 +590,6 @@ def test_max_deletion_fraction_env_var_actually_reaches_the_mass_deletion_guard(
     env var set to disable the guard for a genuine archive purge; it fails if that kwarg is ever
     severed again, because a severed wire silently falls back to the guard's own default (0.5),
     which would refuse this exact deletion."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     (vault_dir / "10-areas").mkdir()
     for i in range(4):
@@ -650,7 +598,6 @@ def test_max_deletion_fraction_env_var_actually_reaches_the_mass_deletion_guard(
     monkeypatch.setenv("OBSIDIAN_VAULT_DIR", str(vault_dir))
     monkeypatch.setenv("GIT_COMMIT_BRANCH", "main")
     monkeypatch.setenv("GIT_REMOTE_ORIGIN_URL", str(seeded_origin))
-    monkeypatch.setenv("GIT_REMOTE_NAS_URL", str(nas))
     monkeypatch.setenv("GIT_COMMIT_MAX_DELETION_FRACTION", "1.0")  # the operator escape hatch
     # CommitConfig.ssh_known_hosts_path defaults to ~/.ssh/known_hosts -- pointed at tmp_path here
     # so this test (going through the real CommitConfig.from_env(), not the _config() helper above)
@@ -678,7 +625,6 @@ def test_max_deletion_fraction_env_var_actually_reaches_the_mass_deletion_guard(
 def test_an_unreadable_obsidian_subtree_defers_the_baseline_without_failing_the_run(
     tmp_path: Path,
     seeded_origin: Path,
-    make_bare_repo: Callable[[], Path],
     vault_dir: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -701,7 +647,6 @@ def test_an_unreadable_obsidian_subtree_defers_the_baseline_without_failing_the_
 
     The warning is the only channel that carries the deferral, which is why its content is asserted
     here rather than just its presence."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     obsidian = vault_dir / ".obsidian"
     obsidian.mkdir()
@@ -715,11 +660,10 @@ def test_an_unreadable_obsidian_subtree_defers_the_baseline_without_failing_the_
 
     try:
         with caplog.at_level(logging.INFO):
-            exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas)))
+            exit_code = commit_command.run(_config(git_dir, vault_dir, origin_url=str(seeded_origin)))
 
         assert exit_code == 0
-        assert commit_count(seeded_origin) == 2  # the vault content still went to both remotes
-        assert commit_count(nas) == 2
+        assert commit_count(seeded_origin) == 2  # the vault content still reached origin
         committed = subprocess.run(
             ["git", f"--git-dir={git_dir}", "ls-tree", "-r", "--name-only", "HEAD"],
             capture_output=True,

@@ -41,14 +41,8 @@ def run(config: CommitConfig) -> int:
     git_dir = Path(config.git_dir)
     work_tree = Path(config.vault_dir)
 
-    # The NAS is optional (config.py's CommitConfig.nas_url) -- push to whatever's configured, and
-    # say so plainly rather than warning about a "degraded" run: an origin-only run is the ordinary
-    # shape, not a fallback.
     remote_urls = [config.origin_url]
     remotes: tuple[str, ...] = ("origin",)
-    if config.nas_url is not None:
-        remote_urls.append(config.nas_url)
-        remotes = ("origin", "nas")
     logger.info(
         "configured remotes",
         extra={"event": "remotes_configured", "remotes": remotes},
@@ -80,7 +74,6 @@ def run(config: CommitConfig) -> int:
             author_name=config.author_name,
             author_email=config.author_email,
             origin_url=config.origin_url,
-            nas_url=config.nas_url,
         )
     except GitDivergenceError:
         logger.exception(

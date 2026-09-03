@@ -41,7 +41,7 @@ from obsidian_tools.vault_git.known_hosts import (
         pytest.param("ssh://git@github.com/ppat/obsidian-vault.git", "github.com", id="ssh-scheme"),
         pytest.param("ssh://git@github.com:2222/ppat/obsidian-vault.git", "github.com", id="ssh-scheme-with-port"),
         pytest.param("git@GitHub.COM:ppat/obsidian-vault.git", "GitHub.COM", id="scp-like-mixed-case-unlowered"),
-        pytest.param("git@nas.lan:vault.git", "nas.lan", id="scp-like-non-github-host"),
+        pytest.param("git@git.lan:vault.git", "git.lan", id="scp-like-non-github-host"),
         pytest.param("/tmp/some/bare-repo.git", None, id="local-filesystem-path"),
         pytest.param("", None, id="empty-string"),
         pytest.param("not a url at all", None, id="garbage-no-at-no-scheme"),
@@ -57,8 +57,8 @@ def test_remote_host(url: str, expected_host: str | None) -> None:
     ("urls", "expected"),
     [
         pytest.param(["git@github.com:ppat/obsidian-vault.git"], True, id="single-github-remote"),
-        pytest.param(["git@github.com:ppat/obsidian-vault.git", "git@nas.lan:vault.git"], True, id="mixed-remotes"),
-        pytest.param(["git@nas.lan:vault.git"], False, id="nas-only"),
+        pytest.param(["git@github.com:ppat/obsidian-vault.git", "git@git.lan:vault.git"], True, id="mixed-remotes"),
+        pytest.param(["git@git.lan:vault.git"], False, id="non-github-only"),
         pytest.param([], False, id="no-remotes-at-all"),
         pytest.param(["/tmp/bare-repo.git"], False, id="local-path-only"),
         pytest.param(["git@GITHUB.COM:ppat/obsidian-vault.git"], True, id="case-insensitive-match"),
@@ -86,32 +86,32 @@ def test_any_remote_is_github(urls: Sequence[str], expected: bool) -> None:
         ),
         pytest.param(
             (),
-            "nas.lan ssh-ed25519 BBBB1\n",
-            "nas.lan ssh-ed25519 BBBB1\n",
+            "git.lan ssh-ed25519 BBBB1\n",
+            "git.lan ssh-ed25519 BBBB1\n",
             id="extra-only-no-github",
         ),
         pytest.param(
             ("ssh-ed25519 AAAA1",),
-            "nas.lan ssh-ed25519 BBBB1",
-            "github.com ssh-ed25519 AAAA1\nnas.lan ssh-ed25519 BBBB1\n",
+            "git.lan ssh-ed25519 BBBB1",
+            "github.com ssh-ed25519 AAAA1\ngit.lan ssh-ed25519 BBBB1\n",
             id="github-then-extra-no-trailing-newline-in-input",
         ),
         pytest.param(
             (),
-            "\n\n   \nnas.lan ssh-ed25519 BBBB1\n\n",
-            "nas.lan ssh-ed25519 BBBB1\n",
+            "\n\n   \ngit.lan ssh-ed25519 BBBB1\n\n",
+            "git.lan ssh-ed25519 BBBB1\n",
             id="blank-and-whitespace-only-lines-dropped",
         ),
         pytest.param(
             (),
-            "  nas.lan ssh-ed25519 BBBB1  ",
-            "nas.lan ssh-ed25519 BBBB1\n",
+            "  git.lan ssh-ed25519 BBBB1  ",
+            "git.lan ssh-ed25519 BBBB1\n",
             id="leading-and-trailing-whitespace-stripped",
         ),
         pytest.param(
             (),
-            "nas.lan ssh-ed25519 BBBB1\r\nnas.lan ssh-ed25519 BBBB1\r\n",
-            "nas.lan ssh-ed25519 BBBB1\nnas.lan ssh-ed25519 BBBB1\n",
+            "git.lan ssh-ed25519 BBBB1\r\ngit.lan ssh-ed25519 BBBB1\r\n",
+            "git.lan ssh-ed25519 BBBB1\ngit.lan ssh-ed25519 BBBB1\n",
             id="crlf-input-and-duplicate-extra-lines-both-preserved-not-deduped",
         ),
         pytest.param(
@@ -230,13 +230,13 @@ def test_assemble_known_hosts_skips_the_fetch_when_no_remote_is_github(
     destination = tmp_path / "ssh" / "known_hosts"
 
     result = assemble_known_hosts(
-        remote_urls=["git@nas.lan:vault.git"],
-        extra_lines="nas.lan ssh-ed25519 BBBB1\n",
+        remote_urls=["git@git.lan:vault.git"],
+        extra_lines="git.lan ssh-ed25519 BBBB1\n",
         destination=destination,
     )
 
     assert result == destination
-    assert destination.read_text() == "nas.lan ssh-ed25519 BBBB1\n"
+    assert destination.read_text() == "git.lan ssh-ed25519 BBBB1\n"
 
 
 def _fake_fetch_one_github_key(**_kwargs: object) -> list[str]:
@@ -250,18 +250,18 @@ def test_assemble_known_hosts_fetches_and_combines_with_extras_when_a_remote_is_
     destination = tmp_path / "known_hosts"
 
     assemble_known_hosts(
-        remote_urls=["git@github.com:ppat/obsidian-vault.git", "git@nas.lan:vault.git"],
-        extra_lines="nas.lan ssh-ed25519 BBBB1\n",
+        remote_urls=["git@github.com:ppat/obsidian-vault.git", "git@git.lan:vault.git"],
+        extra_lines="git.lan ssh-ed25519 BBBB1\n",
         destination=destination,
     )
 
-    assert destination.read_text() == "github.com ssh-ed25519 AAAA1\nnas.lan ssh-ed25519 BBBB1\n"
+    assert destination.read_text() == "github.com ssh-ed25519 AAAA1\ngit.lan ssh-ed25519 BBBB1\n"
 
 
 def test_assemble_known_hosts_creates_the_parent_directory(tmp_path: Path) -> None:
     destination = tmp_path / "does" / "not" / "exist" / "known_hosts"
 
-    assemble_known_hosts(remote_urls=["git@nas.lan:vault.git"], extra_lines="nas.lan key\n", destination=destination)
+    assemble_known_hosts(remote_urls=["git@git.lan:vault.git"], extra_lines="git.lan key\n", destination=destination)
 
     assert destination.exists()
 
@@ -301,7 +301,7 @@ def test_assemble_known_hosts_logs_what_was_assembled_and_from_where(
     with caplog.at_level(logging.INFO):
         assemble_known_hosts(
             remote_urls=["git@github.com:ppat/obsidian-vault.git"],
-            extra_lines="nas.lan key\n",
+            extra_lines="git.lan key\n",
             destination=destination,
         )
 
@@ -320,7 +320,7 @@ def test_assemble_known_hosts_logs_the_skip_when_no_github_remote_is_configured(
 ) -> None:
     with caplog.at_level(logging.INFO):
         assemble_known_hosts(
-            remote_urls=["git@nas.lan:vault.git"], extra_lines="nas.lan key\n", destination=tmp_path / "known_hosts"
+            remote_urls=["git@git.lan:vault.git"], extra_lines="git.lan key\n", destination=tmp_path / "known_hosts"
         )
 
     events = {getattr(r, "event", None) for r in caplog.records}
@@ -333,6 +333,6 @@ def test_assemble_known_hosts_writes_world_readable_not_secret_permissions(tmp_p
     world-readable config, not locked down like the private key it sits next to."""
     destination = tmp_path / "known_hosts"
 
-    assemble_known_hosts(remote_urls=["git@nas.lan:vault.git"], extra_lines="nas.lan key\n", destination=destination)
+    assemble_known_hosts(remote_urls=["git@git.lan:vault.git"], extra_lines="git.lan key\n", destination=destination)
 
     assert destination.stat().st_mode & 0o777 == 0o644

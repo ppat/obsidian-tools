@@ -1,12 +1,12 @@
-"""Builds the `GIT_SSH_COMMAND` used for both remotes, from one mounted key and one mounted known_hosts file.
+"""Builds the `GIT_SSH_COMMAND`, from one mounted key and the `known_hosts` file assembled at runtime.
 
-One SSH key, mounted as a file, used for both `origin` and `nas` (registered as a write deploy key
-on GitHub and in the NAS's `authorized_keys`) — one credential, one secret, one mount.
+One SSH key, mounted as a file and registered as a write deploy key on `origin` — one credential,
+one secret, one mount.
 
-Deliberately does not disable host key checking, and does not bake host keys into the image (the
-NAS's key cannot be known at build time). `BatchMode=yes` so a run fails fast and non-interactively
-on any auth or host-key problem, rather than hanging forever waiting for a prompt that can never
-come in a CronJob pod.
+Deliberately does not disable host key checking, and does not bake host keys into the image; they
+are established per run instead (`known_hosts.py`). `BatchMode=yes` so a run fails fast and
+non-interactively on any auth or host-key problem, rather than hanging forever waiting for a prompt
+that can never come in a CronJob pod.
 """
 
 from __future__ import annotations

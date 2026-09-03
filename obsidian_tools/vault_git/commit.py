@@ -5,9 +5,8 @@ release-please are deliberately absent from the vault content repository; machin
 are not release-relevant, and forcing them into this codebase's own commit convention would imply
 a relationship between the two histories that doesn't exist.
 
-Pushes to both remotes independently. A failure on one must never prevent the attempt on the
-other — the NAS copy exists as independence insurance precisely so no single push target is
-load-bearing. Nothing here treats "no new commit this cycle" as a reason to skip pushing: a commit
+Pushes to each configured remote independently: a failure on one must never prevent the attempt on
+the rest. Nothing here treats "no new commit this cycle" as a reason to skip pushing: a commit
 taken by a previous run whose push then failed is still sitting, unpushed, in the (cached) git-dir,
 and a plain push to a remote that's already caught up is a harmless no-op — so pushing
 unconditionally on every run is what lets a stuck backlog catch itself up, for free, on the next
@@ -148,7 +147,7 @@ def create_commit(runner: GitRunner, *, cycle_time: datetime) -> str:
     return sha
 
 
-def push_all(runner: GitRunner, *, branch: str, remotes: tuple[str, ...] = ("origin", "nas")) -> list[PushResult]:
+def push_all(runner: GitRunner, *, branch: str, remotes: tuple[str, ...] = ("origin",)) -> list[PushResult]:
     """Push `branch` to every remote in `remotes`, independently and unconditionally."""
     results: list[PushResult] = []
     for remote in remotes:

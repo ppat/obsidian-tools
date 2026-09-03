@@ -27,7 +27,6 @@ from __future__ import annotations
 import logging
 import shutil
 import stat
-from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -41,7 +40,7 @@ from obsidian_tools.vault_git.provisioning import provision_repository
 from obsidian_tools.vault_git.runner import GitRunner
 
 
-def _provision(git_dir: Path, work_tree: Path, *, origin_url: str, nas_url: str) -> GitRunner:
+def _provision(git_dir: Path, work_tree: Path, *, origin_url: str) -> GitRunner:
     runner = make_runner(git_dir, work_tree)
     provision_repository(
         runner,
@@ -49,7 +48,6 @@ def _provision(git_dir: Path, work_tree: Path, *, origin_url: str, nas_url: str)
         author_name="test-committer",
         author_email="test-committer@example.invalid",
         origin_url=origin_url,
-        nas_url=nas_url,
     )
     return runner
 
@@ -80,14 +78,11 @@ def _one_record_with_event(caplog: pytest.LogCaptureFixture, event: str) -> logg
     return records[0]
 
 
-def test_pathspec_excludes_workspace_state_files(
-    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
-) -> None:
-    nas = make_bare_repo()
+def test_pathspec_excludes_workspace_state_files(tmp_path: Path, seeded_origin: Path, vault_dir: Path) -> None:
     git_dir = tmp_path / "git-dir"
     _write_obsidian_dir(vault_dir)
 
-    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
     ensure_obsidian_baseline(runner, vault_dir)
 
     staged = runner.run(["diff", "--cached", "--name-only"]).stdout.splitlines()
@@ -96,15 +91,12 @@ def test_pathspec_excludes_workspace_state_files(
     assert ".obsidian/workspaces.json" not in staged
 
 
-def test_plugin_data_json_is_never_captured(
-    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
-) -> None:
+def test_plugin_data_json_is_never_captured(tmp_path: Path, seeded_origin: Path, vault_dir: Path) -> None:
     """The regression test for the vulnerability caught before it ever ran (ppat/obsidian-tools#3):
     a denylist-shaped baseline (force-add `.obsidian/` minus the two workspace files) would commit
     a plugin's `data.json` — the file the Local REST API plugin stores its bearer token in — to
     permanent history on both remotes. Fails against that old implementation; passes only because
     the baseline is an allowlist of plugin *code* filenames that `data.json` is never on."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     _write_obsidian_dir(vault_dir)
     plugin_dir = vault_dir / ".obsidian" / "plugins" / "obsidian-local-rest-api"
@@ -113,7 +105,7 @@ def test_plugin_data_json_is_never_captured(
     (plugin_dir / "main.js").write_text("// plugin code\n")
     (plugin_dir / "data.json").write_text('{"apiKey": "super-secret-bearer-token"}\n')
 
-    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
     ensure_obsidian_baseline(runner, vault_dir)
 
     staged = runner.run(["diff", "--cached", "--name-only"]).stdout.splitlines()
@@ -125,17 +117,16 @@ def test_plugin_data_json_is_never_captured(
 
 
 def test_baseline_taken_once_then_frozen_even_after_a_later_edit(
-    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+    tmp_path: Path, seeded_origin: Path, vault_dir: Path
 ) -> None:
     """The single most important behaviour: once the baseline is committed, a later change to a
     baselined file must NOT be re-staged by an ordinary `git add -A` — the property `.gitignore`
     was shown to be unable to provide."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     _write_obsidian_dir(vault_dir)
 
     # Cycle 1: baseline captured and committed.
-    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
     took_baseline = ensure_obsidian_baseline(runner, vault_dir)
     stage_all(runner)
     assert took_baseline
@@ -150,7 +141,7 @@ def test_baseline_taken_once_then_frozen_even_after_a_later_edit(
     (vault_dir / ".obsidian" / "app.json").write_text('{"legacyEditor": true}\n')
 
     # Cycle 2: full provisioning re-run, as if against a fresh pod, then the ordinary staging path.
-    runner_2 = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    runner_2 = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
     took_baseline_again = ensure_obsidian_baseline(runner_2, vault_dir)
     stage_all(runner_2)
 
@@ -161,17 +152,14 @@ def test_baseline_taken_once_then_frozen_even_after_a_later_edit(
     )
 
 
-def test_baseline_survives_a_lost_git_dir_cache(
-    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
-) -> None:
+def test_baseline_survives_a_lost_git_dir_cache(tmp_path: Path, seeded_origin: Path, vault_dir: Path) -> None:
     """Skip-worktree bits are index-local and do not survive a wiped git-dir cache even though the
     baseline commit itself (fetched fresh from origin) does — provisioning must reapply the bits
     from HEAD's tree, and must NOT retake the baseline commit a second time."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     _write_obsidian_dir(vault_dir)
 
-    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
     ensure_obsidian_baseline(runner, vault_dir)
     stage_all(runner)
     create_commit(runner, cycle_time=datetime.now(UTC))
@@ -180,7 +168,7 @@ def test_baseline_survives_a_lost_git_dir_cache(
     shutil.rmtree(git_dir)
     (vault_dir / ".obsidian" / "app.json").write_text('{"legacyEditor": true}\n')
 
-    runner_2 = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    runner_2 = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
     took_baseline_again = ensure_obsidian_baseline(runner_2, vault_dir)
     stage_all(runner_2)
 
@@ -189,7 +177,7 @@ def test_baseline_survives_a_lost_git_dir_cache(
 
 
 def test_tracked_workspace_file_is_frozen_by_the_reapply_loop_too(
-    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+    tmp_path: Path, seeded_origin: Path, vault_dir: Path
 ) -> None:
     """`ensure_obsidian_baseline`'s own forced add never captures workspace.json/workspaces.json —
     they're never on the allowlist. But if one is ever hand-seeded directly into history, bypassing
@@ -198,7 +186,6 @@ def test_tracked_workspace_file_is_frozen_by_the_reapply_loop_too(
     skip-worktree to it unconditionally, with no exception for the workspace files: that filter is
     correct in the capture branch (don't take them into the baseline) and backwards in the reapply
     branch, where excluding them left a tracked workspace file frozen by neither mechanism."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
 
     hand_seed_clone = tmp_path / "hand-seed-clone"
@@ -219,7 +206,7 @@ def test_tracked_workspace_file_is_frozen_by_the_reapply_loop_too(
     )
     run_git("push", "-q", "origin", "main", cwd=hand_seed_clone)
 
-    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
     (vault_dir / ".obsidian").mkdir()
     (vault_dir / ".obsidian" / "workspace.json").write_text('{"instance": "a"}\n')
     took_baseline = ensure_obsidian_baseline(runner, vault_dir)
@@ -232,13 +219,10 @@ def test_tracked_workspace_file_is_frozen_by_the_reapply_loop_too(
     assert not has_staged_changes(runner), "a tracked workspace.json must be frozen by the reapply loop too"
 
 
-def test_no_baseline_taken_when_obsidian_dir_absent(
-    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
-) -> None:
-    nas = make_bare_repo()
+def test_no_baseline_taken_when_obsidian_dir_absent(tmp_path: Path, seeded_origin: Path, vault_dir: Path) -> None:
     git_dir = tmp_path / "git-dir"
 
-    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
     took_baseline = ensure_obsidian_baseline(runner, vault_dir)
 
     assert took_baseline is False
@@ -255,7 +239,7 @@ def test_no_baseline_taken_when_obsidian_dir_absent(
     ids=["non-ascii", "literal-quote", "embedded-newline"],
 )
 def test_baseline_survives_quotepath_hostile_filenames(
-    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path, filename: str
+    tmp_path: Path, seeded_origin: Path, vault_dir: Path, filename: str
 ) -> None:
     """`core.quotePath` defaults to true, so git C-quotes any of these filenames -- including the
     surrounding quote characters -- in the line-oriented form of `ls-tree --name-only` and
@@ -267,13 +251,12 @@ def test_baseline_survives_quotepath_hostile_filenames(
     outright. `-z` (NUL-delimited, unquoted output) is what fixes all three at every site that
     parses git path output: baseline.py's capture branch, its reapply branch, and
     `GitRunner.list_tree_paths` itself."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     _write_obsidian_dir(vault_dir)
     (vault_dir / ".obsidian" / "snippets").mkdir()
     (vault_dir / ".obsidian" / "snippets" / filename).write_text("body {}\n")
 
-    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
     took_baseline = ensure_obsidian_baseline(runner, vault_dir)
     stage_all(runner)
     assert took_baseline
@@ -284,7 +267,7 @@ def test_baseline_survives_quotepath_hostile_filenames(
 
     # The reapply branch (a later run, against a fresh provisioning pass) must also survive this
     # filename without raising -- the second of the "three sites" this fix covers.
-    runner_2 = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    runner_2 = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
     took_baseline_again = ensure_obsidian_baseline(runner_2, vault_dir)
     assert took_baseline_again is False
 
@@ -302,7 +285,7 @@ def _write_theme(obsidian_dir: Path, name: str) -> None:
 
 
 def test_themes_and_snippets_are_constrained_to_css_and_theme_manifest(
-    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+    tmp_path: Path, seeded_origin: Path, vault_dir: Path
 ) -> None:
     """A bare `snippets/`/`themes/` directory prefix admits every file of any name at any depth --
     the same allowlist-as-denylist mistake the plugin `data.json` exclusion exists to prevent, one
@@ -311,7 +294,6 @@ def test_themes_and_snippets_are_constrained_to_css_and_theme_manifest(
     `.obsidian/snippets/sub/dir/creds.json` against the old bare-directory implementation. Themes
     are third-party code installed through the ungated GUI path (ADR-0028), so
     "nothing secret would ever land there" is not a claim this baseline gets to make."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     _write_obsidian_dir(vault_dir)
     obsidian = vault_dir / ".obsidian"
@@ -326,7 +308,7 @@ def test_themes_and_snippets_are_constrained_to_css_and_theme_manifest(
     (obsidian / "themes" / "deep" / "nested" / "inner").mkdir(parents=True)
     (obsidian / "themes" / "deep" / "nested" / "inner" / "data.json").write_text('{"secret": "leak"}\n')
 
-    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
     ensure_obsidian_baseline(runner, vault_dir)
 
     staged = runner.run(["diff", "--cached", "--name-only"]).stdout.splitlines()
@@ -342,14 +324,13 @@ def test_themes_and_snippets_are_constrained_to_css_and_theme_manifest(
 
 
 def test_symlinks_under_themes_and_snippets_are_never_captured(
-    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+    tmp_path: Path, seeded_origin: Path, vault_dir: Path
 ) -> None:
     """A symlink under `snippets/` or `themes/` stores only its target *path* as a git blob -- the
     target's content is never leaked through git itself -- but that target string re-resolves
     against whatever filesystem later checks the clone out, the Mac clone's iCloud copy included.
     `snippets/escape.css -> /etc/passwd` would publish a live pointer outside the vault entirely
     onto every replica, so symlinks are excluded from the baseline outright."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     _write_obsidian_dir(vault_dir)
     obsidian = vault_dir / ".obsidian"
@@ -359,7 +340,7 @@ def test_symlinks_under_themes_and_snippets_are_never_captured(
     (obsidian / "themes" / "Minimal" / "manifest.json").unlink()
     (obsidian / "themes" / "Minimal" / "manifest.json").symlink_to("/etc/hostname")
 
-    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
     ensure_obsidian_baseline(runner, vault_dir)
 
     staged = runner.run(["diff", "--cached", "--name-only"]).stdout.splitlines()
@@ -369,7 +350,7 @@ def test_symlinks_under_themes_and_snippets_are_never_captured(
 
 
 def test_symlinked_plugin_directory_does_not_wedge_the_committer(
-    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+    tmp_path: Path, seeded_origin: Path, vault_dir: Path
 ) -> None:
     """BROKEN, reproduced (`ppat/obsidian-tools#22`): `.obsidian/plugins/my-plugin -> ~/dev/my-plugin`
     is the standard local plugin-development layout. The plugins loop used to build a pathspec
@@ -380,7 +361,6 @@ def test_symlinked_plugin_directory_does_not_wedge_the_committer(
     baseline branch is only skipped once `HEAD` already carries `.obsidian/`, which then never
     happens, every future run hit the same failure: no vault content ever committed again, on every
     cycle, forever, logged as \"staging failed, likely a persistent vault read error\"."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     _write_obsidian_dir(vault_dir)
     external_plugin = tmp_path / "dev" / "my-plugin"
@@ -396,7 +376,7 @@ def test_symlinked_plugin_directory_does_not_wedge_the_committer(
     real_plugin.mkdir()
     (real_plugin / "manifest.json").write_text('{"id": "obsidian-local-rest-api"}\n')
 
-    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
     took_baseline = ensure_obsidian_baseline(runner, vault_dir)  # must not raise GitCommandError
 
     assert took_baseline
@@ -408,7 +388,6 @@ def test_symlinked_plugin_directory_does_not_wedge_the_committer(
 def test_symlinked_obsidian_root_does_not_wedge_the_committer(
     tmp_path: Path,
     seeded_origin: Path,
-    make_bare_repo: Callable[[], Path],
     vault_dir: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -424,14 +403,13 @@ def test_symlinked_obsidian_root_does_not_wedge_the_committer(
     happening -- so no vault content was ever committed again, on any cycle, logged as "staging
     failed, likely a persistent vault read error". Reproduced over three consecutive cycles below,
     with new content arriving each time, matching the reported "every cycle, forever" shape."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     external_target = tmp_path / "not-really-obsidian"
     external_target.mkdir()
     (external_target / "app.json").write_text('{"legacyEditor": false}\n')
     (vault_dir / ".obsidian").symlink_to(external_target, target_is_directory=True)
 
-    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
     with caplog.at_level(logging.INFO):
         took_baseline = ensure_obsidian_baseline(runner, vault_dir)  # must not raise
 
@@ -457,7 +435,7 @@ def test_symlinked_obsidian_root_does_not_wedge_the_committer(
     # so proving it clears once isn't enough.
     for cycle in range(1, 3):
         (vault_dir / f"new-note-{cycle}.md").write_text(f"# cycle {cycle}\n")
-        runner_n = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+        runner_n = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
         took_baseline_n = ensure_obsidian_baseline(runner_n, vault_dir)  # must not raise
         assert took_baseline_n is False
         stage_all(runner_n)
@@ -465,19 +443,16 @@ def test_symlinked_obsidian_root_does_not_wedge_the_committer(
         create_commit(runner_n, cycle_time=datetime.now(UTC))
 
 
-def test_ignore_rule_still_excludes_the_directory(
-    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
-) -> None:
+def test_ignore_rule_still_excludes_the_directory(tmp_path: Path, seeded_origin: Path, vault_dir: Path) -> None:
     """Guard for the obvious way to break `test_ignore_rule_excludes_a_symlink_replacing_the_directory`
     below: dropping the exclude rule's trailing slash to cover the symlink case must not stop it from
     covering the ordinary, much more common directory case -- an untouched `.obsidian/` directory
     (nothing on the baseline allowlist yet) must never itself appear as a staged path."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     (vault_dir / ".obsidian").mkdir()
     (vault_dir / ".obsidian" / "workspace.json").write_text('{"instance": "a"}\n')  # never allowlisted
 
-    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
     ensure_obsidian_baseline(runner, vault_dir)
     stage_all(runner)
 
@@ -486,7 +461,7 @@ def test_ignore_rule_still_excludes_the_directory(
 
 
 def test_ignore_rule_excludes_a_symlink_replacing_the_directory(
-    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+    tmp_path: Path, seeded_origin: Path, vault_dir: Path
 ) -> None:
     """Corollary to the symlinked-root wedge (`ppat/obsidian-tools#22`): the git-dir exclude rule was
     `.obsidian/` -- trailing slash, directory-only in gitignore semantics -- so it was inert against
@@ -496,12 +471,11 @@ def test_ignore_rule_excludes_a_symlink_replacing_the_directory(
     `git add -A` then staged `.obsidian` itself as a mode `120000` blob whose contents are the
     external target path -- published to both remotes, the Mac clone, iCloud and the phone -- and
     dropped the baselined `.obsidian/app.json` from the index in the same diff."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     _write_obsidian_dir(vault_dir)
 
     # Cycle 1: baseline captured normally, while .obsidian is a real directory.
-    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
     took_baseline = ensure_obsidian_baseline(runner, vault_dir)
     stage_all(runner)
     assert took_baseline
@@ -514,7 +488,7 @@ def test_ignore_rule_excludes_a_symlink_replacing_the_directory(
     external_target.mkdir()
     (vault_dir / ".obsidian").symlink_to(external_target, target_is_directory=True)
 
-    runner_2 = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    runner_2 = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
     took_baseline_again = ensure_obsidian_baseline(runner_2, vault_dir)  # reapply branch; must not raise
     assert took_baseline_again is False
     stage_all(runner_2)
@@ -534,7 +508,7 @@ def _staged_mode(runner: GitRunner, path: str) -> str:
 
 
 def test_symlinked_leaf_files_are_never_staged_as_symlink_blobs(
-    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+    tmp_path: Path, seeded_origin: Path, vault_dir: Path
 ) -> None:
     """BROKEN (latent, security-shaped), reproduced (`ppat/obsidian-tools#22`): a symlink git stages
     is committed as a mode `120000` blob whose *contents* are the target path string, published
@@ -544,7 +518,6 @@ def test_symlinked_leaf_files_are_never_staged_as_symlink_blobs(
     `test_symlinks_under_themes_and_snippets_are_never_captured` already covers themes/snippets --
     so all three prior "which branch has the symlink check" variants are covered by an actual test,
     not by inspection of which loop looks right."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     _write_obsidian_dir(vault_dir)
     obsidian = vault_dir / ".obsidian"
@@ -555,7 +528,7 @@ def test_symlinked_leaf_files_are_never_staged_as_symlink_blobs(
     (plugin_dir / "manifest.json").symlink_to("/etc/passwd")
     (plugin_dir / "main.js").write_text("// plugin code\n")  # ordinary sibling, unaffected
 
-    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
     ensure_obsidian_baseline(runner, vault_dir)
 
     staged = runner.run(["diff", "--cached", "--name-only"]).stdout.splitlines()
@@ -566,13 +539,12 @@ def test_symlinked_leaf_files_are_never_staged_as_symlink_blobs(
 
 
 def test_theme_manifest_deeper_than_its_own_directory_is_not_captured(
-    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+    tmp_path: Path, seeded_origin: Path, vault_dir: Path
 ) -> None:
     """LOW (`#3`/`docs/settings-lock.md`'s own hand-run checklist command names this depth
     explicitly: `.obsidian/themes/*/manifest.json`, never a recursive search). An earlier revision's
     `directory.rglob("manifest.json")` let a manifest at any depth through -- one narrowing looser
     than the checklist it's meant to automate."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     _write_obsidian_dir(vault_dir)
     obsidian = vault_dir / ".obsidian"
@@ -581,7 +553,7 @@ def test_theme_manifest_deeper_than_its_own_directory_is_not_captured(
     nested.mkdir()
     (nested / "manifest.json").write_text('{"name": "not a theme manifest"}\n')
 
-    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
     ensure_obsidian_baseline(runner, vault_dir)
 
     staged = runner.run(["diff", "--cached", "--name-only"]).stdout.splitlines()
@@ -590,7 +562,7 @@ def test_theme_manifest_deeper_than_its_own_directory_is_not_captured(
 
 
 def test_glob_metacharacter_filename_does_not_sweep_in_a_differently_named_symlink(
-    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+    tmp_path: Path, seeded_origin: Path, vault_dir: Path
 ) -> None:
     """LOW (`#22`): the walk's own docstring used to claim every path it returns is safe to hand
     straight to `git add --force --`. That's true of *existence* (mostly -- see the TOCTOU note in
@@ -603,7 +575,6 @@ def test_glob_metacharacter_filename_does_not_sweep_in_a_differently_named_symli
     never in `baseline_paths` (the selector rejected it), but git's own glob interpretation of the
     *other* pathspec swept it in anyway. `:(literal)` closes this by pinning each pathspec to
     exactly the path it names, no fnmatch involved."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     _write_obsidian_dir(vault_dir)
     snippets = vault_dir / ".obsidian" / "snippets"
@@ -611,7 +582,7 @@ def test_glob_metacharacter_filename_does_not_sweep_in_a_differently_named_symli
     (snippets / "custom[1].css").write_text("body {}\n")
     (snippets / "custom1.css").symlink_to("/etc/passwd")  # never selected; must never be staged either
 
-    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
     ensure_obsidian_baseline(runner, vault_dir)
 
     staged = set(runner.run(["diff", "--cached", "--name-only"]).stdout.splitlines())
@@ -620,9 +591,7 @@ def test_glob_metacharacter_filename_does_not_sweep_in_a_differently_named_symli
     assert _staged_mode(runner, ".obsidian/snippets/custom[1].css") == "100644"
 
 
-def test_walker_handles_deeply_nested_snippet_directories(
-    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
-) -> None:
+def test_walker_handles_deeply_nested_snippet_directories(tmp_path: Path, seeded_origin: Path, vault_dir: Path) -> None:
     """The walker (`baseline._iter_obsidian_candidates`) used to be recursive -- one Python call per
     directory level -- and bisection against an isolated reproduction found it raises
     `RecursionError` at ~992 levels (fine at 991), well under filesystem `PATH_MAX`. Neither this
@@ -645,7 +614,6 @@ def test_walker_handles_deeply_nested_snippet_directories(
     by literal revert-and-run against the pre-fix recursive implementation at depths beyond the
     interpreter's recursion limit, that the crash this module's docstring describes is real and that
     the rewrite no longer reproduces it -- see the PR description.)"""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     _write_obsidian_dir(vault_dir)
     depth = 50
@@ -655,7 +623,7 @@ def test_walker_handles_deeply_nested_snippet_directories(
     nested.mkdir(parents=True)
     (nested / "deep.css").write_text("body {}\n")
 
-    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
     ensure_obsidian_baseline(runner, vault_dir)  # must not raise RecursionError
 
     staged = runner.run(["diff", "--cached", "--name-only"]).stdout.splitlines()
@@ -675,7 +643,6 @@ def test_walker_handles_deeply_nested_snippet_directories(
 def test_an_unreadable_directory_refuses_the_baseline_until_the_read_error_clears(
     tmp_path: Path,
     seeded_origin: Path,
-    make_bare_repo: Callable[[], Path],
     vault_dir: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -692,7 +659,6 @@ def test_an_unreadable_directory_refuses_the_baseline_until_the_read_error_clear
     `tests/test_local_replicator_device_baseline.py` reproduces the sibling module's version of this
     bug class. The fix refuses the capture outright while anything was unreadable, so nothing partial
     ever enters history and the next run retries against a clean walk."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     _write_obsidian_dir(vault_dir)
     obsidian = vault_dir / ".obsidian"
@@ -701,7 +667,7 @@ def test_an_unreadable_directory_refuses_the_baseline_until_the_read_error_clear
     denied.chmod(0)
 
     try:
-        runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+        runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
         with caplog.at_level(logging.INFO):
             took_baseline = ensure_obsidian_baseline(runner, vault_dir)
 
@@ -729,7 +695,7 @@ def test_an_unreadable_directory_refuses_the_baseline_until_the_read_error_clear
         # The transient read error clears. The next run re-walks from scratch (the guard is still
         # false, because nothing partial was ever committed) and captures the whole thing.
         denied.chmod(stat.S_IRWXU)
-        runner_2 = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+        runner_2 = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
         took_baseline_again = ensure_obsidian_baseline(runner_2, vault_dir)
         stage_all(runner_2)
         create_commit(runner_2, cycle_time=datetime.now(UTC))
@@ -749,7 +715,6 @@ def test_an_unreadable_directory_refuses_the_baseline_until_the_read_error_clear
 def test_entries_that_cannot_be_stat_ed_refuse_the_baseline_too(
     tmp_path: Path,
     seeded_origin: Path,
-    make_bare_repo: Callable[[], Path],
     vault_dir: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -768,7 +733,6 @@ def test_entries_that_cannot_be_stat_ed_refuse_the_baseline_too(
     directly: under `0o600` all three predicates return False and raise nothing, while `lstat()`
     raises `PermissionError`, which is why the walker now stats each entry explicitly instead of
     asking three predicates that cannot fail."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     _write_obsidian_dir(vault_dir)
     obsidian = vault_dir / ".obsidian"
@@ -777,7 +741,7 @@ def test_entries_that_cannot_be_stat_ed_refuse_the_baseline_too(
     denied.chmod(stat.S_IRUSR | stat.S_IWUSR)  # listable, but its entries cannot be stat'ed
 
     try:
-        runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+        runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
         with caplog.at_level(logging.INFO):
             took_baseline = ensure_obsidian_baseline(runner, vault_dir)
 
@@ -796,7 +760,7 @@ def test_entries_that_cannot_be_stat_ed_refuse_the_baseline_too(
 
 
 def test_a_persistently_unreadable_directory_never_wedges_the_rest_of_the_run(
-    tmp_path: Path, seeded_origin: Path, make_bare_repo: Callable[[], Path], vault_dir: Path
+    tmp_path: Path, seeded_origin: Path, vault_dir: Path
 ) -> None:
     """The refusal's own risk, tested rather than argued: refusing on *any* unreadable path means a
     permanently unreadable subtree under `.obsidian/` (one carrying nothing the allowlist would take,
@@ -807,7 +771,6 @@ def test_a_persistently_unreadable_directory_never_wedges_the_rest_of_the_run(
     run) and destroys nothing, while under-capture is silent and permanent. What must *not* happen
     is the #22-shaped wedge, where a `.obsidian/` problem stops vault content being committed at
     all: three consecutive cycles, new content each time, all committed."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     _write_obsidian_dir(vault_dir)
     denied = _write_plugin(vault_dir / ".obsidian", "plugin-b")
@@ -816,14 +779,14 @@ def test_a_persistently_unreadable_directory_never_wedges_the_rest_of_the_run(
     try:
         for cycle in range(3):
             (vault_dir / f"new-note-{cycle}.md").write_text(f"# cycle {cycle}\n")
-            runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+            runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
             assert ensure_obsidian_baseline(runner, vault_dir) is False
             stage_all(runner)
             assert has_staged_changes(runner)
             create_commit(runner, cycle_time=datetime.now(UTC))
             push_all(runner, branch="main")
 
-        final_runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+        final_runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
         committed_tree = set(final_runner.list_tree_paths("HEAD"))
         assert {"new-note-0.md", "new-note-1.md", "new-note-2.md"} <= committed_tree
         assert not any(path.startswith(".obsidian") for path in committed_tree)
@@ -842,7 +805,6 @@ def test_a_persistently_unreadable_directory_never_wedges_the_rest_of_the_run(
 def test_the_walk_logs_every_enumerated_path_the_allowlist_did_not_select(
     tmp_path: Path,
     seeded_origin: Path,
-    make_bare_repo: Callable[[], Path],
     vault_dir: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -850,14 +812,13 @@ def test_the_walk_logs_every_enumerated_path_the_allowlist_did_not_select(
     output, never by re-deriving "what would the allowlist have taken" here -- so it cannot drift
     from the selector, and it deliberately does not separate an allowlist miss from a safety
     exclusion (a symlink), since telling those apart would need exactly that re-derivation."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     _write_obsidian_dir(vault_dir)  # app.json (selected) + workspace.json/workspaces.json (not)
     obsidian = vault_dir / ".obsidian"
     plugin_dir = _write_plugin(obsidian, "obsidian-local-rest-api")
     (plugin_dir / "data.json").write_text('{"apiKey": "never baselined"}\n')
 
-    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
     with caplog.at_level(logging.INFO):
         took_baseline = ensure_obsidian_baseline(runner, vault_dir)
 
@@ -874,7 +835,6 @@ def test_the_walk_logs_every_enumerated_path_the_allowlist_did_not_select(
 def test_the_dropped_set_is_still_reported_after_the_baseline_has_been_taken(
     tmp_path: Path,
     seeded_origin: Path,
-    make_bare_repo: Callable[[], Path],
     vault_dir: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -883,12 +843,11 @@ def test_the_dropped_set_is_still_reported_after_the_baseline_has_been_taken(
     -- a diagnostic gated on it would never emit again, and could never answer the question for the
     deployment that actually has the question. Enumerating on every run instead means a plugin
     installed a year from now shows up in the next run's own logs, with no cluster access needed."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     _write_obsidian_dir(vault_dir)
     obsidian = vault_dir / ".obsidian"
 
-    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
     assert ensure_obsidian_baseline(runner, vault_dir) is True
     stage_all(runner)
     create_commit(runner, cycle_time=datetime.now(UTC))
@@ -899,7 +858,7 @@ def test_the_dropped_set_is_still_reported_after_the_baseline_has_been_taken(
     (late_plugin / "keybindings.json").write_text('{"binding": "value"}\n')
 
     caplog.clear()
-    runner_2 = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    runner_2 = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
     with caplog.at_level(logging.INFO):
         took_baseline_again = ensure_obsidian_baseline(runner_2, vault_dir)
 
@@ -911,7 +870,6 @@ def test_the_dropped_set_is_still_reported_after_the_baseline_has_been_taken(
 def test_the_diagnostic_never_enumerates_through_a_symlinked_obsidian_root(
     tmp_path: Path,
     seeded_origin: Path,
-    make_bare_repo: Callable[[], Path],
     vault_dir: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -919,11 +877,10 @@ def test_the_diagnostic_never_enumerates_through_a_symlinked_obsidian_root(
     touched the work tree at all -- so it needs the same root guard the capture branch has
     (`ppat/obsidian-tools#22`). Without it, `.obsidian -> /somewhere/else` would make this walk
     enumerate an arbitrary external directory and print its contents into the committer's logs."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     _write_obsidian_dir(vault_dir)
 
-    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
     assert ensure_obsidian_baseline(runner, vault_dir) is True
     stage_all(runner)
     create_commit(runner, cycle_time=datetime.now(UTC))
@@ -935,7 +892,7 @@ def test_the_diagnostic_never_enumerates_through_a_symlinked_obsidian_root(
     (vault_dir / ".obsidian").symlink_to(external_target, target_is_directory=True)
 
     caplog.clear()
-    runner_2 = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    runner_2 = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
     with caplog.at_level(logging.INFO):
         assert ensure_obsidian_baseline(runner_2, vault_dir) is False
 
@@ -947,7 +904,6 @@ def test_the_diagnostic_never_enumerates_through_a_symlinked_obsidian_root(
 def test_the_logged_path_lists_are_capped(
     tmp_path: Path,
     seeded_origin: Path,
-    make_bare_repo: Callable[[], Path],
     vault_dir: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -955,14 +911,13 @@ def test_the_logged_path_lists_are_capped(
     Loki drops a log line over its max line size outright rather than truncating it, which would
     lose the count as well as the sample exactly when the dropped set is most interesting -- so the
     sample is capped and the full count is carried separately."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     _write_obsidian_dir(vault_dir)  # workspace.json + workspaces.json are unselected too
     extra = LOG_PATH_SAMPLE_LIMIT + 20
     for index in range(extra):
         (vault_dir / ".obsidian" / f"unknown-{index:04d}.json").write_text("{}\n")
 
-    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
     with caplog.at_level(logging.INFO):
         ensure_obsidian_baseline(runner, vault_dir)
 
@@ -974,7 +929,6 @@ def test_the_logged_path_lists_are_capped(
 def test_an_unreadable_walk_is_reported_as_such_even_when_nothing_allowlisted_was_found(
     tmp_path: Path,
     seeded_origin: Path,
-    make_bare_repo: Callable[[], Path],
     vault_dir: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -985,7 +939,6 @@ def test_an_unreadable_walk_is_reported_as_such_even_when_nothing_allowlisted_wa
     the same operator told a path could not be read goes and looks at the NFS mount. The unreadable
     check therefore comes first, and the routine skip means what it says: the walk was complete and
     found nothing."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     obsidian = vault_dir / ".obsidian"
     obsidian.mkdir()
@@ -993,7 +946,7 @@ def test_an_unreadable_walk_is_reported_as_such_even_when_nothing_allowlisted_wa
     denied.chmod(0)
 
     try:
-        runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+        runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
         with caplog.at_level(logging.INFO):
             assert ensure_obsidian_baseline(runner, vault_dir) is False
 
@@ -1007,7 +960,6 @@ def test_an_unreadable_walk_is_reported_as_such_even_when_nothing_allowlisted_wa
 def test_the_unreadable_path_list_is_capped_too(
     tmp_path: Path,
     seeded_origin: Path,
-    make_bare_repo: Callable[[], Path],
     vault_dir: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -1015,7 +967,6 @@ def test_the_unreadable_path_list_is_capped_too(
     routes: one unreadable *directory* contributes one entry, but a directory whose entries cannot
     be stat'ed individually contributes one per entry, so the refusal's own list is just as
     unbounded as the diagnostic's."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     _write_obsidian_dir(vault_dir)
     denied = vault_dir / ".obsidian" / "plugins" / "plugin-b"
@@ -1026,7 +977,7 @@ def test_the_unreadable_path_list_is_capped_too(
     denied.chmod(stat.S_IRUSR | stat.S_IWUSR)  # listable, but its entries cannot be stat'ed
 
     try:
-        runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+        runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
         with caplog.at_level(logging.INFO):
             assert ensure_obsidian_baseline(runner, vault_dir) is False
 
@@ -1040,7 +991,6 @@ def test_the_unreadable_path_list_is_capped_too(
 def test_a_dangling_symlink_is_not_treated_as_a_read_failure(
     tmp_path: Path,
     seeded_origin: Path,
-    make_bare_repo: Callable[[], Path],
     vault_dir: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -1050,13 +1000,12 @@ def test_a_dangling_symlink_is_not_treated_as_a_read_failure(
     excluded from the capture. If the walker stat'ed each entry *through* the link (`stat()` rather
     than `lstat()`), a dangling one would raise `ENOENT`, land in the unreadable list, and refuse the
     baseline forever on a condition no retry can clear."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     _write_obsidian_dir(vault_dir)
     (vault_dir / ".obsidian" / "snippets").mkdir()
     (vault_dir / ".obsidian" / "snippets" / "gone.css").symlink_to(tmp_path / "never-existed")
 
-    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
     with caplog.at_level(logging.INFO):
         took_baseline = ensure_obsidian_baseline(runner, vault_dir)
 
@@ -1079,7 +1028,6 @@ def _walk_log_payload(record: logging.LogRecord) -> dict[str, object]:
 def test_an_unreadable_subtree_is_reported_on_the_reapply_branch_too(
     tmp_path: Path,
     seeded_origin: Path,
-    make_bare_repo: Callable[[], Path],
     vault_dir: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -1100,20 +1048,19 @@ def test_an_unreadable_subtree_is_reported_on_the_reapply_branch_too(
     checking fields one at a time. The level differs too: on a baselined vault this warning is the
     only signal that will ever exist for an unreadable `.obsidian/`, and an operator scanning for
     something wrong must not have to read every `info` line to find it."""
-    nas = make_bare_repo()
     git_dir = tmp_path / "git-dir"
     _write_obsidian_dir(vault_dir)
     obsidian = vault_dir / ".obsidian"
     plugin_dir = _write_plugin(obsidian, "dataview")
     (plugin_dir / "data.json").write_text('{"never": "selected"}\n')
 
-    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    runner = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
     assert ensure_obsidian_baseline(runner, vault_dir) is True
     stage_all(runner)
     create_commit(runner, cycle_time=datetime.now(UTC))
 
     caplog.clear()
-    runner_healthy = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+    runner_healthy = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
     with caplog.at_level(logging.INFO):
         assert ensure_obsidian_baseline(runner_healthy, vault_dir) is False
     healthy = _one_record_with_event(caplog, "baseline_unselected_paths")
@@ -1122,7 +1069,7 @@ def test_an_unreadable_subtree_is_reported_on_the_reapply_branch_too(
     plugins_dir.chmod(0)
     try:
         caplog.clear()
-        runner_degraded = _provision(git_dir, vault_dir, origin_url=str(seeded_origin), nas_url=str(nas))
+        runner_degraded = _provision(git_dir, vault_dir, origin_url=str(seeded_origin))
         with caplog.at_level(logging.INFO):
             assert ensure_obsidian_baseline(runner_degraded, vault_dir) is False
         degraded = _one_record_with_event(caplog, "baseline_unselected_paths")
