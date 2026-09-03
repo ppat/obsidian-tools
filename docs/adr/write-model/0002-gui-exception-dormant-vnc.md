@@ -37,7 +37,7 @@ count of such writes is treated as evidence the write model is wrong, never as a
   discovered later; the controls on it — documentation and discipline — are the weakest in the
   system, and that is stated plainly.
 - The lint pass carries the detection duty; the pre-mortem tripwires
-  ([apps#3448](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3448)) carry the
+  ([ot#123](https://github.com/ppat/obsidian-tools/issues/123)) carry the
   rising-count signal.
 - An accidental GUI edit has already destroyed content once (a stray click deleted a file's header,
   restored from git in seconds) — the incident that motivated server-side drift classification

@@ -3,7 +3,7 @@
 **Status:** Accepted ·
 **Serves:** [O1](../../../USE_CASES.md#o1--measured) ·
 **Unit:** [D1](../../../ROADMAP.md#group-d--operability) ·
-**Tickets:** [apps#3446](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3446), [apps#3484](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3484)
+**Tickets:** [ot#121](https://github.com/ppat/obsidian-tools/issues/121), [ot#124](https://github.com/ppat/obsidian-tools/issues/124)
 
 ## Context
 
@@ -41,5 +41,5 @@ The one observability build item that is **not** a guess to defer: its requireme
 against the deployed system, not predicted — so it is pullable forward at will within the
 hardening band ([V6](../../../ROADMAP.md#v6--harden-and-tighten-from-experience)). Everything else
 request-time-shaped accumulates in
-[apps#3484](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3484) until production
+[ot#124](https://github.com/ppat/obsidian-tools/issues/124) until production
 experience says which requirements are real.

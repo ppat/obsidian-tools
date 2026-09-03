@@ -242,7 +242,7 @@ Zero of Group A is implemented [measured 2026-08-28].
 Largely the same shape each time — a credential, a handle, agreement on the message form — which is
 why each lands independently. [W1](./USE_CASES.md#axis-2--writers-connected) is two connections through two mechanisms at two different gates.
 
-- [ ] **B1 — [W1](./USE_CASES.md#axis-2--writers-connected)-bulk: the Coder workspace onto the batch stream** → [W1](./USE_CASES.md#axis-2--writers-connected) · [apps#3878](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3878) · [V1](#v1--content-in-content-readable)
+- [ ] **B1 — [W1](./USE_CASES.md#axis-2--writers-connected)-bulk: the Coder workspace onto the batch stream** → [W1](./USE_CASES.md#axis-2--writers-connected) · [ot#125](https://github.com/ppat/obsidian-tools/issues/125) (code) + [apps#3878](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3878) (credential/deploy) · [V1](#v1--content-in-content-readable)
   The only credential in the system permitted to enqueue patch-carrying work; the producer side that
   generates and enqueues patches.
 - [ ] **B2 — [W1](./USE_CASES.md#axis-2--writers-connected)-interactive: Claude Code's direct writes** → [W1](./USE_CASES.md#axis-2--writers-connected) · [apps#3879](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3879) · [V3](#v3--writers-on-iterate-in-production)
@@ -250,13 +250,13 @@ why each lands independently. [W1](./USE_CASES.md#axis-2--writers-connected) is 
   concurrency wiring; the runner's write hook installed as a detective control (this runner only —
   the available hook fires after the write; whether the runner's blocking pre-write variant
   replaces it is a recorded revisit); its promotion-stream credential.
-- [ ] **B3 — [W2](./USE_CASES.md#axis-2--writers-connected): the NAS NFS drop watcher** → [W2](./USE_CASES.md#axis-2--writers-connected) · [apps#3882](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3882) · unscheduled
+- [ ] **B3 — [W2](./USE_CASES.md#axis-2--writers-connected): the NAS NFS drop watcher** → [W2](./USE_CASES.md#axis-2--writers-connected) · [ot#119](https://github.com/ppat/obsidian-tools/issues/119) · unscheduled
   Blocked on a design decision, not just a credential: see [Open decisions](#open-decisions).
 - [ ] **B4 — [W3](./USE_CASES.md#axis-2--writers-connected): OpenClaw write** → [W3](./USE_CASES.md#axis-2--writers-connected) · [apps#3880](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3880) · [V3](#v3--writers-on-iterate-in-production)
   Write keys, live path scope, promotion-stream credential. No pre-write hook exists for this writer
   — same shape as B2, less assurance, a property of the writer rather than a gap.
 - [ ] **B5 — [W4](./USE_CASES.md#axis-2--writers-connected): n8n write** → [W4](./USE_CASES.md#axis-2--writers-connected) · [apps#3881](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3881) · [V3](#v3--writers-on-iterate-in-production) — the identical shape, for n8n.
-- [ ] **B6 — [W5](./USE_CASES.md#axis-2--writers-connected): ad-hoc scripts** → [W5](./USE_CASES.md#axis-2--writers-connected) · [apps#3883](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3883) · unscheduled
+- [ ] **B6 — [W5](./USE_CASES.md#axis-2--writers-connected): ad-hoc scripts** → [W5](./USE_CASES.md#axis-2--writers-connected) · [ot#120](https://github.com/ppat/obsidian-tools/issues/120) · unscheduled
   Plausibly free once B1/B2's credential shapes exist — but no record says so; the missing artifact
   is the judgement, not necessarily the work.
 - [ ] **B7 — [W6](./USE_CASES.md#axis-2--writers-connected): the drainer's real destination** → [W6](./USE_CASES.md#axis-2--writers-connected) · [ot#87](https://github.com/ppat/obsidian-tools/issues/87) · [V5](#v5--humans-on-devices)
@@ -297,20 +297,20 @@ ticket is how [O1](./USE_CASES.md#o1--measured) got deferred to the end original
 be recovered later. The units below are the remainder: signals needing an independent observer, and
 shared mechanisms nothing else owns. *Criteria distribute; shared mechanisms do not.*
 
-- [ ] **D1 — the vault-loaded exporter** → [O1](./USE_CASES.md#o1--measured) · [apps#3446](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3446) · [V6](#v6--harden-and-tighten-from-experience), pullable forward at will
+- [ ] **D1 — the vault-loaded exporter** → [O1](./USE_CASES.md#o1--measured) · [ot#121](https://github.com/ppat/obsidian-tools/issues/121) · [V6](#v6--harden-and-tighten-from-experience), pullable forward at will
   An authenticated call that enumerates vault content and exposes a gauge + last-success timestamp.
   Exists to **contradict the component's own account of itself** — the pod has already been Ready
   and serving while unable to open the vault at all [measured 2026-07-30]. Not foldable into a
   probe: a probe converts observation into restart, and that failure was one a restart does not fix.
   Depends on nothing unbuilt.
-- [ ] **D2 — direct-write-path refusal visibility** → [O1](./USE_CASES.md#o1--measured) · [apps#3484](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3484) collects requirements; builds
+- [ ] **D2 — direct-write-path refusal visibility** → [O1](./USE_CASES.md#o1--measured) · [ot#124](https://github.com/ppat/obsidian-tools/issues/124) collects requirements; builds
   nothing · [V6](#v6--harden-and-tighten-from-experience)
   Gate refusals return HTTP 200 with the error inside the envelope, so no HTTP-level metric sees the
   write gate at all; queue metrics see it only for stream-borne traffic. The interactive writers'
   refusals need their own instrument — one mechanism serving six connection units, owned by none of
   them. Deferred to the hardening band deliberately: it instruments a control that is already
-  proven, and prod experience will say which of [apps#3484](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3484)'s collected requirements are real.
-- [ ] **D3 — the recovery drill** → [O2](./USE_CASES.md#o2--survives-its-failure-modes) · [apps#3447](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3447) · [V6](#v6--harden-and-tighten-from-experience), cheaper the earlier it runs
+  proven, and prod experience will say which of [ot#124](https://github.com/ppat/obsidian-tools/issues/124)'s collected requirements are real.
+- [ ] **D3 — the recovery drill** → [O2](./USE_CASES.md#o2--survives-its-failure-modes) · [ot#122](https://github.com/ppat/obsidian-tools/issues/122) · [V6](#v6--harden-and-tighten-from-experience), cheaper the earlier it runs
   Snapshot restore, independent git restore, probe-recovers-a-wedged-editor, and the
   pod-template-churn test of the single-writer window. Every subject is deployed today.
 - [ ] **D4 — batch-mode safety mechanisms** → [O2](./USE_CASES.md#o2--survives-its-failure-modes) · [ot#5](https://github.com/ppat/obsidian-tools/issues/5) (watchdog) + [ot#89](https://github.com/ppat/obsidian-tools/issues/89) (window + drain) · [V1](#v1--content-in-content-readable) (the watchdog); window +
@@ -328,8 +328,8 @@ shared mechanisms nothing else owns. *Criteria distribute; shared mechanisms do 
   questions are known displays the wrong things and is cheap to rebuild later. The one assigned
   slice: lint's own three numbers (drift rate, quarantine depth, inbox depth) belong to [A5](#group-a--pipeline-mechanisms).
 
-Not units, deliberately: **[apps#3448](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3448)** (the pre-mortem tripwires — a standing register of
-design-revisit signals, revisited on a cadence, never "done") and **[apps#3484](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3484)** (requirements
+Not units, deliberately: **[ot#123](https://github.com/ppat/obsidian-tools/issues/123)** (the pre-mortem tripwires — a standing register of
+design-revisit signals, revisited on a cadence, never "done") and **[ot#124](https://github.com/ppat/obsidian-tools/issues/124)** (requirements
 collection that builds nothing by design).
 
 ### The mapping at a glance
@@ -360,7 +360,7 @@ ticket; the reconciliation of 2026-08-29 left none.
 
 None — every unit above names its tickets (reconciled 2026-08-29). What remains open is
 decision-shaped rather than ticket-shaped, and lives in [Open decisions](#open-decisions):
-[B3](#group-b--connection-work)'s authority conflict ([apps#3882](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3882) is blocked on choosing among the four candidate
+[B3](#group-b--connection-work)'s authority conflict ([ot#119](https://github.com/ppat/obsidian-tools/issues/119) is blocked on choosing among the four candidate
 shapes) and [B8](#group-b--connection-work)'s timing ([ot#88](https://github.com/ppat/obsidian-tools/issues/88) carries the preconditions; the owner's stated criterion
 is "enough content to read").
 
@@ -448,4 +448,4 @@ Where a decision is recorded, the row cites its ADR number; records are resolved
 | The older design's §7 phase numbering and the epic's phase table | Superseded by this document for sequencing. Their one real disagreement — lint at phase 5 vs 6 — dissolves on the axes: lint is [S2](./USE_CASES.md#s2--sound) work ([A4](#group-a--pipeline-mechanisms)/[A5](#group-a--pipeline-mechanisms)), opening writers is [W3](./USE_CASES.md#axis-2--writers-connected)/[W4](./USE_CASES.md#axis-2--writers-connected) ([B4](#group-b--connection-work)/[B5](#group-b--connection-work)), with one conventional edge between them |
 | The watchdog's placement (hardening-phase text vs "build it before the batch stream runs unattended") | Arbitrated: the risk-register/ticket reading wins — [D4](#group-d--operability)'s watchdog ships with [A2](#group-a--pipeline-mechanisms), structurally. The hardening-phase text was stale, never amended |
 | "Move agent writes later" | Not a reordering — a later point on the writers axis; the pipeline does not move |
-| Observability "depends on agent writes" ([apps#3446](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3446) → [apps#3445](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3445)) | False for everything that remains after the recut; queue metrics depend on [A1](#group-a--pipeline-mechanisms), vault metrics on [A5](#group-a--pipeline-mechanisms), [D1](#group-d--operability) on nothing unbuilt |
+| Observability "depends on agent writes" ([ot#121](https://github.com/ppat/obsidian-tools/issues/121) → [apps#3445](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3445)) | False for everything that remains after the recut; queue metrics depend on [A1](#group-a--pipeline-mechanisms), vault metrics on [A5](#group-a--pipeline-mechanisms), [D1](#group-d--operability) on nothing unbuilt |
