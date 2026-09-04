@@ -1,10 +1,14 @@
 """obsidian-tools: CLI entry point.
 
-Subcommands share the same config/git helpers under `obsidian_tools/` — see
+Subcommands share the same config/logging helpers under `obsidian_tools/` — see
 `obsidian_tools/commands/` for each subcommand's own orchestration. `commit` is the in-cluster git
 committer; `replicate` is `local-replicator`'s replication cycle, and `drain` is its spool drainer,
-run on a separate schedule (ppat/obsidian-tools#3, ADR-0025) — all three are
+run on a separate schedule (ppat/obsidian-tools#3, ADR-0025) — those three are
 clients of the same shared `GitRunner`/config/retry/logging helpers, not a parallel set each.
+`export-metrics` is ADR-0037's independent vault-loaded exporter (unit D1, ot#121): it shares
+config/logging conventions with the other three but never touches `GitRunner` or `retry` — its only
+I/O is an HTTP call to Obsidian's Local REST API, and unlike the other three it never returns under
+normal operation (it serves `/metrics` until SIGTERM).
 """
 
 from __future__ import annotations
@@ -18,8 +22,9 @@ from types import FrameType
 
 from obsidian_tools.commands import commit as commit_command
 from obsidian_tools.commands import drain as drain_command
+from obsidian_tools.commands import export_metrics as export_metrics_command
 from obsidian_tools.commands import replicate as replicate_command
-from obsidian_tools.config import CommitConfig, ConfigError, DrainConfig, ReplicateConfig
+from obsidian_tools.config import CommitConfig, ConfigError, DrainConfig, ReplicateConfig, VaultExporterConfig
 from obsidian_tools.logging_config import configure_logging
 
 logger = logging.getLogger(__name__)
@@ -73,6 +78,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     drain_parser.set_defaults(handler=_run_drain)
 
+    export_metrics_parser = subparsers.add_parser(
+        "export-metrics",
+        help="serve Prometheus metrics for the independent vault-loaded health signal (ADR-0037)",
+    )
+    export_metrics_parser.set_defaults(handler=_run_export_metrics)
+
     return parser
 
 
@@ -101,6 +112,15 @@ def _run_drain(_args: argparse.Namespace) -> int:
         logger.exception("invalid configuration", extra={"event": "config_error"})
         return 2
     return drain_command.run(config)
+
+
+def _run_export_metrics(_args: argparse.Namespace) -> int:
+    try:
+        config = VaultExporterConfig.from_env()
+    except ConfigError:
+        logger.exception("invalid configuration", extra={"event": "config_error"})
+        return 2
+    return export_metrics_command.run(config)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

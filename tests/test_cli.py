@@ -74,6 +74,26 @@ def test_main_runs_drain_with_no_required_env_at_all(monkeypatch: pytest.MonkeyP
     assert main(["drain"]) == 0
 
 
+def test_export_metrics_subcommand_is_registered() -> None:
+    parser = build_parser()
+
+    args = parser.parse_args(["export-metrics"])
+
+    assert args.subcommand == "export-metrics"
+    assert callable(args.handler)
+
+
+def test_main_returns_config_error_exit_code_for_export_metrics_when_required_env_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only the config step runs here -- `main(["export-metrics"])` would otherwise block forever
+    serving `/metrics` (`export_metrics_command.run` never returns under normal operation), so this
+    test only ever exercises the code path that returns before `run()` is reached."""
+    monkeypatch.delenv("OBSIDIAN_API_KEY", raising=False)
+
+    assert main(["export-metrics"]) == 2
+
+
 def test_installed_sigterm_handler_raises_graceful_shutdown() -> None:
     """CPython only installs its own handler for SIGINT; every other signal, SIGTERM included,
     keeps the interpreter's default disposition, and the OS default action for SIGTERM is
