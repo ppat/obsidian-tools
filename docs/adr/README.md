@@ -87,6 +87,7 @@ build state never lives here.
 | 0022 | [Batch mechanics: FIFO, unsharded, stale-reject, fairness backpressure, watchdog](./work-queue/0022-batch-stream-mechanics.md) | Accepted |
 | 0023 | [Streams ship with their processors; the substrate alone carries no streams](./work-queue/0023-streams-ship-with-processors.md) | Accepted |
 | 0024 | [Captured drift rides the drift stream — superseding MinIO, keeping its siting gotcha](./work-queue/0024-drift-destination-stream-not-minio.md) | Accepted |
+| 0047 | [One subject namespace and one NATS account per message shape, private service imports, no JetStream API for any producer](./work-queue/0047-subject-scheme-and-account-topology.md) | **Proposed** |
 
 ## Replication and devices — `replication/`
 
