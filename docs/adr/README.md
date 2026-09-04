@@ -88,6 +88,7 @@ build state never lives here.
 | 0023 | [Streams ship with their processors; the substrate alone carries no streams](./work-queue/0023-streams-ship-with-processors.md) | Accepted |
 | 0024 | [Captured drift rides the drift stream — superseding MinIO, keeping its siting gotcha](./work-queue/0024-drift-destination-stream-not-minio.md) | Accepted |
 | 0047 | [One subject namespace and one NATS account per message shape, private service imports, no JetStream API for any producer](./work-queue/0047-subject-scheme-and-account-topology.md) | **Proposed** |
+| 0048 | [Batch staleness is measured per file, by content hash, never against repo head](./work-queue/0048-batch-staleness-per-file-hash.md) | **Proposed** |
 
 ## Replication and devices — `replication/`
 
