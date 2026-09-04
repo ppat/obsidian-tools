@@ -38,8 +38,8 @@ wrong about myself."
 ## Consequences
 
 The one observability build item that is **not** a guess to defer: its requirement was observed
-against the deployed system, not predicted — so it is pullable forward at will within the
-hardening band ([V6](../../../ROADMAP.md#v6--harden-and-tighten-from-experience)). Everything else
+against the deployed system, not predicted — so it needs no production experience to justify it,
+and is not bound to the hardening work that does. Everything else
 request-time-shaped accumulates in
 [ot#124](https://github.com/ppat/obsidian-tools/issues/124) until production
 experience says which requirements are real.
