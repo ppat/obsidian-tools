@@ -35,7 +35,7 @@ the unit it serves (one unit per ticket); every unit here names its tickets; and
 **Position** line below is re-dated whenever the checklists are reconciled against the tickets, so
 staleness is detectable instead of silent.
 
-**Position: 2026-09-03.**
+**Position: 2026-09-04.**
 
 ## Delivery posture
 
@@ -77,7 +77,7 @@ iterate-on-it-afterwards first pass; and post-done iterations are out of scope f
 | Content foundation (schema, skeleton, settings lock, property types; agents read-only) | **Deployed**, with one known defect: the daily-note `format` key was never written to the instance — satisfied only by Obsidian's default [measured 2026-08-27] |
 | Read replication (committer → GitHub → `local-replicator` → iCloud), capture gate included | **Deployed and observed**: committer every 15 min in-cluster; `local-replicator` under launchd since 2026-08-28, acceptance closed at 5 of 6 criteria, no component defect found [measured 2026-08-28] |
 | Everything else (work queue, all three processors, validator, lint, connections, content, operability) | **Unbuilt** — zero NATS manifests, zero processor modules exist [measured 2026-08-28 by grep over both repos] |
-| **The delivery gap** | `v0.4.0` (2026-08-01) is the latest release and what runs everywhere; `main` is 15 commits ahead, including the `.obsidian/` overlay fix ([ot#71](https://github.com/ppat/obsidian-tools/pull/71)); release PR [`ot#54`](https://github.com/ppat/obsidian-tools/pull/54) (v0.5.0) open since 2026-08-08. Until it ships and the Mac is upgraded, "fixed" means "merged", nothing stronger |
+| **The delivery gap** | `v0.4.0` (2026-08-01) is the latest release and what runs everywhere; `main` is 15 commits ahead, including the `.obsidian/` overlay fix ([ot#71](https://github.com/ppat/obsidian-tools/pull/71)); release PR [`ot#54`](https://github.com/ppat/obsidian-tools/pull/54) (v0.5.0) open since 2026-08-08. Until it ships and the Mac is upgraded, "fixed" means "merged", nothing stronger. Separately, `apps-ai-v0.8.1` (released 2026-08-31) is not yet on any cluster: the clusters repo's pin still reads `apps-ai-v0.8.0`, with Renovate's bump PR [`clusters#1021`](https://github.com/ppat/homelab-ops-kubernetes-clusters/pull/1021) open and unmerged since 2026-09-01 |
 
 Ruled harmless deliberately: nothing merged since 2026-08-28 is deployed, the Mac has no downstream
 consumer while NATS does not exist, and the committer bump rides the next production deployment.
@@ -110,12 +110,12 @@ each names the smallest shape that ships.
 
 ```mermaid
 flowchart TB
-    V1n["V1 — content in, content readable:<br/>A1 A2 B1 C1, + D4's watchdog before any unattended run"]
+    V1n["V1 — content in, content readable:<br/>A1 A2 B1 C1 D1, + D4's watchdog before any unattended run"]
     V2n["V2 — the safeguard minimum:<br/>A4 A5 A6"]
     V3n["V3 — writers on, iterate in production:<br/>B2 B4 B5, the C2 corpus, the C3 gate"]
     V4n["V4 — placement, through its first pass:<br/>A3, and A8 (required for project-done)"]
     V5n["V5 — humans on devices:<br/>v0.5.0 to the Mac, B7, A7, B8"]
-    V6n["V6 — harden and tighten, from experience:<br/>D2 D3 D5 D6 (+ D1, pullable forward any time)"]
+    V6n["V6 — harden and tighten, from experience:<br/>D2 D3 D5 D6"]
     V1n -->|"the corpus exists, so the safeguard<br/>has something real to judge"| V2n
     V2n -->|"gate and maintenance loop exist<br/>before any writer opens"| V3n
     V3n -->|"inbox traffic exists for promotion<br/>to drain and calibrate against"| V4n
@@ -125,7 +125,7 @@ flowchart TB
 
 ### V1 — Content in, content readable
 
-**Units:** [A1](#group-a--pipeline-mechanisms) · [A2](#group-a--pipeline-mechanisms) (+ [D4](#group-d--operability)'s watchdog before any unattended run) · [B1](#group-b--connection-work) · [C1](#group-c--content-work).
+**Units:** [A1](#group-a--pipeline-mechanisms) · [A2](#group-a--pipeline-mechanisms) (+ [D4](#group-d--operability)'s watchdog before any unattended run) · [B1](#group-b--connection-work) · [C1](#group-c--content-work) · [D1](#group-d--operability).
 **Value shipped:** the scattered pile becomes vault content, immediately queryable through every
 read surface that already exists ([R2](./USE_CASES.md#axis-3--readers-connected)–[R5](./USE_CASES.md#axis-3--readers-connected)) — the first moment the vault is *useful*.
 **Why it is first:** the import needs **no validator at all** — raw is immutable and exempt by
@@ -175,11 +175,8 @@ and direct human device edits are very rare.
 **Units:** [D2](#group-d--operability) · [D5](#group-d--operability) · [D6](#group-d--operability) · [D3](#group-d--operability) · the remaining drill items.
 **Value shipped:** the platform's failure modes are exercised and its blind spots instrumented —
 now built against months of observed behaviour instead of guesses.
-**Two dispositions inside this band, stated honestly:**
+**One disposition inside this band, stated honestly:**
 
-- **[D1](#group-d--operability) (the vault-loaded exporter) may be pulled forward at will** — it is small, depends on nothing
-  unbuilt, and its signal was *observed*, not guessed (the pod that stayed Ready while unable to
-  open its vault). It is the one observability build item that is not a guess to defer.
 - **[D3](#group-d--operability) (the recovery drill) gets dearer the longer it waits** — its cost scales with the content at
   risk, and the vault will never hold less than now. Deferring it to this band is the posture's
   knowing trade, not an oversight; pulling it forward is cheap any time.
@@ -297,7 +294,7 @@ ticket is how [O1](./USE_CASES.md#o1--measured) got deferred to the end original
 be recovered later. The units below are the remainder: signals needing an independent observer, and
 shared mechanisms nothing else owns. *Criteria distribute; shared mechanisms do not.*
 
-- [ ] **D1 — the vault-loaded exporter** → [O1](./USE_CASES.md#o1--measured) · [ot#121](https://github.com/ppat/obsidian-tools/issues/121) · [V6](#v6--harden-and-tighten-from-experience), pullable forward at will
+- [ ] **D1 — the vault-loaded exporter** → [O1](./USE_CASES.md#o1--measured) · [ot#121](https://github.com/ppat/obsidian-tools/issues/121) (code) + [apps#3946](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3946) (deploy) · [V1](#v1--content-in-content-readable)
   An authenticated call that enumerates vault content and exposes a gauge + last-success timestamp.
   Exists to **contradict the component's own account of itself** — the pod has already been Ready
   and serving while unable to open the vault at all [measured 2026-07-30]. Not foldable into a
