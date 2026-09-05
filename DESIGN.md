@@ -424,8 +424,11 @@ records behind them (ADR-0006, ADR-0012, ADR-0022, ADR-0033 among others) are re
   staying correct — is carried in the verification catalogue.
 - **Single-writer is guaranteed by Deployment shape, with an observed timing window** under rapid
   pod-template churn (see "One writer, one door"). The recovery drill covers it.
-- **Batch staleness measurement** (patch base commit vs per-file content hash) is flagged, not
-  settled — decided at implementation when real commit cadence and batch sizes are visible.
+- **Per-file staleness cannot see a conflict that spans files** — a note renamed by one write, and
+  another file's link to it rewritten by a second, are each individually current and jointly
+  inconsistent, because the property violated is a relation between files rather than a property of
+  any one of them. Strict FIFO covers the intra-batch half by construction; what remains is caught
+  after the fact by the lint pass, not prevented.
 - **`salience:` may prove redundant with `confidence:`** — at roughly 200 notes, their correlation
   is measured, and if they track, `salience:` is removed. The audit is a scheduled decision, not a
   hope.
