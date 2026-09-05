@@ -50,7 +50,9 @@ from obsidian_tools.batch_producer.staleness import ChunkTarget, TargetOperation
 from obsidian_tools.commands import enqueue_batch
 from obsidian_tools.config import BatchProducerConfig
 
-_IMAGE = "nats:2.14-alpine"
+# renovate: datasource=docker depName=nats versioning=docker
+_NATS_TAG = "2.14-alpine"
+_IMAGE = f"nats:{_NATS_TAG}"
 _HOST = os.environ.get("OBSIDIAN_TOOLS_TEST_NATS_HOST", "127.0.0.1")
 _PORT = int(os.environ.get("OBSIDIAN_TOOLS_TEST_NATS_PORT", "14222"))
 _INBOX = "_INBOX_BATCH"
