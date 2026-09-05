@@ -24,7 +24,7 @@ Delivered with the substrate and content foundation; evidence in the closed reco
 | Injection | Proves | Status |
 | --- | --- | --- |
 | Hit the REST API from a non-MCP pod → refused | Network isolation on the direct bearer-token path | Proven at substrate acceptance ([apps#3441](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3441)) |
-| Call the built-in `/mcp/` endpoint from a non-MCP pod → refused by NetworkPolicy | The sole control on the undisableable endpoint (ADR-0006) — *as far as config-level evidence carries; see the parked packet test, §5* | Proven at substrate acceptance |
+| Call the built-in `/mcp/` endpoint from a non-MCP pod → refused by NetworkPolicy | The sole control on the undisableable endpoint (ADR-0006) — *as far as config-level evidence carries; see the parked packet test, §6* | Proven at substrate acceptance |
 | Mount the volume from any pod other than the editor, lint, or the committer → blocked | The three-mount contract (ADR-0001) | Proven at substrate acceptance |
 | Call MCP without a key → refused; reach MCP from a pod outside the gateway → refused | Gate 1's floor | Proven at substrate acceptance |
 | Write attempt on a read-only key → refused | Agents read-only until write keys open | Proven at content-foundation acceptance ([obsidian-vault#2](https://github.com/ppat/obsidian-vault/issues/2)) |
@@ -45,7 +45,7 @@ All run on real hardware, 2026-08-28; full evidence in
 | Force the spool write to fail (`chmod 500`) → publish withheld, tag not advanced, drifted line survives, captured next cycle | The capture gate's ordering, not merely that the spool fills (ADR-0025) | Proven 2026-08-28 |
 | Paste a binary into a drifted path → content-free patch, publish and tag withheld, path reported; released cleanly on removal — a pause, not a wedge | The capture-completeness condition, independent of the spool-write condition | Proven 2026-08-28 |
 | iCloud propagates rsync-written files | Answered **yes**, from a second device | Proven 2026-08-28 |
-| "Optimize Mac Storage" off suffices against eviction | **Bounded answer only**: 45 files, zero dataless stubs, minutes after write — no eviction *in a short window*; cold-data behaviour needs elapsed time (§5) | Proven-as-bounded 2026-08-28 |
+| "Optimize Mac Storage" off suffices against eviction | **Bounded answer only**: 45 files, zero dataless stubs, minutes after write — no eviction *in a short window*; cold-data behaviour needs elapsed time (§6) | Proven-as-bounded 2026-08-28 |
 | First real spool entry: identical shas with `matches_upstream: false` | The field means content-equality at the path, not revision equality — the misreading that would discard human deletions, settled empirically (ADR-0026) | Observed 2026-08-28 |
 | Configure an external diff tool or a textconv driver in the operator's global git config, drift an ordinary markdown file → the replaced patch is refused as uncaptured; publish and tag withheld (an empty patch is refused by the same check) | The capture gate's third condition, independent of the two above: a drift patch must be git's own patch format — a positive format check, standing behind per-invocation config pinning and environment scrubbing at the git seam (ADR-0046), because `git diff` output is operator-configurable in ways that can replace it wholesale | Proven — standing violation injections in the test suite (global external-diff, global textconv, repo-local and in-tree variants), re-proven on every run |
 | Make a directory unreadable mid-walk of either baseline walker → the device seed withholds its completion marker, keeping what was reachable; the committer's settings-baseline capture is refused until the read error clears — reported, never wedged | The walk-completeness condition behind both one-shot captures: a swallowed read error is not a copy that dies but one that succeeds having skipped things, and a completion signal written over a partial walk freezes the gap permanently — the marker gates the seed off forever, git history makes the partial capture the permanent baseline. Soft-mounted NFS makes a transient read error this storage's documented normal, not an edge case (the defect shipped once — [ot#35](https://github.com/ppat/obsidian-tools/issues/35)) | Proven — standing violation injections in the test suite for both walkers, re-proven on every run |
@@ -54,7 +54,7 @@ All run on real hardware, 2026-08-28; full evidence in
 
 Run against a real `nats-server` with JetStream and the account topology of
 [ADR-0047 via the index](./adr/README.md), in the test suite. What is proven here is the *producer's*
-half: the deployed credential's own refusal is still pending below, in §4.
+half: the deployed credential's own refusal is still pending below, in §5.
 
 | Injection | Proves | Status |
 | --- | --- | --- |
@@ -62,16 +62,31 @@ half: the deployed credential's own refusal is still pending below, in §4.
 | Connect with the client library's default reply-inbox prefix against a credential granted subscribe on `_INBOX_BATCH.*.*` only → the reply inbox is refused, the acknowledgement has nowhere to land, and the failure names the two settings that disagree | The coupling between a credential's subscribe grant and the client's own `inbox_prefix` fails closed — and is *distinguishable* from an outage. It fails as a publish timeout, the shape most likely to be misread as a dead broker and debugged against the network instead of against configuration | Proven — standing violation injection in the test suite, re-proven on every run |
 | Stage a file whose diff is not valid UTF-8, or whose diff exceeds the per-chunk budget on its own → refused before any chunk is enqueued, naming the file | Fail loud, destroy nothing, at the earliest point that still knows which file caused it. A chunk is JSON and the gated MCP path is JSON, so a non-UTF-8 diff cannot cross either; refusing at the broker instead would name a subject and would happen after part of the batch had already been enqueued | Proven — standing refusal tests in the suite, re-proven on every run |
 
-## 4. Pending — keyed to the unit that delivers the control
+## 4. Proven — `batch-processor`'s own controls ([A2](../ROADMAP.md#group-a--pipeline-mechanisms), [D4](../ROADMAP.md#group-d--operability))
+
+Run in the test suite against a real `nats-server` with JetStream and a real HTTP vault surface on a
+real socket. What is proven here is the *code* half of each control. The deployed halves — the
+gateway's own refusal of a write while the handle is down, and the deployed MCP tool surface — stay
+pending in §5.
+
+| Injection | Proves | Status |
+| --- | --- | --- |
+| Enqueue a chunk whose recorded content hash no longer matches the target → the whole chunk is rejected with nothing applied, and parked on the dead-letter subject | Stale-reject, and that it is whole-chunk and pre-flight (ADR-0048): the alternative — a per-write check — lets a chunk half-apply and then be redelivered onto content its own earlier writes moved | Proven — standing violation injection in the test suite, re-proven on every run |
+| Enqueue a create over an existing `05-raw/` note, and a modify of one, against a vault surface that would have accepted both → refused by `batch-processor` | Create-only immutability, **as a code check rather than an MCP refusal** — the vault stub in this test says yes, so only this component's own code can be what says no (ADR-0015) | Proven — standing violation injection in the test suite, re-proven on every run |
+| Kill `batch-processor` between each named step of its own run → the chunk is redelivered, and a watchdog pass re-enables the agent handle once the lease expires | Redelivery, and [D4](../ROADMAP.md#group-d--operability)'s watchdog. The kill model runs no `finally`, which is what makes the handle genuinely stuck rather than tidied up on the way out; a kill after the writes proves the other direction, where the redelivery is *rejected* rather than replayed | Proven — crash-injection harness (deterministic per seam, plus a stateful sequence harness), re-proven on every run |
+| Disable the agent handle by hand, with no lease → the watchdog reports it and leaves it exactly as found | The watchdog re-enables only what a batch run disabled. Without this it would silently undo an operator's own hold, on a schedule, every pass | Proven — standing table in the test suite |
+| Hold work on the promotion stream and start a batch run → the run yields before taking a chunk, and ends rather than holding the agent handle down indefinitely | Fairness backpressure keys on promotion-stream depth, and the asymmetry is one-way (ADR-0022). Both halves matter: a run that never yields starves the paths a human is waiting on, and one that yields forever converts patience into the same outage the watchdog exists to end | Proven — standing injection in the test suite |
+| Make the dead-letter publish fail, then dead-letter a chunk → the chunk is *not* terminated, and the broker redelivers it | The dead-letter path is a path rather than a deletion. ADR-0020 records that JetStream's needs building; terminating before the copy lands would erase work instead of parking it | Proven — standing injection in the test suite |
+| Fail one chunk's write transiently while a later chunk depends on its output → the failed chunk is redelivered *before* the newer one | Strict FIFO survives retry, which is what ADR-0022's dependency-by-ordering actually rests on. Measured to depend on `max_ack_pending=1`: with a wider consumer the dependent chunk is served during the first one's backoff and is rejected — a relink applied before its rename | Proven — standing injection in the test suite |
+
+## 5. Pending — keyed to the unit that delivers the control
 
 ### The work queue and its credentials ([A1](../ROADMAP.md#group-a--pipeline-mechanisms), [A2](../ROADMAP.md#group-a--pipeline-mechanisms), [B1](../ROADMAP.md#group-b--connection-work))
 
 | Injection | Proves | Pending on |
 | --- | --- | --- |
-| Fire an interactive-agent write while the agent handle is disabled for a batch run → refused | Batch mode is exactly which handle is enabled | A2 |
-| Enqueue a chunk whose base is no longer current → rejected back to the producer, never merged | Stale-reject; no merge engine returns (ADR-0022) | A2 |
-| Enqueue a patch modifying an existing raw-layer file → refused by `batch-processor` | Create-only immutability — **a code check, not an MCP refusal**; a regression here is debugged as code, not config (ADR-0015) | A2 |
-| Kill `batch-processor` mid-run → chunks redeliver; the agent handle comes back | Redelivery, and [D4](../ROADMAP.md#group-d--operability)'s watchdog — which must exist before any unattended run | A2 + D4 |
+| Fire an interactive-agent write against the deployed gateway while the agent handle is disabled for a batch run → refused | Batch mode is exactly which handle is enabled. The processor's own half — that it takes the handle down for every write and puts it back — is proven in §4; what is still owed is the gateway acting on it | A2's deploy ([apps#3875](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3875)) |
+| Apply a chunk through the deployed MCP tool surface → the writes land, and a refusal arrives as HTTP 200 with the error in the envelope | The tool vocabulary. `batch-processor` requires its tool names as configuration with no defaults precisely because nothing in this repository has yet run against that surface | A2's deploy |
 | **Publish to the batch subject with `local-replicator`'s own legitimate drift credential → refused by subject permissions** | **The decisive authority test**: a legitimately held credential at a subject outside its grant is the *only* injection distinguishing real per-subject permissions from a NetworkPolicy-only implementation — in-cluster producers would be refused by the network anyway, for a reason unrelated to the control under test. Needs only the *credentials*, which are separable from the streams (ADR-0021) | A1 (credential half) + B7's credential issuance |
 | Publish to the promotion subject with the drift credential, and to the drift subject with a promotion credential → refused | The same check across every remaining pair, once all three streams and credentials are live | A1/A3/A7 |
 
@@ -121,7 +136,7 @@ half: the deployed credential's own refusal is still pending below, in §4.
 | Wedge the editor process → the probe restarts it | Liveness recovery for the known-wedging component | D3 |
 | Force rapid pod-template churn on the editor's Deployment → no second container ever starts before the first is torn down | The single-writer window's observed limit (ADR-0033) — proven by exercising, not assumed closed by `Recreate` | D3 |
 
-## 5. Parked, revisits, and answerable-by-doing
+## 6. Parked, revisits, and answerable-by-doing
 
 | Check | Standing |
 | --- | --- |

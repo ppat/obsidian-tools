@@ -26,8 +26,6 @@ import asyncio
 import hashlib
 import json
 import os
-import shutil
-import socket
 import subprocess
 import time
 import uuid
@@ -35,6 +33,8 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from nats_harness import HOST as _HOST
+from nats_harness import running_broker
 
 from obsidian_tools.batch_producer.chunk import Chunk, chunk_subject, decode_chunk, encode_chunk
 from obsidian_tools.batch_producer.nats_client import (
@@ -50,10 +50,6 @@ from obsidian_tools.batch_producer.staleness import ChunkTarget, TargetOperation
 from obsidian_tools.commands import enqueue_batch
 from obsidian_tools.config import BatchProducerConfig
 
-# renovate: datasource=docker depName=nats versioning=docker
-_NATS_TAG = "2.14-alpine"
-_IMAGE = f"nats:{_NATS_TAG}"
-_HOST = os.environ.get("OBSIDIAN_TOOLS_TEST_NATS_HOST", "127.0.0.1")
 _PORT = int(os.environ.get("OBSIDIAN_TOOLS_TEST_NATS_PORT", "14222"))
 _INBOX = "_INBOX_BATCH"
 
@@ -90,69 +86,14 @@ accounts {
 """
 
 
-def _docker(*args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["docker", *args], capture_output=True, text=True, check=False)
-
-
-def _wait_for_port(timeout_seconds: float) -> bool:
-    deadline = time.monotonic() + timeout_seconds
-    while time.monotonic() < deadline:
-        try:
-            with socket.create_connection((_HOST, _PORT), timeout=1):
-                return True
-        except OSError:
-            time.sleep(0.2)
-    return False
-
-
-def _broker_unavailable(reason: str) -> None:
-    """Skip locally, fail in CI.
-
-    These tests carry three violation injections whose whole value is that they fire. A skip and a
-    pass are indistinguishable in an exit code, so on a runner where Docker is expected the absence
-    of a broker has to be a failure -- otherwise a green suite is evidence the injections were never
-    attempted, which is the exact shape this repository's testing discipline exists to refuse.
-    """
-    if os.environ.get("CI"):
-        pytest.fail(f"{reason} -- broker-backed injections cannot be skipped in CI")
-    pytest.skip(reason)
-
-
 @pytest.fixture(scope="module")
 def broker() -> Iterator[str]:
     """A real `nats-server` with JetStream and the account topology above, torn down afterwards.
-
-    The configuration is written by the container's own shell rather than bind-mounted: a bind mount
-    resolves on the *daemon's* filesystem, so it silently mounts nothing when the daemon is remote.
-    """
-    if shutil.which("docker") is None or _docker("info", "--format", "{{.ServerVersion}}").returncode != 0:
-        _broker_unavailable("no reachable Docker daemon; this test needs a real nats-server")
-
-    name = f"obsidian-tools-nats-{uuid.uuid4().hex[:8]}"
-    started = _docker(
-        "run",
-        "-d",
-        "--name",
-        name,
-        "-p",
-        f"{_PORT}:4222",
-        "--entrypoint",
-        "sh",
-        _IMAGE,
-        "-c",
-        f"cat > /tmp/n.conf <<'NATSCONF'\n{_SERVER_CONFIG}\nNATSCONF\nexec nats-server -c /tmp/n.conf",
-    )
-    if started.returncode != 0:
-        _broker_unavailable(f"could not start {_IMAGE}: {started.stderr.strip()}")
-    try:
-        if not _wait_for_port(timeout_seconds=30):
-            _broker_unavailable(
-                f"nats-server did not accept connections on {_HOST}:{_PORT}: {_docker('logs', name).stderr}"
-            )
+    The container lifecycle lives in `nats_harness.py`, shared with the consumer's own broker
+    tests; only the topology and the stream below are this module's."""
+    with running_broker(_SERVER_CONFIG, _PORT) as url:
         asyncio.run(_create_stream())
-        yield f"nats://{_HOST}:{_PORT}"
-    finally:
-        _docker("rm", "-f", name)
+        yield url
 
 
 async def _create_stream() -> None:

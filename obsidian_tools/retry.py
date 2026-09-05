@@ -10,6 +10,7 @@ This module exists so callers retry bounded and back off, rather than each reinv
 from __future__ import annotations
 
 import logging
+import random
 import time
 from collections.abc import Callable
 
@@ -23,6 +24,37 @@ DEFAULT_MAX_DELAY_SECONDS = 20.0
 
 class RetryExhaustedError(RuntimeError):
     """Raised when every retry attempt has failed. Chains the last underlying failure."""
+
+
+def backoff_delay(
+    attempt: int,
+    *,
+    base_delay: float,
+    max_delay: float,
+    jitter_fraction: float = 0.0,
+    random_value: float | None = None,
+) -> float:
+    """How long to wait before attempt `attempt + 1`, given `attempt` (1-based) has just failed.
+
+    The schedule this module has always used, lifted out of the loop below so that a caller which
+    waits *without* retrying a callable — `batch_processor/fairness.py`, which yields the whole
+    consumer to the promotion stream rather than re-running one operation — shares the one schedule
+    instead of growing a second one beside it.
+
+    `jitter_fraction` subtracts up to that fraction of the computed delay. Subtractive rather than
+    additive so `max_delay` stays an actual ceiling, and one-sided so the schedule can only ever
+    shorten, never overshoot a caller's stated bound. It defaults to zero, which is exactly the
+    pre-existing behaviour for every caller that does not ask for it.
+
+    `random_value` is injected rather than drawn here when a caller needs the result to be a
+    function of its arguments alone — the pure decision in `fairness.py` is table-tested on exact
+    delays, which a call into the global RNG would make untestable.
+    """
+    delay = min(base_delay * (2 ** (attempt - 1)), max_delay)
+    if jitter_fraction <= 0.0:
+        return delay
+    drawn = random.random() if random_value is None else random_value
+    return delay * (1.0 - jitter_fraction * drawn)
 
 
 def retry_with_backoff[T](
@@ -57,7 +89,7 @@ def retry_with_backoff[T](
             last_error = exc
             if attempt == resolved_retries:
                 break
-            delay = min(resolved_base_delay * (2 ** (attempt - 1)), max_delay)
+            delay = backoff_delay(attempt, base_delay=resolved_base_delay, max_delay=max_delay)
             log.warning(
                 "retrying after failure",
                 extra={

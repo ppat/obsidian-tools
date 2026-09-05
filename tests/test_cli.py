@@ -114,6 +114,57 @@ def test_main_returns_config_error_exit_code_for_enqueue_batch_when_required_env
     assert main(["enqueue-batch"]) == 2
 
 
+def test_process_batch_subcommand_is_registered() -> None:
+    parser = build_parser()
+
+    args = parser.parse_args(["process-batch"])
+
+    assert args.subcommand == "process-batch"
+    assert callable(args.handler)
+
+
+def test_watch_agent_handle_subcommand_is_registered() -> None:
+    """A subcommand of its own, deliberately: a watchdog sharing a process with `batch-processor`
+    would die with it, which is the failure it exists to catch."""
+    parser = build_parser()
+
+    args = parser.parse_args(["watch-agent-handle"])
+
+    assert args.subcommand == "watch-agent-handle"
+    assert callable(args.handler)
+
+
+def test_main_returns_config_error_exit_code_for_process_batch_when_required_env_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The MCP tool names are required with no defaults, because this repository has never seen the
+    deployed surface and a guessed name fails identically to a gate refusal at every call site."""
+    for name in (
+        "BATCH_NATS_URL",
+        "BATCH_PROCESSOR_NATS_PASSWORD",
+        "BATCH_MCP_URL",
+        "BATCH_MCP_API_KEY",
+        "BATCH_MCP_TOOL_READ",
+        "BATCH_MCP_TOOL_WRITE",
+        "BATCH_MCP_TOOL_DELETE",
+        "BATCH_GATEWAY_URL",
+        "BATCH_GATEWAY_ADMIN_KEY",
+        "BATCH_AGENT_HANDLE_KEY",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    assert main(["process-batch"]) == 2
+
+
+def test_main_returns_config_error_exit_code_for_the_watchdog_when_required_env_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in ("BATCH_GATEWAY_URL", "BATCH_GATEWAY_ADMIN_KEY", "BATCH_AGENT_HANDLE_KEY"):
+        monkeypatch.delenv(name, raising=False)
+
+    assert main(["watch-agent-handle"]) == 2
+
+
 def test_installed_sigterm_handler_raises_graceful_shutdown() -> None:
     """CPython only installs its own handler for SIGINT; every other signal, SIGTERM included,
     keeps the interpreter's default disposition, and the OS default action for SIGTERM is

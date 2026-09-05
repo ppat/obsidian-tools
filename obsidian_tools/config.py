@@ -11,6 +11,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from obsidian_tools.batch_processor.fairness import subjects_overlap
+from obsidian_tools.batch_processor.preflight import DEFAULT_RAW_LAYER_PREFIX
 from obsidian_tools.vault_git.commit import DEFAULT_MAX_DELETION_FRACTION
 
 
@@ -329,3 +331,175 @@ class VaultExporterConfig:
             # env if 9877 ever collides with something in that repo's own port list.
             listen_port=get_env_int("VAULT_EXPORTER_LISTEN_PORT", 9877),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class AgentHandleConfig:
+    """How to reach the gateway handle a batch run turns off, and which handle that is.
+
+    Its own dataclass rather than the same five fields duplicated into two configs, because
+    `batch-processor` and its watchdog are separate processes on separate schedules that must agree,
+    to the character, on which handle they mean — one disabling a handle the other is not watching
+    is exactly the silent, indefinite outage unit D4 exists to close. Composed into both rather than
+    inherited by either, matching how nothing else in this file uses subclassing.
+    """
+
+    gateway_url: str
+    # The gateway's own management credential, never the handle's. Distinct because neither
+    # component ever *uses* the agent handle — they only turn it off and on — and conflating the two
+    # would hand a batch run the agent handle's reach on top of the ingestor handle's.
+    gateway_admin_key: str
+    # Whatever the gateway's key API accepts as a key identifier. It names the handle and
+    # authenticates nothing.
+    agent_handle_key: str
+    gateway_timeout_seconds: float
+    gateway_verify_tls: bool
+
+    @classmethod
+    def from_env(cls) -> AgentHandleConfig:
+        return cls(
+            gateway_url=require_env("BATCH_GATEWAY_URL"),
+            gateway_admin_key=require_env("BATCH_GATEWAY_ADMIN_KEY"),
+            agent_handle_key=require_env("BATCH_AGENT_HANDLE_KEY"),
+            gateway_timeout_seconds=get_env_float("BATCH_GATEWAY_TIMEOUT_SECONDS", 10.0),
+            gateway_verify_tls=get_env_bool("BATCH_GATEWAY_VERIFY_TLS", True),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class BatchProcessorConfig:
+    """Configuration for the `process-batch` subcommand — `batch-processor` (unit A2, ot#5).
+
+    Deliberately its own dataclass and not a slice of `BatchProducerConfig`: the two speak to the
+    same broker about the same stream and share not one credential, endpoint or timeout — the
+    producer runs in the Coder workspace holding the one credential permitted to publish, this runs
+    in-cluster holding the one permitted to consume (ADR-0047).
+    """
+
+    nats_url: str
+    nats_user: str
+    nats_password: str
+    # Must match this credential's own subscribe grant. Left at the library default here, unlike
+    # the producer's: ADR-0047 scopes the *producer's* reply inbox, while this consumer lives in the
+    # account holding the streams, whose grant is the deployment's to state (apps#3875). A
+    # non-default value without a matching grant fails as a timeout that reads as a dead broker.
+    nats_inbox_prefix: str
+    stream: str
+    durable: str
+    # The batch stream's one top-level subject token (ADR-0047); the consumer filters on
+    # `<prefix>.>`, so every batch under it is drained by the one FIFO consumer.
+    subject_prefix: str
+    # Its own top-level token, checked below to be disjoint from `subject_prefix`: a dead-letter
+    # subject inside the batch stream's own subject list is re-consumed by the consumer that just
+    # gave up on it, restarting its delivery count — an infinite, silent loop.
+    dead_letter_subject_prefix: str
+    # After this many deliveries the broker stops on its own, so the processor dead-letters on the
+    # last delivery rather than waiting for one that never comes.
+    max_deliver: int
+    # Must exceed the longest a chunk can legitimately take to apply. Shorter, and the broker
+    # redelivers work still in hand.
+    ack_wait_seconds: float
+    # How long an empty stream is waited on before the run declares itself finished — what makes a
+    # scheduled run against an empty stream cost one fetch, which is ADR-0022's triggering policy
+    # expressed as a schedule rather than as code.
+    idle_timeout_seconds: float
+    connect_timeout_seconds: float
+    # Optional on purpose, and its absence is a declared state rather than a silent default:
+    # `promotion-processor` is a separate unit (A3, ot#86) and is not built, so a run today has no
+    # depth to yield to and says so once, loudly. Set, it must be readable — a configured stream
+    # that cannot be read stops the run rather than letting bulk proceed blind.
+    promotion_stream: str | None
+    promotion_consumer: str | None
+    promotion_depth_threshold: int
+    backoff_base_delay_seconds: float
+    backoff_max_delay_seconds: float
+    backoff_jitter_fraction: float
+    # Bounds one specific wait, never the run: an undrained promotion stream would otherwise hold
+    # the agent handle down indefinitely. ADR-0022's maximum run duration is a different mechanism
+    # in a different ticket (ot#89).
+    max_consecutive_yields: int
+    mcp_url: str
+    # Carries this component's write scope, the widest in the system. Never logged, never echoed in
+    # an error message (`batch_processor/mcp_client.py`).
+    mcp_api_key: str
+    # Required, with no default, all three. This repository has never run against the deployed MCP
+    # surface, and a guessed tool name would be wrong in a way that presents identically to a gate
+    # refusal at every call site. Requiring them makes the deployment state what it runs against.
+    mcp_tool_read: str
+    mcp_tool_write: str
+    mcp_tool_delete: str
+    mcp_path_argument: str
+    mcp_content_argument: str
+    mcp_timeout_seconds: float
+    mcp_verify_tls: bool
+    mcp_retries: int
+    # The write-once layer's prefix (ADR-0015), configurable so the vault's layer naming and this
+    # component's enforcement of it can move together rather than needing a release to disagree.
+    raw_layer_prefix: str
+    # How long a lease survives without renewal. Sized against how often the processor renews
+    # (before every chunk and every yield), never against how long a chunk takes: it is a liveness
+    # signal, not a run budget.
+    lease_ttl_seconds: float
+    agent_handle: AgentHandleConfig
+
+    @classmethod
+    def from_env(cls) -> BatchProcessorConfig:
+        subject_prefix = get_env("BATCH_SUBJECT_PREFIX", "batch")
+        dead_letter_subject_prefix = get_env("BATCH_DEAD_LETTER_SUBJECT_PREFIX", "batch-dead-letter")
+        if subjects_overlap(subject_prefix, dead_letter_subject_prefix):
+            raise ConfigError(
+                f"BATCH_DEAD_LETTER_SUBJECT_PREFIX={dead_letter_subject_prefix!r} overlaps "
+                f"BATCH_SUBJECT_PREFIX={subject_prefix!r}: a dead-lettered chunk would be redelivered to "
+                "the consumer that just gave up on it"
+            )
+        return cls(
+            nats_url=require_env("BATCH_NATS_URL"),
+            nats_user=get_env("BATCH_PROCESSOR_NATS_USER", "batch-processor"),
+            nats_password=require_env("BATCH_PROCESSOR_NATS_PASSWORD"),
+            nats_inbox_prefix=get_env("BATCH_PROCESSOR_NATS_INBOX_PREFIX", "_INBOX"),
+            stream=get_env("BATCH_STREAM", "batch"),
+            durable=get_env("BATCH_CONSUMER_DURABLE", "batch-processor"),
+            subject_prefix=subject_prefix,
+            dead_letter_subject_prefix=dead_letter_subject_prefix,
+            max_deliver=get_env_int("BATCH_MAX_DELIVER", 5),
+            ack_wait_seconds=get_env_float("BATCH_ACK_WAIT_SECONDS", 120.0),
+            idle_timeout_seconds=get_env_float("BATCH_IDLE_TIMEOUT_SECONDS", 30.0),
+            connect_timeout_seconds=get_env_float("BATCH_CONNECT_TIMEOUT_SECONDS", 5.0),
+            promotion_stream=get_env_optional("BATCH_PROMOTION_STREAM"),
+            promotion_consumer=get_env_optional("BATCH_PROMOTION_CONSUMER"),
+            promotion_depth_threshold=get_env_int("BATCH_PROMOTION_DEPTH_THRESHOLD", 1),
+            backoff_base_delay_seconds=get_env_float("BATCH_BACKOFF_BASE_DELAY_SECONDS", 1.0),
+            backoff_max_delay_seconds=get_env_float("BATCH_BACKOFF_MAX_DELAY_SECONDS", 60.0),
+            backoff_jitter_fraction=get_env_float("BATCH_BACKOFF_JITTER_FRACTION", 0.25),
+            max_consecutive_yields=get_env_int("BATCH_MAX_CONSECUTIVE_YIELDS", 30),
+            mcp_url=require_env("BATCH_MCP_URL"),
+            mcp_api_key=require_env("BATCH_MCP_API_KEY"),
+            mcp_tool_read=require_env("BATCH_MCP_TOOL_READ"),
+            mcp_tool_write=require_env("BATCH_MCP_TOOL_WRITE"),
+            mcp_tool_delete=require_env("BATCH_MCP_TOOL_DELETE"),
+            mcp_path_argument=get_env("BATCH_MCP_PATH_ARGUMENT", "filepath"),
+            mcp_content_argument=get_env("BATCH_MCP_CONTENT_ARGUMENT", "content"),
+            mcp_timeout_seconds=get_env_float("BATCH_MCP_TIMEOUT_SECONDS", 30.0),
+            mcp_verify_tls=get_env_bool("BATCH_MCP_VERIFY_TLS", True),
+            mcp_retries=get_env_int("BATCH_MCP_RETRIES", 3),
+            raw_layer_prefix=get_env("BATCH_RAW_LAYER_PREFIX", DEFAULT_RAW_LAYER_PREFIX),
+            lease_ttl_seconds=get_env_float("BATCH_LEASE_TTL_SECONDS", 300.0),
+            agent_handle=AgentHandleConfig.from_env(),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class WatchdogConfig:
+    """Configuration for the `watch-agent-handle` subcommand — unit D4's non-deferrable half.
+
+    Nothing but the handle. Giving the watchdog the processor's broker and MCP configuration would
+    make it require an environment it has no use for — `DrainConfig`'s argument for not being a
+    slice of `ReplicateConfig`, and here it is stronger: what the watchdog watches is precisely the
+    thing that may be broken, so it must not depend on any of it to start.
+    """
+
+    agent_handle: AgentHandleConfig
+
+    @classmethod
+    def from_env(cls) -> WatchdogConfig:
+        return cls(agent_handle=AgentHandleConfig.from_env())
