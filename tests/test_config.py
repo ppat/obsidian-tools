@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from obsidian_tools.config import CommitConfig, ConfigError, DrainConfig, ReplicateConfig
+from obsidian_tools.config import CommitConfig, ConfigError, DrainConfig, ReplicateConfig, VaultExporterConfig
 from obsidian_tools.vault_git.commit import DEFAULT_MAX_DELETION_FRACTION
 
 
@@ -170,3 +170,100 @@ def test_drain_config_shares_the_same_env_var_and_default_as_replicate_config(
     monkeypatch.setenv("LOCAL_REPLICATOR_SPOOL_DIR", "/custom/shared/spool")
 
     assert ReplicateConfig.from_env().spool_dir == DrainConfig.from_env().spool_dir == "/custom/shared/spool"
+
+
+def test_vault_exporter_config_applies_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OBSIDIAN_BASE_URL", raising=False)
+    monkeypatch.delenv("OBSIDIAN_VERIFY_SSL", raising=False)
+    monkeypatch.delenv("VAULT_EXPORTER_POLL_INTERVAL_SECONDS", raising=False)
+    monkeypatch.delenv("VAULT_EXPORTER_REQUEST_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("VAULT_EXPORTER_LISTEN_HOST", raising=False)
+    monkeypatch.delenv("VAULT_EXPORTER_LISTEN_PORT", raising=False)
+    monkeypatch.setenv("OBSIDIAN_API_KEY", "test-token")
+
+    config = VaultExporterConfig.from_env()
+
+    assert config.obsidian_base_url == "https://obsidian.obsidian-vault.svc.cluster.local:27124"
+    assert config.obsidian_api_key == "test-token"
+    assert config.verify_tls is False
+    assert config.poll_interval_seconds == 60.0
+    assert config.request_timeout_seconds == 10.0
+    assert config.listen_host == "0.0.0.0"  # Prometheus scrapes this pod over the pod network
+    assert config.listen_port == 9877
+
+
+def test_vault_exporter_config_requires_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OBSIDIAN_API_KEY", raising=False)
+
+    with pytest.raises(ConfigError, match="OBSIDIAN_API_KEY"):
+        VaultExporterConfig.from_env()
+
+
+def test_vault_exporter_config_env_var_names_match_mcp_obsidian_agents_own(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression test for the deliberate naming choice (VaultExporterConfig's own docstring): this
+    subcommand reuses OBSIDIAN_BASE_URL/OBSIDIAN_API_KEY/OBSIDIAN_VERIFY_SSL rather than an
+    exporter-prefixed set of its own, so the manifest wiring this container can copy
+    mcp-obsidian-agent's Deployment env block verbatim."""
+    monkeypatch.setenv("OBSIDIAN_BASE_URL", "https://obsidian.obsidian-vault.svc.cluster.local:27124")
+    monkeypatch.setenv("OBSIDIAN_API_KEY", "shared-token")
+    monkeypatch.setenv("OBSIDIAN_VERIFY_SSL", "false")
+
+    config = VaultExporterConfig.from_env()
+
+    assert config.obsidian_base_url == "https://obsidian.obsidian-vault.svc.cluster.local:27124"
+    assert config.obsidian_api_key == "shared-token"
+    assert config.verify_tls is False
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        pytest.param("true", True, id="true"),
+        pytest.param("TRUE", True, id="true-uppercase"),
+        pytest.param("1", True, id="one"),
+        pytest.param("yes", True, id="yes"),
+        pytest.param("false", False, id="false"),
+        pytest.param("0", False, id="zero"),
+        pytest.param("no", False, id="no"),
+    ],
+)
+def test_vault_exporter_config_verify_tls_is_overridable_via_env(
+    monkeypatch: pytest.MonkeyPatch, raw: str, expected: bool
+) -> None:
+    monkeypatch.setenv("OBSIDIAN_API_KEY", "test-token")
+    monkeypatch.setenv("OBSIDIAN_VERIFY_SSL", raw)
+
+    assert VaultExporterConfig.from_env().verify_tls is expected
+
+
+def test_vault_exporter_config_rejects_an_unparseable_verify_tls(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OBSIDIAN_API_KEY", "test-token")
+    monkeypatch.setenv("OBSIDIAN_VERIFY_SSL", "not-a-bool")
+
+    with pytest.raises(ConfigError, match="OBSIDIAN_VERIFY_SSL"):
+        VaultExporterConfig.from_env()
+
+
+def test_vault_exporter_config_rejects_an_unparseable_poll_interval(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OBSIDIAN_API_KEY", "test-token")
+    monkeypatch.setenv("VAULT_EXPORTER_POLL_INTERVAL_SECONDS", "soon")
+
+    with pytest.raises(ConfigError, match="VAULT_EXPORTER_POLL_INTERVAL_SECONDS"):
+        VaultExporterConfig.from_env()
+
+
+def test_vault_exporter_config_rejects_an_unparseable_listen_port(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OBSIDIAN_API_KEY", "test-token")
+    monkeypatch.setenv("VAULT_EXPORTER_LISTEN_PORT", "not-a-port")
+
+    with pytest.raises(ConfigError, match="VAULT_EXPORTER_LISTEN_PORT"):
+        VaultExporterConfig.from_env()
+
+
+def test_vault_exporter_config_listen_port_is_overridable_via_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OBSIDIAN_API_KEY", "test-token")
+    monkeypatch.setenv("VAULT_EXPORTER_LISTEN_PORT", "9100")
+
+    assert VaultExporterConfig.from_env().listen_port == 9100

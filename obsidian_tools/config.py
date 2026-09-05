@@ -46,6 +46,28 @@ def get_env_float(name: str, default: float) -> float:
         raise ConfigError(f"{name}={raw!r} is not a valid float") from exc
 
 
+def get_env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise ConfigError(f"{name}={raw!r} is not a valid int") from exc
+
+
+def get_env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    normalized = raw.strip().lower()
+    if normalized in ("1", "true", "yes"):
+        return True
+    if normalized in ("0", "false", "no"):
+        return False
+    raise ConfigError(f"{name}={raw!r} is not a valid bool (expected one of: true, false, yes, no, 1, 0)")
+
+
 @dataclass(frozen=True, slots=True)
 class CommitConfig:
     """Configuration for the `commit` subcommand, read once from the environment."""
@@ -188,4 +210,63 @@ class DrainConfig:
                 "LOCAL_REPLICATOR_SPOOL_DIR",
                 os.path.expanduser("~/Library/Application Support/obsidian-tools/local-replicator/spool"),
             )
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class VaultExporterConfig:
+    """Configuration for the `export-metrics` subcommand — ADR-0037's independent vault-loaded
+    exporter (unit D1, ot#121), read once from the environment. Runs in-cluster, alongside headless
+    Obsidian and the two MCP servers, but is not a client of `GitRunner`: it never touches git or
+    the vault volume at all, and mounts nothing (a fourth mounter would be a change to ADR-0001, not
+    a manifest detail — see DESIGN.md's "One writer, one door"). Its only I/O is the same
+    authenticated call to Obsidian's Local REST API the MCP servers already make, plus serving its
+    own `/metrics`. Deliberately its own dataclass rather than a slice of `CommitConfig`: the two
+    run in the same cluster but share no git/SSH configuration at all.
+
+    `obsidian_base_url`/`obsidian_api_key`/`verify_tls` deliberately reuse the exact env var names
+    (`OBSIDIAN_BASE_URL`, `OBSIDIAN_API_KEY`, `OBSIDIAN_VERIFY_SSL`) the `mcp-obsidian-agent`
+    Deployment already sets (ppat/homelab-ops-kubernetes-apps,
+    apps/subsystems/ai/obsidian-vault/mcp-obsidian-agent/deployment.yaml) rather than inventing an
+    exporter-prefixed set: both processes authenticate to the identical listener with the identical
+    token shape, so the manifest wiring this subcommand's container can copy that env block
+    verbatim instead of re-deriving it.
+    """
+
+    obsidian_base_url: str
+    # Never logged, never echoed in an error message (see vault_exporter/client.py) -- this bearer
+    # token grants full read/write to the authoritative vault, with no path-scoped permissions of
+    # its own (the same reason blackbox was rejected for this check, ADR-0037's alternatives
+    # section).
+    obsidian_api_key: str
+    # Default False: the Local REST API plugin generates its own self-signed certificate at
+    # runtime (obsidian-vault/obsidian/deployment.yaml's own comment), so there is no stable cert
+    # to verify against ahead of time. Matches mcp-obsidian-agent's own OBSIDIAN_VERIFY_SSL=false
+    # for the identical reason, stated explicitly there too.
+    verify_tls: bool
+    # 60s, not the module's usual 30s for its other ServiceMonitors: this signal detects a
+    # condition that persists until a human intervenes (ADR-0037's incident took hours to notice
+    # through the GUI, not seconds), so a slower poll loses no real detection latency and halves
+    # the call volume against Obsidian's REST API.
+    poll_interval_seconds: float
+    request_timeout_seconds: float
+    listen_host: str
+    listen_port: int
+
+    @classmethod
+    def from_env(cls) -> VaultExporterConfig:
+        return cls(
+            obsidian_base_url=get_env("OBSIDIAN_BASE_URL", "https://obsidian.obsidian-vault.svc.cluster.local:27124"),
+            obsidian_api_key=require_env("OBSIDIAN_API_KEY"),
+            verify_tls=get_env_bool("OBSIDIAN_VERIFY_SSL", False),
+            poll_interval_seconds=get_env_float("VAULT_EXPORTER_POLL_INTERVAL_SECONDS", 60.0),
+            request_timeout_seconds=get_env_float("VAULT_EXPORTER_REQUEST_TIMEOUT_SECONDS", 10.0),
+            # 0.0.0.0, not loopback: Prometheus scrapes this pod over the pod network, from a
+            # different pod entirely (../network-policy.yaml's own Prometheus ingress exception),
+            # never from inside this container.
+            listen_host=get_env("VAULT_EXPORTER_LISTEN_HOST", "0.0.0.0"),
+            # Arbitrary and unclaimed by anything else in this project; the manifest PR
+            # (apps#3946) picks the actual container port when it lands and can override this via
+            # env if 9877 ever collides with something in that repo's own port list.
+            listen_port=get_env_int("VAULT_EXPORTER_LISTEN_PORT", 9877),
         )
