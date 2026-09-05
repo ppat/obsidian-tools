@@ -17,6 +17,7 @@ import subprocess
 import tempfile
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Literal, overload
 
 from obsidian_tools.retry import retry_with_backoff
 from obsidian_tools.vault_git.name_status import NameStatusEntry, parse_name_status, split_nul_terminated
@@ -206,6 +207,18 @@ _IDENTITY_DIFF_FLAGS = ("--no-ext-diff", "--no-textconv", "--no-color", "--no-re
 # rejected `git_dir` subdirectory anchor above), and it holds no `HEAD`-shaped filename.
 
 
+def _decoded(result: subprocess.CompletedProcess[bytes]) -> subprocess.CompletedProcess[str]:
+    """A binary result rendered as a text one, for the error paths that report git's own message.
+    Same `surrogateescape` decoding `_spawn`'s text mode uses, so an undecodable byte in a filename
+    git echoed back reaches a log line rather than raising over the top of the real failure."""
+    return subprocess.CompletedProcess(
+        args=result.args,
+        returncode=result.returncode,
+        stdout=result.stdout.decode("utf-8", errors="surrogateescape"),
+        stderr=result.stderr.decode("utf-8", errors="surrogateescape"),
+    )
+
+
 class GitCommandError(RuntimeError):
     """A git invocation exited non-zero."""
 
@@ -269,19 +282,11 @@ class GitRunner:
         base_delay: float | None = None,
         include_work_tree: bool = True,
     ) -> subprocess.CompletedProcess[str]:
-        command = ["git", f"--git-dir={self.git_dir}"]
-        if include_work_tree:
-            command.append(f"--work-tree={self.work_tree}")
-        for key in _GIT_CONFIG_PINS:
-            command.extend(["-c", f"{key}={os.devnull}"])
-        command.extend(args)
-        env = {key: value for key, value in os.environ.items() if key not in _GIT_ENV_REMOVED}
-        env.update(_GIT_ENV_OVERRIDES)
-        if self._ssh_command:
-            env["GIT_SSH_COMMAND"] = self._ssh_command
+        command = self._build_command(args, include_work_tree=include_work_tree)
+        env = self._build_env()
 
         def _invoke() -> subprocess.CompletedProcess[str]:
-            result = self._spawn_with_cwd_fallback(args, command, env)
+            result = self._spawn_with_cwd_fallback(args, command, env, binary=False)
             if check and result.returncode != 0:
                 raise GitCommandError(args, result)
             return result
@@ -301,7 +306,56 @@ class GitRunner:
             )
         return _invoke()
 
-    def _spawn(self, command: Sequence[str], env: dict[str, str], cwd: Path | str) -> subprocess.CompletedProcess[str]:
+    def run_binary(
+        self, args: Sequence[str], *, check: bool = True, include_work_tree: bool = True
+    ) -> subprocess.CompletedProcess[bytes]:
+        """`run`, without the decode — git's stdout exactly as it came off the pipe.
+
+        Necessary, not a convenience, for any caller whose answer is the *bytes*: `run`'s text mode
+        opens the pipe through a `TextIOWrapper` with `newline=None`, which is universal-newlines
+        mode, so every `\\r\\n` in git's output silently becomes `\\n` (measured directly, not
+        inferred from the docs). For output that is a list of paths or a status code that is
+        harmless. For output that is *file content* — a blob being hashed, or a patch body carrying
+        a CRLF file's lines — it rewrites the very bytes the caller is there to reproduce, and does
+        so invisibly: the result is a plausible patch that changes line endings, and a hash of
+        content that was never on disk.
+
+        Every discipline `run` centralizes still applies — the environment scrub, the config pins,
+        the cwd pin and its fallback (ADR-0046: a git call made around the seam forfeits all of
+        them). What is deliberately absent is `retry`: this method's callers read content, and a
+        content read that fails is a fact about the repository rather than the transient NFS trouble
+        `obsidian_tools/retry.py` exists for.
+        """
+        command = self._build_command(args, include_work_tree=include_work_tree)
+        result = self._spawn_with_cwd_fallback(args, command, self._build_env(), binary=True)
+        if check and result.returncode != 0:
+            # `GitCommandError` reads `stdout`/`stderr` as text (its message, and
+            # `commands/commit.py`'s `_staging_error_kind`), so the failure is handed over decoded.
+            # Only the failure path decodes — the success path is exactly why this method exists.
+            raise GitCommandError(args, _decoded(result))
+        return result
+
+    def _build_command(self, args: Sequence[str], *, include_work_tree: bool) -> list[str]:
+        command = ["git", f"--git-dir={self.git_dir}"]
+        if include_work_tree:
+            command.append(f"--work-tree={self.work_tree}")
+        for key in _GIT_CONFIG_PINS:
+            command.extend(["-c", f"{key}={os.devnull}"])
+        command.extend(args)
+        return command
+
+    def _build_env(self) -> dict[str, str]:
+        env = {key: value for key, value in os.environ.items() if key not in _GIT_ENV_REMOVED}
+        env.update(_GIT_ENV_OVERRIDES)
+        if self._ssh_command:
+            env["GIT_SSH_COMMAND"] = self._ssh_command
+        return env
+
+    def _spawn(
+        self, command: Sequence[str], env: dict[str, str], cwd: Path | str, *, binary: bool
+    ) -> subprocess.CompletedProcess[str] | subprocess.CompletedProcess[bytes]:
+        if binary:
+            return subprocess.run(command, capture_output=True, env=env, check=False, cwd=cwd)
         # `encoding="utf-8", errors="surrogateescape"` rather than the plain `text=True` this used
         # to be: a filename that is not valid UTF-8 (`b"caf\xe9.md"`, legal on the volume) is staged
         # fine by `git add -A` — the failure was always in *decoding it back*, in every call site
@@ -323,9 +377,19 @@ class GitRunner:
             cwd=cwd,
         )
 
+    @overload
     def _spawn_with_cwd_fallback(
-        self, args: Sequence[str], command: Sequence[str], env: dict[str, str]
-    ) -> subprocess.CompletedProcess[str]:
+        self, args: Sequence[str], command: Sequence[str], env: dict[str, str], *, binary: Literal[False]
+    ) -> subprocess.CompletedProcess[str]: ...
+
+    @overload
+    def _spawn_with_cwd_fallback(
+        self, args: Sequence[str], command: Sequence[str], env: dict[str, str], *, binary: Literal[True]
+    ) -> subprocess.CompletedProcess[bytes]: ...
+
+    def _spawn_with_cwd_fallback(
+        self, args: Sequence[str], command: Sequence[str], env: dict[str, str], *, binary: bool
+    ) -> subprocess.CompletedProcess[str] | subprocess.CompletedProcess[bytes]:
         """Run `command` with cwd pinned to `work_tree`, falling back to an empty private directory
         if the OS refuses that one — see the `work_tree`-is-not-guaranteed section of this module's
         header comment for why both halves are load-bearing.
@@ -335,7 +399,7 @@ class GitRunner:
         escaping every handler as a raw `OSError`. Translated rather than swallowed: it is a real
         failure of this invocation, just not one git itself produced."""
         try:
-            return self._spawn(command, env, self.work_tree)
+            return self._spawn(command, env, self.work_tree, binary=binary)
         except OSError as work_tree_error:
             try:
                 # `mkdtemp`, not a fixed path under the system temp directory: that directory is
@@ -346,7 +410,7 @@ class GitRunner:
             except OSError as fallback_error:
                 raise GitInvocationError(args, self.work_tree, work_tree_error) from fallback_error
             try:
-                return self._spawn(command, env, fallback_cwd)
+                return self._spawn(command, env, fallback_cwd, binary=binary)
             except OSError as fallback_error:
                 # Not the work tree's fault at this point (a plain `git --version` would fail the
                 # same way): the executable or the process environment itself is what the OS
@@ -423,6 +487,28 @@ class GitRunner:
         it is. Do not drop them as noise — see the flags' own comment for what each one closes.
         """
         return self.run(["diff", "--cached", *_DECISION_DIFF_FLAGS, "--", *pathspecs]).stdout
+
+    def staged_patch_bytes(self, *pathspecs: str) -> bytes:
+        """`staged_patch`, undecoded — the same diff, byte-for-byte as git wrote it.
+
+        The batch producer enqueues this text for another component to apply, so the patch is
+        content rather than evidence read and discarded: `staged_patch`'s text decoding would
+        collapse a CRLF file's `\\r\\n` to `\\n` (see `run_binary`), turning a faithful patch into
+        one that also rewrites line endings. Same `_DECISION_DIFF_FLAGS` for the same reasons — see
+        `staged_patch`, including why a rename's two paths are passed to one invocation.
+        """
+        return self.run_binary(["diff", "--cached", *_DECISION_DIFF_FLAGS, "--", *pathspecs]).stdout
+
+    def blob_bytes(self, rev: str, path: str) -> bytes:
+        """The exact bytes `path` holds at `rev` (`git cat-file blob <rev>:<path>`).
+
+        `cat-file blob`, not `show`: it emits the stored object with no smudge/clean filter and no
+        `.gitattributes` conversion applied, which is what makes the result the same bytes any other
+        reader of that content would hash. Raises `GitCommandError` when the path does not exist at
+        `rev` — a caller asking for a pre-image that isn't there has a wrong assumption, not a
+        missing file.
+        """
+        return self.run_binary(["cat-file", "blob", f"{rev}:{path}"]).stdout
 
     def staged_paths_differing_from(self, rev: str) -> list[str]:
         """Every path at which the current index differs from `rev`'s tree
