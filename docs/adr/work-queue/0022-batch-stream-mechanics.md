@@ -1,6 +1,6 @@
 # 0022. Batch mechanics: strict FIFO, unsharded, stale-reject, fairness backpressure, watchdog before unattended
 
-**Status:** Accepted — one sub-question deliberately open (what staleness is measured against) ·
+**Status:** Accepted ·
 **Serves:** [S1](../../../USE_CASES.md#s1--admitted) ·
 **Unit:** [A2](../../../ROADMAP.md#group-a--pipeline-mechanisms) ·
 **Ticket:** [ot#5](https://github.com/ppat/obsidian-tools/issues/5)
@@ -17,12 +17,8 @@ applies each through the same gated MCP path as ordinary ingest.
 
 - **Stale patches are rejected back to the producer, never merged.** A patch records its base; if
   the vault moved, the producer regenerates. The tempting 3-way merge would reintroduce exactly the
-  subsystem this architecture deleted. *Open, flagged:* what "moved" is measured against — repo
-  head interacts badly with a scheduled commit cadence (a multi-chunk batch can invalidate its own
-  later chunks against its earlier ones, which looks like "every chunk after the first fails"); a
-  per-file content-hash alternative reusing the optimistic-concurrency primitive is plausible.
-  Decided at implementation, when real commit cadence and batch sizes are visible
-  ([open decision](../../../ROADMAP.md#open-decisions)).
+  subsystem this architecture deleted. What "moved" is measured against is
+  [ADR-0048](./0048-batch-staleness-per-file-hash.md).
 - **One FIFO stream, not prefix-sharded parallel streams.** Renames rewrite wikilinks in arbitrary
   other notes (the ordinary case, not the exotic one), which breaks sharding's disjointness
   assumption; sharding removes cross-stream ordering ("rename in X, then relink in Y" becomes
