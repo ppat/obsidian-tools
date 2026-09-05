@@ -67,7 +67,19 @@ def test_metrics_handler_serves_current_state_and_404s_on_other_paths() -> None:
 # serve() -- real SIGTERM, in a subprocess (see module docstring for why)
 # --------------------------------------------------------------------------------------------
 
-_SIGTERM_TEST_PORT = 18797
+
+def _free_port() -> int:
+    """A port the kernel says is free right now.
+
+    Not a constant: two runs of this test overlapping -- a re-run started while a previous child is
+    still shutting down, or a suite run beside another -- would collide on a fixed port, and the
+    child would fail to bind rather than exercise the shutdown path. The test then reports a
+    shutdown defect that is not there.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
 
 
 def test_serve_shuts_down_cleanly_on_sigterm() -> None:
@@ -77,8 +89,9 @@ def test_serve_shuts_down_cleanly_on_sigterm() -> None:
     the child process's traceback shows `GracefulShutdown` (SIGTERM was converted, not fatal), and
     the parent can bind the identical port immediately afterward (red if `serve()`'s `finally` ever
     stops calling `httpd.server_close()`, e.g. during a future refactor of the shutdown path)."""
+    port = _free_port()
     script = f"""
-import os, signal, socket, threading, time
+import os, signal, socket, sys, threading, time
 from obsidian_tools import cli
 from obsidian_tools.config import VaultExporterConfig
 from obsidian_tools.vault_exporter.server import serve
@@ -92,20 +105,26 @@ config = VaultExporterConfig(
     poll_interval_seconds=0.05,
     request_timeout_seconds=1.0,
     listen_host="127.0.0.1",
-    listen_port={_SIGTERM_TEST_PORT},
+    listen_port={port},
 )
 
 def _terminate_once_listening():
-    deadline = time.monotonic() + 5.0
+    # Loudly, not silently: if the server never listens, exiting this thread quietly leaves
+    # serve() running until the parent's subprocess timeout, and the failure then looks like a
+    # hung shutdown rather than a server that never started.
+    deadline = time.monotonic() + 10.0
     while time.monotonic() < deadline:
         probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
-            probe.connect(("127.0.0.1", {_SIGTERM_TEST_PORT}))
+            probe.connect(("127.0.0.1", {port}))
             break
         except OSError:
             time.sleep(0.02)
         finally:
             probe.close()
+    else:
+        print("NEVER_LISTENED", file=sys.stderr, flush=True)
+        os._exit(3)
     os.kill(os.getpid(), signal.SIGTERM)
 
 threading.Thread(target=_terminate_once_listening, daemon=True).start()
@@ -121,6 +140,6 @@ serve(config)
     probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
-        probe.bind(("127.0.0.1", _SIGTERM_TEST_PORT))
+        probe.bind(("127.0.0.1", port))
     finally:
         probe.close()
