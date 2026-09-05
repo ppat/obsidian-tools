@@ -104,6 +104,15 @@ already carries, and three observations falsify the choice:
 
 ## Consequences
 
+- **A path may be touched by at most one chunk of a batch**, and a producer that emits otherwise is
+  malformed rather than merely inefficient. A later chunk records the pre-image hash of a path an
+  earlier chunk of its own batch has already moved, so it rejects against a hash the batch itself
+  invalidated — which is the first falsifying observation named above, manufactured by the producer
+  rather than discovered in production. The constraint binds any producer, so it is stated here
+  rather than left to whichever one is written first. It is reachable in ordinary work: a rename
+  chain or swap staged together (`A` to `B`, `C` to `A`) writes `A` twice, once as the source of one
+  rename and once as the destination of another.
+
 - **Rejection granularity is the chunk.** One moved file rejects every edit in the chunk. This
   keeps the chunk the transaction unit and keeps within-chunk ordering meaningful.
 - **A redelivered chunk that had begun to apply fails the check and is rejected rather than
