@@ -4,7 +4,14 @@ version = "0.1.0"
 description = "Code for BRAIN: a git-backed Obsidian vault written to by a human and multiple AI agents"
 readme = "README.md"
 requires-python = ">=3.14"
-dependencies = []
+# The batch producer's NATS client. Pinned exactly, and deliberately the only entry: a pure-Python
+# `py3-none-any` wheel whose three declared dependencies are all optional extras (`aiohttp`,
+# `nkeys`, `fast-mail-parser`), none of which this codebase requests. That matters beyond tidiness —
+# the container image builds for two architectures from a single native builder stage whose virtual
+# environment is copied into both (Dockerfile), an assumption any compiled extension would
+# invalidate. ADR-0047 rejected NATS's decentralized JWT model on exactly this ground, because its
+# client-side nonce signing pulls in `nkeys`.
+dependencies = ["nats-py==2.15.0"]
 
 [project.scripts]
 obsidian-tools = "obsidian_tools.cli:main"

@@ -8,7 +8,9 @@ clients of the same shared `GitRunner`/config/retry/logging helpers, not a paral
 `export-metrics` is ADR-0037's independent vault-loaded exporter (unit D1, ot#121): it shares
 config/logging conventions with the other three but never touches `GitRunner` or `retry` — its only
 I/O is an HTTP call to Obsidian's Local REST API, and unlike the other three it never returns under
-normal operation (it serves `/metrics` until SIGTERM).
+normal operation (it serves `/metrics` until SIGTERM). `enqueue-batch` is the batch stream's
+producer (unit B1, ot#125): it runs in the Coder workspace rather than in-cluster, is a client of
+`GitRunner` like the first three, and is the only subcommand that speaks NATS.
 """
 
 from __future__ import annotations
@@ -22,9 +24,17 @@ from types import FrameType
 
 from obsidian_tools.commands import commit as commit_command
 from obsidian_tools.commands import drain as drain_command
+from obsidian_tools.commands import enqueue_batch as enqueue_batch_command
 from obsidian_tools.commands import export_metrics as export_metrics_command
 from obsidian_tools.commands import replicate as replicate_command
-from obsidian_tools.config import CommitConfig, ConfigError, DrainConfig, ReplicateConfig, VaultExporterConfig
+from obsidian_tools.config import (
+    BatchProducerConfig,
+    CommitConfig,
+    ConfigError,
+    DrainConfig,
+    ReplicateConfig,
+    VaultExporterConfig,
+)
 from obsidian_tools.logging_config import configure_logging
 
 logger = logging.getLogger(__name__)
@@ -84,6 +94,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     export_metrics_parser.set_defaults(handler=_run_export_metrics)
 
+    enqueue_batch_parser = subparsers.add_parser(
+        "enqueue-batch",
+        help="split what is staged into chunks and enqueue them on the batch stream (ADR-0022, ADR-0048)",
+    )
+    enqueue_batch_parser.set_defaults(handler=_run_enqueue_batch)
+
     return parser
 
 
@@ -121,6 +137,15 @@ def _run_export_metrics(_args: argparse.Namespace) -> int:
         logger.exception("invalid configuration", extra={"event": "config_error"})
         return 2
     return export_metrics_command.run(config)
+
+
+def _run_enqueue_batch(_args: argparse.Namespace) -> int:
+    try:
+        config = BatchProducerConfig.from_env()
+    except ConfigError:
+        logger.exception("invalid configuration", extra={"event": "config_error"})
+        return 2
+    return enqueue_batch_command.run(config)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

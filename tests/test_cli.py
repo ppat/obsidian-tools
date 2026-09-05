@@ -94,6 +94,26 @@ def test_main_returns_config_error_exit_code_for_export_metrics_when_required_en
     assert main(["export-metrics"]) == 2
 
 
+def test_enqueue_batch_subcommand_is_registered() -> None:
+    parser = build_parser()
+
+    args = parser.parse_args(["enqueue-batch"])
+
+    assert args.subcommand == "enqueue-batch"
+    assert callable(args.handler)
+
+
+def test_main_returns_config_error_exit_code_for_enqueue_batch_when_required_env_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The credential is required rather than defaulted, so a producer can never start up against
+    an unauthenticated connection by omission."""
+    for name in ("BATCH_GIT_DIR", "BATCH_WORK_TREE", "BATCH_NATS_URL", "BATCH_NATS_PASSWORD"):
+        monkeypatch.delenv(name, raising=False)
+
+    assert main(["enqueue-batch"]) == 2
+
+
 def test_installed_sigterm_handler_raises_graceful_shutdown() -> None:
     """CPython only installs its own handler for SIGINT; every other signal, SIGTERM included,
     keeps the interpreter's default disposition, and the OS default action for SIGTERM is

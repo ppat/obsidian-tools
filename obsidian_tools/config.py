@@ -214,6 +214,65 @@ class DrainConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class BatchProducerConfig:
+    """Configuration for the `enqueue-batch` subcommand — the batch stream's producer (unit B1,
+    ot#125), read once from the environment. Runs in the Coder workspace against that workspace's
+    own git checkout, so its git paths have no defaults worth guessing: unlike `CommitConfig`'s
+    in-cluster mount points, there is no fixed location a workspace repository lives at.
+
+    Deliberately its own dataclass rather than a slice of `CommitConfig`: the two share the *idea* of
+    a git directory and nothing else — no SSH key, no remotes, no branch, no deletion guard — and
+    the shape `DrainConfig`'s docstring argues for applies unchanged here.
+    """
+
+    git_dir: str
+    work_tree: str
+    # What `git diff --cached` diffs against, and therefore the tree every pre-image hash is read
+    # from (batch_producer/generation.py). One setting for both on purpose: two would be two
+    # things to keep equal, and a patch hashed against a different tree than it was generated
+    # against is a staleness check that passes when it should not.
+    base_rev: str
+    nats_url: str
+    nats_user: str
+    nats_password: str
+    # Must match the subscribe grant on this credential, which ADR-0047 scopes to
+    # `_INBOX_BATCH.*.*` and nothing else. The library's default (`_INBOX`) is refused by that
+    # grant, and the refusal surfaces as a publish timeout that reads as an unreachable broker --
+    # see batch_producer/nats_client.py's discipline 3 for the failure this default prevents.
+    nats_inbox_prefix: str
+    # The stream's one top-level subject token (ADR-0047). The batch id becomes the trailing token,
+    # which that record deliberately left free for routing.
+    subject_prefix: str
+    # Well under NATS's 1 MiB default `max_payload`, leaving the JSON envelope and any future field
+    # room without recalculating this. Not larger: a chunk is the transaction and redelivery unit,
+    # so its size is how much work one staleness rejection throws away.
+    max_chunk_patch_bytes: int
+    connect_timeout_seconds: float
+    publish_timeout_seconds: float
+    # Bounded, and low. `nats-py` defaults to 60 attempts on a 2-second timer, so a wrong or rotated
+    # credential spends four quiet minutes retrying before anything says so; this producer runs to
+    # completion and exits, so failing soon and loudly is strictly better than eventually.
+    max_reconnect_attempts: int
+
+    @classmethod
+    def from_env(cls) -> BatchProducerConfig:
+        return cls(
+            git_dir=require_env("BATCH_GIT_DIR"),
+            work_tree=require_env("BATCH_WORK_TREE"),
+            base_rev=get_env("BATCH_BASE_REV", "HEAD"),
+            nats_url=require_env("BATCH_NATS_URL"),
+            nats_user=get_env("BATCH_NATS_USER", "batch-producer"),
+            nats_password=require_env("BATCH_NATS_PASSWORD"),
+            nats_inbox_prefix=get_env("BATCH_NATS_INBOX_PREFIX", "_INBOX_BATCH"),
+            subject_prefix=get_env("BATCH_SUBJECT_PREFIX", "batch"),
+            max_chunk_patch_bytes=get_env_int("BATCH_MAX_CHUNK_PATCH_BYTES", 262144),
+            connect_timeout_seconds=get_env_float("BATCH_CONNECT_TIMEOUT_SECONDS", 5.0),
+            publish_timeout_seconds=get_env_float("BATCH_PUBLISH_TIMEOUT_SECONDS", 10.0),
+            max_reconnect_attempts=get_env_int("BATCH_MAX_RECONNECT_ATTEMPTS", 3),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class VaultExporterConfig:
     """Configuration for the `export-metrics` subcommand — ADR-0037's independent vault-loaded
     exporter (unit D1, ot#121), read once from the environment. Runs in-cluster, alongside headless
