@@ -10,7 +10,12 @@ config/logging conventions with the other three but never touches `GitRunner` or
 I/O is an HTTP call to Obsidian's Local REST API, and unlike the other three it never returns under
 normal operation (it serves `/metrics` until SIGTERM). `enqueue-batch` is the batch stream's
 producer (unit B1, ot#125): it runs in the Coder workspace rather than in-cluster, is a client of
-`GitRunner` like the first three, and is the only subcommand that speaks NATS.
+`GitRunner` like the first three, and is the only subcommand that publishes to NATS.
+`process-batch` is that stream's consumer, `batch-processor` (unit A2, ot#5): in-cluster, no git
+and no mount at all, reading and writing the vault only through the gated MCP path.
+`watch-agent-handle` is unit D4's watchdog — deliberately a *separate* subcommand on a separate
+schedule, because a watchdog sharing a process with `batch-processor` would die with it, which is
+the failure it exists to catch.
 """
 
 from __future__ import annotations
@@ -26,14 +31,18 @@ from obsidian_tools.commands import commit as commit_command
 from obsidian_tools.commands import drain as drain_command
 from obsidian_tools.commands import enqueue_batch as enqueue_batch_command
 from obsidian_tools.commands import export_metrics as export_metrics_command
+from obsidian_tools.commands import process_batch as process_batch_command
 from obsidian_tools.commands import replicate as replicate_command
+from obsidian_tools.commands import watch_agent_handle as watch_agent_handle_command
 from obsidian_tools.config import (
+    BatchProcessorConfig,
     BatchProducerConfig,
     CommitConfig,
     ConfigError,
     DrainConfig,
     ReplicateConfig,
     VaultExporterConfig,
+    WatchdogConfig,
 )
 from obsidian_tools.logging_config import configure_logging
 
@@ -100,6 +109,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     enqueue_batch_parser.set_defaults(handler=_run_enqueue_batch)
 
+    process_batch_parser = subparsers.add_parser(
+        "process-batch",
+        help="drain the batch stream in strict FIFO, applying each chunk through the gated MCP path",
+    )
+    process_batch_parser.set_defaults(handler=_run_process_batch)
+
+    watch_agent_handle_parser = subparsers.add_parser(
+        "watch-agent-handle",
+        help="re-enable the agent handle if the batch run holding it down has died (ADR-0022, unit D4)",
+    )
+    watch_agent_handle_parser.set_defaults(handler=_run_watch_agent_handle)
+
     return parser
 
 
@@ -146,6 +167,24 @@ def _run_enqueue_batch(_args: argparse.Namespace) -> int:
         logger.exception("invalid configuration", extra={"event": "config_error"})
         return 2
     return enqueue_batch_command.run(config)
+
+
+def _run_process_batch(_args: argparse.Namespace) -> int:
+    try:
+        config = BatchProcessorConfig.from_env()
+    except ConfigError:
+        logger.exception("invalid configuration", extra={"event": "config_error"})
+        return 2
+    return process_batch_command.run(config)
+
+
+def _run_watch_agent_handle(_args: argparse.Namespace) -> int:
+    try:
+        config = WatchdogConfig.from_env()
+    except ConfigError:
+        logger.exception("invalid configuration", extra={"event": "config_error"})
+        return 2
+    return watch_agent_handle_command.run(config)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

@@ -2,7 +2,15 @@ from __future__ import annotations
 
 import pytest
 
-from obsidian_tools.config import CommitConfig, ConfigError, DrainConfig, ReplicateConfig, VaultExporterConfig
+from obsidian_tools.config import (
+    BatchProcessorConfig,
+    CommitConfig,
+    ConfigError,
+    DrainConfig,
+    ReplicateConfig,
+    VaultExporterConfig,
+    WatchdogConfig,
+)
 from obsidian_tools.vault_git.commit import DEFAULT_MAX_DELETION_FRACTION
 
 
@@ -267,3 +275,67 @@ def test_vault_exporter_config_listen_port_is_overridable_via_env(monkeypatch: p
     monkeypatch.setenv("VAULT_EXPORTER_LISTEN_PORT", "9100")
 
     assert VaultExporterConfig.from_env().listen_port == 9100
+
+
+def _batch_processor_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name, value in {
+        "BATCH_NATS_URL": "nats://broker:4222",
+        "BATCH_PROCESSOR_NATS_PASSWORD": "pw",
+        "BATCH_MCP_URL": "https://gateway/mcp",
+        "BATCH_MCP_API_KEY": "sk-key",
+        "BATCH_MCP_TOOL_READ": "read",
+        "BATCH_MCP_TOOL_WRITE": "write",
+        "BATCH_MCP_TOOL_DELETE": "delete",
+        "BATCH_GATEWAY_URL": "https://gateway",
+        "BATCH_GATEWAY_ADMIN_KEY": "sk-admin",
+        "BATCH_AGENT_HANDLE_KEY": "sk-handle",
+    }.items():
+        monkeypatch.setenv(name, value)
+
+
+def test_batch_processor_config_has_no_promotion_stream_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`promotion-processor` is a separate, unbuilt unit, so a run today has nothing to yield to.
+    The absence is a declared state the run reports once, not a silent default — red if a value
+    were invented here, because the run would then fail against a stream that does not exist."""
+    _batch_processor_env(monkeypatch)
+    monkeypatch.delenv("BATCH_PROMOTION_STREAM", raising=False)
+
+    assert BatchProcessorConfig.from_env().promotion_stream is None
+
+
+def test_batch_processor_config_refuses_a_dead_letter_subject_inside_the_batch_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A dead-lettered chunk republished onto the stream it was taken from is re-consumed with a
+    fresh delivery count — an infinite, silent loop. Red if this were left to be noticed at runtime:
+    by then the loop is already running and every chunk behind it is stuck."""
+    _batch_processor_env(monkeypatch)
+    monkeypatch.setenv("BATCH_SUBJECT_PREFIX", "batch")
+    monkeypatch.setenv("BATCH_DEAD_LETTER_SUBJECT_PREFIX", "batch.dead")
+
+    with pytest.raises(ConfigError, match="overlaps"):
+        BatchProcessorConfig.from_env()
+
+
+@pytest.mark.parametrize("missing", ["BATCH_MCP_TOOL_READ", "BATCH_MCP_TOOL_WRITE", "BATCH_MCP_TOOL_DELETE"])
+def test_batch_processor_config_requires_every_mcp_tool_name(monkeypatch: pytest.MonkeyPatch, missing: str) -> None:
+    """No defaults, deliberately: this repository has never run against the deployed MCP surface,
+    and a guessed tool name presents identically to a gate refusal at every call site. Red if a
+    default appeared — the deployment's own setting would silently stop mattering."""
+    _batch_processor_env(monkeypatch)
+    monkeypatch.delenv(missing, raising=False)
+
+    with pytest.raises(ConfigError, match=missing):
+        BatchProcessorConfig.from_env()
+
+
+def test_the_watchdog_config_needs_nothing_but_the_handle(monkeypatch: pytest.MonkeyPatch) -> None:
+    """What the watchdog watches is precisely what may be broken, so it must not need the broker or
+    the MCP surface to start. Red if it grew a dependency on either."""
+    for name in ("BATCH_NATS_URL", "BATCH_PROCESSOR_NATS_PASSWORD", "BATCH_MCP_URL", "BATCH_MCP_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("BATCH_GATEWAY_URL", "https://gateway")
+    monkeypatch.setenv("BATCH_GATEWAY_ADMIN_KEY", "sk-admin")
+    monkeypatch.setenv("BATCH_AGENT_HANDLE_KEY", "sk-handle")
+
+    assert WatchdogConfig.from_env().agent_handle.gateway_url == "https://gateway"
