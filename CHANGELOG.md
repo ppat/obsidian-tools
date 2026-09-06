@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/ppat/obsidian-tools/compare/v0.5.0...v0.5.1) (2026-09-06)
+
+
+### 🚀 Enhancements + Bug Fixes
+
+* **processor:** stop one failed batch chunk discarding the rest of its batch ([#146](https://github.com/ppat/obsidian-tools/issues/146)) ([1453dc0](https://github.com/ppat/obsidian-tools/commit/1453dc05c6626f26ab3f7a5424a0dbe8c80404e9))
+
 ## [0.5.0](https://github.com/ppat/obsidian-tools/compare/v0.4.0...v0.5.0) (2026-09-05)
 
 
