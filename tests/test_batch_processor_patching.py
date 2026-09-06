@@ -26,6 +26,7 @@ from hypothesis import strategies as st
 from obsidian_tools.batch_processor.patching import (
     PatchError,
     WriteKind,
+    already_applied,
     apply_file_diff,
     parse_patch,
     plan_writes,
@@ -33,7 +34,7 @@ from obsidian_tools.batch_processor.patching import (
 from obsidian_tools.batch_producer.chunk import Chunk
 from obsidian_tools.batch_producer.chunking import build_chunks
 from obsidian_tools.batch_producer.generation import collect_patch_units
-from obsidian_tools.batch_producer.staleness import TargetOperation
+from obsidian_tools.batch_producer.staleness import ChunkTarget, TargetOperation
 from obsidian_tools.vault_git.runner import GitRunner
 
 _SCRUBBED_GIT_ENV = {
@@ -413,3 +414,139 @@ def test_a_patch_with_no_file_diffs_is_refused() -> None:
     having written nothing, and the work would be gone."""
     with pytest.raises(PatchError, match="no file diffs"):
         parse_patch("")
+
+
+# --- already applied: the chunk whose work is done ------------------------------------------------
+#
+# The same oracle as above, asked the other way round. What the vault is claimed to hold is read off
+# git's own working tree, so nothing about "exactly what this patch would produce" is computed by
+# the function under test. The direction of every row is the point: `True` settles a chunk without
+# writing, so a wrong `True` is a create silently skipped over content nobody compared.
+
+
+def test_a_create_whose_target_already_holds_what_git_staged_is_already_applied(repo: Path) -> None:
+    """The convergence property, at its root: a re-imported create whose note is already there,
+    byte for byte, is work already done. Red if this were false — a producer re-run would park every
+    chunk it had already applied, and each parked chunk seeds the paths that park the next."""
+    commit(repo, {"seed.md": b"seed\n"})
+    stage(repo, write={"05-raw/imported.md": b"one\ntwo\nthree\n"})
+    chunk = one_chunk(repo)
+
+    assert already_applied(chunk, {"05-raw/imported.md": on_disk(repo, "05-raw/imported.md")})
+
+
+def test_a_create_whose_target_holds_anything_else_is_not_already_applied(repo: Path) -> None:
+    """The create-only rule, undiminished. Red here is the whole danger of this mechanism: a second
+    import would be acked over a first one's differing note, which is the silent lost update
+    ADR-0015's write-once layer and ADR-0048's existence check both exist to refuse."""
+    commit(repo, {"seed.md": b"seed\n"})
+    stage(repo, write={"05-raw/imported.md": b"one\ntwo\nthree\n"})
+    chunk = one_chunk(repo)
+
+    assert not already_applied(chunk, {"05-raw/imported.md": "somebody else's import\n"})
+
+
+def test_a_create_whose_target_differs_only_in_its_trailing_newline_is_not_already_applied(repo: Path) -> None:
+    """ "Exactly" is byte-exact, and a trailing newline is the difference most likely to be waved
+    through. Red if content were compared loosely — a chunk would be acked while the vault holds
+    something the patch did not produce, and nothing downstream would ever say so."""
+    commit(repo, {"seed.md": b"seed\n"})
+    stage(repo, write={"10-areas/x.md": b"one\ntwo\n"})
+    chunk = one_chunk(repo)
+
+    assert not already_applied(chunk, {"10-areas/x.md": "one\ntwo"})
+
+
+def test_a_chunk_only_half_of_whose_creates_are_present_is_not_already_applied(repo: Path) -> None:
+    """Partly done is not done. The chunk is the transaction unit, and half its notes in the vault
+    is a state this component settles by refusing rather than by completing: the rest would be
+    written against a pre-flight that had already been overruled once. Red if the check were per
+    target — a half-applied chunk would be acked and its missing notes owed by nobody."""
+    commit(repo, {"seed.md": b"seed\n"})
+    stage(repo, write={"10-areas/a.md": b"a\n", "10-areas/b.md": b"b\n"})
+    chunk = one_chunk(repo)
+
+    assert not already_applied(chunk, {"10-areas/a.md": on_disk(repo, "10-areas/a.md"), "10-areas/b.md": None})
+
+
+def test_a_chunk_whose_delete_still_has_its_note_is_not_already_applied(repo: Path) -> None:
+    """A delete's post-state is absence, and it is checked. Red if only creates were looked at: a
+    chunk that removed a note would be acked with the note still in the vault, and the removal is
+    then owed by nobody."""
+    commit(repo, {"gone.md": b"gone\n", "keep.md": b"keep\n"})
+    stage(repo, remove=("gone.md",))
+    chunk = one_chunk(repo)
+
+    assert not already_applied(chunk, {"gone.md": "gone\n"})
+    assert already_applied(chunk, {"gone.md": None})
+
+
+def test_a_rename_is_never_already_applied_even_when_it_looks_done(repo: Path) -> None:
+    """A rename's new side is built from the old path's content, which a rename that already
+    happened no longer has, so the patch alone does not state what it would produce. Answering from
+    the destination's *current* content instead would be inverting the patch against the vault —
+    reconciliation, which ADR-0048 removed. Red if this returned true: a rename would be acked
+    against a destination nothing had compared."""
+    commit(repo, {"old.md": b"one\ntwo\nthree\n"})
+    stage(repo, write={"new.md": b"one\nTWO\nthree\n"}, remove=("old.md",))
+    chunk = one_chunk(repo)
+
+    assert not already_applied(chunk, {"new.md": "one\nTWO\nthree\n", "old.md": None})
+
+
+def test_a_modify_is_never_already_applied_even_when_the_note_holds_the_post_image(repo: Path) -> None:
+    """The same line, drawn on the same principle: a modify's output is the pre-image plus the
+    patch, and the pre-image is what its own application replaced. The cost is stated here rather
+    than discovered later — a fully-applied chunk carrying a modify is still rejected on redelivery.
+    Red if it returned true, which would mean the post-image had been guessed at from what is
+    there now."""
+    commit(repo, {"x.md": b"alpha\nbeta\n"})
+    stage(repo, write={"x.md": b"alpha\nBETA\n"})
+    chunk = one_chunk(repo)
+
+    assert not already_applied(chunk, {"x.md": "alpha\nBETA\n"})
+
+
+def test_a_target_that_was_never_read_is_not_already_applied(repo: Path) -> None:
+    """Nothing is known about a path nobody read, so a question about it cannot answer yes.
+
+    A *delete* is where this is the only thing standing in the way, and why the row is written
+    against one: absence is what a done delete looks like, and an unread path is absent from the
+    mapping in exactly the same way. Red if a missing key were read as absence — a caller that
+    forgot to read a target would have its chunk acked on the strength of a check that never ran,
+    and the note it was supposed to remove would stay.
+    """
+    commit(repo, {"gone.md": b"gone\n", "keep.md": b"keep\n"})
+    stage(repo, remove=("gone.md",))
+    chunk = one_chunk(repo)
+
+    assert not already_applied(chunk, {})
+
+
+def test_a_chunk_whose_patch_and_targets_disagree_is_not_already_applied() -> None:
+    """`plan_writes` names this disagreement and refuses it; here it simply cannot be a settled
+    chunk. Two directions, and the second is the sharp one. A path the targets declare and the patch
+    never writes has no produced content to compare against at all. A path the patch creates and the
+    targets call a modify would otherwise fall through to the delete branch — absent, therefore
+    done — and be acked while nothing was ever written.
+    """
+    header = "diff --git a/a.md b/a.md\n--- /dev/null\n+++ b/a.md\n@@ -0,0 +1 @@\n+a\n"
+    unwritten = Chunk(
+        batch_id="b1",
+        chunk_index=0,
+        chunk_count=1,
+        produced_at="2026-09-05T12:00:00+00:00",
+        patch=header,
+        targets=(ChunkTarget("a.md", TargetOperation.CREATE, None), ChunkTarget("b.md", TargetOperation.CREATE, None)),
+    )
+    miscalled = Chunk(
+        batch_id="b1",
+        chunk_index=0,
+        chunk_count=1,
+        produced_at="2026-09-05T12:00:00+00:00",
+        patch=header,
+        targets=(ChunkTarget("a.md", TargetOperation.MODIFY, "0" * 64),),
+    )
+
+    assert not already_applied(unwritten, {"a.md": "a\n", "b.md": None})
+    assert not already_applied(miscalled, {"a.md": None})

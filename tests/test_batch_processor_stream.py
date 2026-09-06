@@ -15,6 +15,7 @@ it says.
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from collections.abc import Iterator
 
@@ -162,14 +163,44 @@ def modifying(path: str, before: str, after: str) -> tuple[str, tuple[ChunkTarge
     return patch, (ChunkTarget(path, TargetOperation.MODIFY, content_sha256(before.encode("utf-8"))),)
 
 
-def chunk_of(patch: str, targets: tuple[ChunkTarget, ...], *, batch_id: str | None = None) -> Chunk:
+def renaming(old: str, new: str, body: str) -> tuple[str, tuple[ChunkTarget, ...]]:
+    """A pure rename, which the chunk format carries as a delete of the old path plus a create of
+    the new one — the shape ADR-0022 uses to describe dependency by ordering."""
+    patch = f"diff --git a/{old} b/{new}\nsimilarity index 100%\nrename from {old}\nrename to {new}\n"
+    return patch, (
+        ChunkTarget(old, TargetOperation.DELETE, content_sha256(body.encode("utf-8"))),
+        ChunkTarget(new, TargetOperation.CREATE, None),
+    )
+
+
+def chunk_of(
+    patch: str, targets: tuple[ChunkTarget, ...], *, batch_id: str | None = None, index: int = 0, count: int = 1
+) -> Chunk:
     return Chunk(
         batch_id=batch_id or uuid.uuid4().hex,
-        chunk_index=0,
-        chunk_count=1,
+        chunk_index=index,
+        chunk_count=count,
         produced_at="2026-09-05T12:00:00+00:00",
         patch=patch,
         targets=targets,
+    )
+
+
+def a_linked_batch(batch_id: str) -> tuple[Chunk, ...]:
+    """Four creates of one batch in a chain: each links to the note the chunk before it creates.
+
+    The shape a bulk import of a linked vault really has, at the smallest size that can tell a
+    direct dependent from a second-hop one. `10-areas/blocked.md` is the one a test refuses.
+    """
+    bodies = {
+        "10-areas/base.md": "base\n",
+        "10-areas/blocked.md": "see [[base]]\n",
+        "10-areas/direct.md": "see [[blocked]]\n",
+        "10-areas/second-hop.md": "see [[direct]]\n",
+    }
+    return tuple(
+        chunk_of(*creating(path, body), batch_id=batch_id, index=index, count=len(bodies))
+        for index, (path, body) in enumerate(bodies.items())
     )
 
 
@@ -179,6 +210,20 @@ def publish(broker: str, tag: str, *chunks: Chunk) -> None:
         try:
             for chunk in chunks:
                 await jetstream.publish(f"batch{tag}.{chunk.batch_id}", encode_chunk(chunk))
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+
+def publish_raw(broker: str, tag: str, batch_id: str, body: bytes) -> None:
+    """A message on a batch's subject that never went through `encode_chunk` — the only way to put
+    a body the consumer cannot decode onto the stream."""
+
+    async def scenario() -> None:
+        client, jetstream = await _connect(broker)
+        try:
+            await jetstream.publish(f"batch{tag}.{batch_id}", body)
         finally:
             await client.close()
 
@@ -318,6 +363,200 @@ def test_a_create_over_an_existing_raw_note_is_dead_lettered(broker: str, vault:
     assert parked[0][1]["Obsidian-Batch-Reason"] == "raw_layer_exists"
 
 
+def test_a_failed_rename_parks_its_relink_and_nothing_else(broker: str, vault: FakeVault, streams: str) -> None:
+    """ADR-0022's own example of dependency by ordering, injected end to end: the rename fails, so
+    the chunk that repoints another note's link at the new name must not apply.
+
+    Three claims, and each fails differently. Red on `10-areas/other.md` means the relink landed and
+    the vault now holds a link to a page nobody created — the defect itself, and indistinguishable
+    afterwards from an ordinary dead link. Red on `10-areas/sibling.md` or `10-areas/elsewhere.md`
+    means one bad chunk discarded work that had nothing to do with it, in the same batch and in
+    another, which for a bulk import of thousands of chunks is the worse failure of the two.
+    """
+    batch = uuid.uuid4().hex
+    vault.notes["10-areas/old-name.md"] = "someone else got here first\n"
+    vault.notes["10-areas/other.md"] = "see [[old-name]]\n"
+    rename = chunk_of(
+        *renaming("10-areas/old-name.md", "10-areas/new-name.md", "the page\n"),
+        batch_id=batch,
+        index=0,
+        count=3,
+    )
+    relink = chunk_of(
+        *modifying("10-areas/other.md", "see [[old-name]]\n", "see [[new-name]]\n"),
+        batch_id=batch,
+        index=1,
+        count=3,
+    )
+    sibling = chunk_of(*creating("10-areas/sibling.md", "unrelated\n"), batch_id=batch, index=2, count=3)
+    # Deliberately links to the same page the rename failed to create: the blocking is keyed by
+    # batch, and a chunk another producer emitted is not this batch's dependent whatever it says.
+    elsewhere = chunk_of(*creating("10-areas/elsewhere.md", "see [[new-name]]\n"))
+    publish(broker, streams, rename, relink, sibling, elsewhere)
+
+    processor.run(config_for(broker, vault, streams))
+
+    assert vault.written("10-areas/other.md") == "see [[old-name]]\n"
+    assert vault.written("10-areas/new-name.md") is None
+    assert vault.written("10-areas/sibling.md") == "unrelated\n"
+    assert vault.written("10-areas/elsewhere.md") == "see [[new-name]]\n"
+    # The parked chunk *is* read before it is parked, and that cost is deliberate: parking is the
+    # only verdict that can be wrong about work already done, so the question has to be answerable.
+    assert (TOOL_READ, "10-areas/other.md") in vault.calls
+    reasons = [headers["Obsidian-Batch-Reason"] for _, headers in dead_letters(broker, streams)]
+    assert reasons == ["stale", "depends_on_failed_chunk"]
+
+
+def test_a_chunk_parked_as_a_dependent_does_not_park_what_links_to_it(
+    broker: str, vault: FakeVault, streams: str
+) -> None:
+    """The blocking is one hop deep. One write is refused in a batch of four linked creates, so the
+    chunk linking to it is parked — and the chunk linking to *that* one still applies.
+
+    Red on `10-areas/second-hop.md` is the cascade: chained, the rule parks the whole tail of a
+    link-dense batch, and it was measured doing exactly that — one refused write in chunk 5 of 36
+    parked 31 chunks and left 1,287 of 1,500 notes unwritten, against one parked for the same corpus
+    with its wikilinks removed. Red on `10-areas/direct.md` is the opposite failure and the reason
+    the first hop is kept: a note written pointing at a page nobody created.
+    """
+    batch = uuid.uuid4().hex
+    vault.refuse_paths = {"10-areas/blocked.md"}
+    publish(broker, streams, *a_linked_batch(batch))
+
+    processor.run(config_for(broker, vault, streams))
+
+    assert vault.written("10-areas/base.md") == "base\n"
+    assert vault.written("10-areas/blocked.md") is None
+    assert vault.written("10-areas/direct.md") is None
+    assert vault.written("10-areas/second-hop.md") == "see [[direct]]\n"
+    reasons = [headers["Obsidian-Batch-Reason"] for _, headers in dead_letters(broker, streams)]
+    assert reasons == ["mcp_refused", "depends_on_failed_chunk"]
+
+
+def test_a_chunk_whose_work_is_done_is_acked_even_when_it_links_to_a_failed_chunk(
+    broker: str, vault: FakeVault, streams: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """ "Is this work already done?" is asked before *both* refusals, the dependency one included.
+
+    The chunk here links to a page the failed chunk would have created — the exact shape that gets
+    parked — but its own note is already in the vault, byte for byte. Settling it writes nothing, so
+    it cannot leave a link pointing at nothing; parking it would only withhold a chunk the vault
+    already has.
+
+    Red if the dependency check ran first, and it is not a small red: measured against a vault
+    holding a complete import, not one of thirty fully-applied chunks was recognised, because a
+    single genuine conflict early in the batch parked every one of them. Every retry after any drift
+    then reports a batch's worth of dead letters against a vault that is already correct.
+    """
+    batch = uuid.uuid4().hex
+    vault.refuse_paths = {"10-areas/base.md"}
+    vault.notes["10-areas/done.md"] = "see [[base]]\n"
+    base = chunk_of(*creating("10-areas/base.md", "base\n"), batch_id=batch, index=0, count=3)
+    done = chunk_of(*creating("10-areas/done.md", "see [[base]]\n"), batch_id=batch, index=1, count=3)
+    fresh = chunk_of(*creating("10-areas/fresh.md", "see [[base]]\n"), batch_id=batch, index=2, count=3)
+    publish(broker, streams, base, done, fresh)
+
+    with caplog.at_level(logging.INFO):
+        processor.run(config_for(broker, vault, streams))
+
+    [settled] = [record for record in caplog.records if getattr(record, "event", None) == "chunk_already_applied"]
+    assert getattr(settled, "paths", None) == ["10-areas/done.md"]
+    # Only the genuinely failed chunk and the genuinely undone dependent are parked.
+    reasons = [headers["Obsidian-Batch-Reason"] for _, headers in dead_letters(broker, streams)]
+    assert reasons == ["mcp_refused", "depends_on_failed_chunk"]
+    assert vault.written("10-areas/done.md") == "see [[base]]\n"
+    assert vault.written("10-areas/fresh.md") is None
+
+
+def test_a_re_run_of_the_same_batch_applies_what_the_first_run_could_not(
+    broker: str, vault: FakeVault, streams: str
+) -> None:
+    """Convergence, which is the property that makes any of this recoverable: run the batch, fix
+    what was wrong, run it again, and the vault ends up holding all of it.
+
+    The second run is what a producer re-run really is — the whole batch republished under a new
+    identity, most of it already applied. Red on the notes means the re-run made no progress, which
+    is measured behaviour without this: the already-applied chunks are refused as duplicates, each
+    refusal blocks the paths it would have created, and three consecutive cycles applied zero chunks
+    while the vault stayed frozen at a third of the import. Red on the write list means an
+    already-applied chunk was written a second time rather than acked — the same content, so the
+    vault would not show it, and only the call list can.
+    """
+    vault.refuse_paths = {"10-areas/blocked.md"}
+    publish(broker, streams, *a_linked_batch(uuid.uuid4().hex))
+    processor.run(config_for(broker, vault, streams))
+
+    vault.refuse_paths = set()
+    vault.calls.clear()
+    publish(broker, streams, *a_linked_batch(uuid.uuid4().hex))
+
+    assert processor.run(config_for(broker, vault, streams)) == 0
+
+    assert vault.written("10-areas/blocked.md") == "see [[base]]\n"
+    assert vault.written("10-areas/direct.md") == "see [[blocked]]\n"
+    assert [path for tool, path in vault.calls if tool == TOOL_WRITE] == [
+        "10-areas/blocked.md",
+        "10-areas/direct.md",
+    ]
+
+
+def test_a_re_import_over_a_differing_raw_note_is_still_refused(broker: str, vault: FakeVault, streams: str) -> None:
+    """The control for the test above, and the line the convergence fix must not cross. Same shape —
+    a create whose target already exists — and the opposite outcome, because the content differs.
+
+    Red here is the failure the write-once layer exists to prevent: a second import silently
+    replacing a first one's note. Green here alongside a red `already_applied` row would mean the
+    two cases had been collapsed into one, which is how "settle what is done" turns into "overwrite
+    what is not".
+    """
+    vault.notes["05-raw/imported.md"] = "one\ntwo\n"
+    identical = chunk_of(*creating("05-raw/imported.md", "one\ntwo\n"))
+    differing = chunk_of(*creating("05-raw/other.md", "the replacement\n"))
+    vault.notes["05-raw/other.md"] = "the original import\n"
+    publish(broker, streams, identical, differing)
+
+    assert processor.run(config_for(broker, vault, streams)) == 1
+
+    assert vault.written("05-raw/other.md") == "the original import\n"
+    reasons = [headers["Obsidian-Batch-Reason"] for _, headers in dead_letters(broker, streams)]
+    assert reasons == ["raw_layer_exists"]
+
+
+def test_an_applied_chunk_names_the_notes_it_wrote(
+    broker: str, vault: FakeVault, streams: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Recovering a partial import means restaging exactly the paths that did not land, and that is
+    only possible if the ones that did are in the run's own output. Red if `chunk_applied` carried
+    only a count: after a run that stopped half way, nobody can say from the logs which notes are in
+    the vault, and the repair needs the stream decoded or the vault enumerated to find out."""
+    first_patch, first_targets = creating("10-areas/a.md", "a\n")
+    second_patch, second_targets = creating("10-areas/b.md", "b\n")
+    publish(broker, streams, chunk_of(first_patch + second_patch, first_targets + second_targets))
+
+    with caplog.at_level(logging.INFO):
+        processor.run(config_for(broker, vault, streams))
+
+    [applied] = [record for record in caplog.records if getattr(record, "event", None) == "chunk_applied"]
+    assert getattr(applied, "paths", None) == ["10-areas/a.md", "10-areas/b.md"]
+    assert getattr(applied, "write_count", None) == 2
+
+
+def test_an_undecodable_chunk_blocks_nothing_in_its_batch(broker: str, vault: FakeVault, streams: str) -> None:
+    """The stated limit of the mechanism, pinned rather than left to be rediscovered: a body that
+    will not decode carries no target list, so which paths its batch now owes is unknowable and
+    nothing is blocked. Red if the batch were parked wholesale on it — a corrupted message would
+    then discard every chunk behind it, which is the blast radius the run-continues rule refuses."""
+    batch = uuid.uuid4().hex
+    publish_raw(broker, streams, batch, b"{not a chunk")
+    publish(broker, streams, chunk_of(*creating("10-areas/x.md", "one\n"), batch_id=batch, index=1, count=2))
+
+    processor.run(config_for(broker, vault, streams))
+
+    assert vault.written("10-areas/x.md") == "one\n"
+    reasons = [headers["Obsidian-Batch-Reason"] for _, headers in dead_letters(broker, streams)]
+    assert reasons == ["undecodable_chunk"]
+
+
 def test_a_dead_lettered_chunk_is_still_a_decodable_chunk(broker: str, vault: FakeVault, streams: str) -> None:
     """The bytes are republished unchanged, with the reason in the headers. Red if the reason were
     folded into the payload: a parked chunk would no longer decode, and re-enqueueing one would be a
@@ -388,17 +627,23 @@ def test_a_chunk_that_keeps_failing_is_dead_lettered_rather_than_redelivered_for
 
 def test_a_duplicate_delivery_never_applies_its_writes_twice(broker: str, vault: FakeVault, streams: str) -> None:
     """The idempotence oracle, and the one property redelivery actually gives: applying a chunk a
-    second time cannot change the vault, because the pre-flight now measures against the first
+    second time cannot change the vault, because the pre-flight measures against the first
     application's own output. Red if the second copy applied — a redelivered chunk would overwrite
-    whatever had happened in between, which is the silent lost update ADR-0048 exists to prevent."""
+    whatever had happened in between, which is the silent lost update ADR-0048 exists to prevent.
+
+    The copy is *acked*, not parked, and the exit code is the visible half of that: its target holds
+    exactly what it would have written, so the work is done rather than refused. Red on either —
+    a dead-letter or a non-zero exit — and a producer re-run reports a failed import of work that is
+    entirely present, then parks everything the duplicates were supposed to have blocked.
+    """
     chunk = chunk_of(*creating("10-areas/x.md", "one\n"))
     publish(broker, streams, chunk, chunk)
 
-    processor.run(config_for(broker, vault, streams))
+    assert processor.run(config_for(broker, vault, streams)) == 0
 
     assert vault.written("10-areas/x.md") == "one\n"
     assert [call for call in vault.calls if call[0] == TOOL_WRITE] == [(TOOL_WRITE, "10-areas/x.md")]
-    assert dead_letters(broker, streams)[0][1]["Obsidian-Batch-Reason"] == "already_exists"
+    assert dead_letters(broker, streams) == []
 
 
 def test_a_chunk_that_failed_part_way_through_is_parked_rather_than_replayed(

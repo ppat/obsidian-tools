@@ -23,6 +23,7 @@ back live, each time.
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
@@ -194,15 +195,61 @@ def test_a_kill_mid_run_redelivers_the_chunk_and_the_watchdog_reopens_the_handle
     assert vault.handle_blocked is False
 
     assert pending_on_the_batch_stream(config) == 1
-    processor.run(config)
+    assert processor.run(config) == 0
 
     # Applied exactly once, whichever step the kill landed on — and the two routes there are
     # different, which is the point. A kill before the writes leaves the redelivery to apply the
-    # chunk; a kill *after* them leaves a chunk that already landed, and its redelivery is rejected
-    # by the pre-flight rather than replayed (ADR-0048's stated consequence). Red if either route
-    # produced a second write: that is the double-apply the whole-chunk pre-flight exists to remove.
+    # chunk; a kill *after* them leaves a chunk whose notes already landed, so its redelivery is
+    # refused by the pre-flight and then settled as already applied rather than replayed. Red if
+    # either route produced a second write: that is the double-apply the whole-chunk pre-flight
+    # exists to remove. Red on the exit code means a crash costs the *next* run its clean bill of
+    # health, and the parked copy would block every later chunk that links to what it wrote.
     assert vault.written("10-areas/x.md") == "one\n"
     assert [call for call in vault.calls if call[0] == TOOL_WRITE] == [(TOOL_WRITE, "10-areas/x.md")]
+    assert dead_letter_count(broker, tag) == 0
+
+
+def test_a_restart_inside_the_acknowledgement_window_says_the_stream_is_not_drained(
+    broker: str, vault: FakeVault, tag: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A killed run leaves one chunk unsettled, and `max_ack_pending=1` then withholds every message
+    behind it until `ack_wait` expires. The restarted run's fetch is therefore empty — and an empty
+    fetch is also how a healthy run against a drained stream ends.
+
+    Measured, before this said anything: the restart produced a log bit-identical to a healthy empty
+    run — five INFO lines, every count zero, exit 0 — with the rest of the import still queued. A
+    green that means "did not run" is the failure this repository's testing discipline refuses, so
+    the run states what it left behind. Red if `left_pending` were absent or zero: nothing in the
+    output distinguishes the two, and `ack_wait` defaults to 120 seconds, so every restart in the
+    two minutes after a crash lands in this window.
+    """
+    config = config_for(broker, vault, tag, ack_wait_seconds=30.0)
+    publish(broker, tag, chunk_of(*creating("10-areas/x.md", "one\n")))
+    run_until_crash(config, "settle")
+
+    with caplog.at_level(logging.INFO):
+        assert processor.run(config) == 0
+
+    assert [record for record in caplog.records if getattr(record, "event", None) == "batch_stream_not_drained"]
+    [complete] = [record for record in caplog.records if getattr(record, "event", None) == "batch_run_complete"]
+    assert getattr(complete, "applied", None) == 0
+    assert getattr(complete, "left_pending", None) == 1
+
+
+def test_a_drained_stream_reports_nothing_left(
+    broker: str, vault: FakeVault, tag: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The control for the test above, and what stops the warning becoming noise every run learns to
+    ignore. Red if a run that really did drain the stream still reported work left: the signal would
+    fire on every healthy nightly run and would then mean nothing at all."""
+    publish(broker, tag, chunk_of(*creating("10-areas/x.md", "one\n")))
+
+    with caplog.at_level(logging.INFO):
+        processor.run(config_for(broker, vault, tag))
+
+    assert [record for record in caplog.records if getattr(record, "event", None) == "batch_stream_not_drained"] == []
+    [complete] = [record for record in caplog.records if getattr(record, "event", None) == "batch_run_complete"]
+    assert getattr(complete, "left_pending", None) == 0
 
 
 def test_a_kill_before_the_writes_leaves_the_vault_untouched(broker: str, vault: FakeVault, tag: str) -> None:
@@ -254,7 +301,13 @@ class CrashInjectionMachine(RuleBasedStateMachine):
 
     @rule(path=st.sampled_from(("10-areas/a.md", "05-raw/b.md")), body=st.text(alphabet="abc", min_size=1, max_size=3))
     def enqueue_create(self, path: str, body: str) -> None:
-        content = f"{body}\n"
+        # The serial keeps every generated chunk's content distinct, and that is a constraint of the
+        # accounting invariant rather than a choice about coverage: a create whose note already
+        # holds exactly its content is *settled by an ack*, contributing to neither the writes nor
+        # the parked copies the invariant counts, so a duplicate would read there as a chunk that
+        # vanished. That case is proven deterministically instead — see the re-run and duplicate
+        # delivery tests in `test_batch_processor_stream.py`.
+        content = f"{body}-{self.published}\n"
         publish(_broker_url, self.tag, chunk_of(*creating(path, content)))
         self._note(path, content)
         self.published += 1

@@ -37,6 +37,13 @@ about the patch format requires it.
 declares a target the patch never writes. The two are generated together by the producer, so a
 disagreement is a defect on one side or the other; letting it through would mean applying a write
 whose staleness was never checked, which is exactly the hole the pre-flight exists to close.
+
+## A create's post-image is stated by the patch, and that is what `already_applied` rests on
+
+A create's diff carries every line of the new note against an empty old side, so what the chunk
+would leave at that path is computable from the patch alone — no pre-image, nothing read back.
+`already_applied` uses that to answer one question the pre-flight cannot: whether the work is
+already done. Nothing else in this file has an opinion about whether a chunk *should* be applied.
 """
 
 from __future__ import annotations
@@ -364,6 +371,68 @@ def plan_writes(chunk: Chunk, pre_images: Mapping[str, str | None]) -> tuple[Pla
     planned = tuple(writes + deletes)
     _check_against_targets(planned, declared)
     return planned
+
+
+def already_applied(chunk: Chunk, contents: Mapping[str, str | None]) -> bool:
+    """Whether every path `chunk` touches already holds exactly what applying it would leave there.
+
+    `contents` is what was read back for each target, in the shape `plan_writes` takes. True means
+    applying the chunk would change nothing: every path it creates already holds, byte for byte, the
+    note its patch spells out, and every path it deletes is already gone. **Acking such a chunk
+    leaves the vault in precisely the state applying it would**, which is what makes it a settled
+    chunk rather than a skipped one — and what makes a re-run of an already-imported batch converge
+    instead of parking every chunk of it.
+
+    ## This does not weaken the create-only rule
+
+    "The target exists holding what this patch would write" and "the target exists holding something
+    else" are different facts, and only the second is the re-import silently overwriting an earlier
+    one that ADR-0015's write-once layer and ADR-0048's existence check refuse. The second answers
+    `False` here, and the pre-flight that refuses it is untouched: this function only ever reports
+    that a write is unnecessary, never that a conflicting one is permitted.
+
+    ## A modify and a rename are never settled by this, and the line is not arbitrary
+
+    Both compute their new content from a pre-image that their own application replaced, so what
+    they would produce is not stated by the patch. Recovering it would mean inverting the patch
+    against whatever is there now, and using a patch to work backwards from current content is the
+    reconciliation ADR-0048 removed. A create needs no pre-image, so it needs no inversion. The cost
+    is stated rather than hidden: a fully-applied chunk carrying a modify is still rejected on
+    redelivery, loudly and without touching the vault.
+    """
+    declared = {target.path: target.operation for target in chunk.targets}
+    produced: dict[str, str] = {}
+    for diff in parse_patch(chunk.patch):
+        if diff.new_path is None:
+            continue
+        if diff.old_path is not None:
+            # An in-place edit or a rename — the two shapes a modify and a rename take, and the one
+            # test that rules out both. The new side is built from content this chunk's own
+            # application would have moved, so the patch does not state it.
+            return False
+        content = apply_file_diff(None, diff)
+        if content is None:
+            # Narrowing, with no verdict of its own: `apply_file_diff` returns `None` for a delete
+            # alone, which the branch above has already taken. Deleting it changes no test's answer.
+            return False
+        produced[diff.new_path] = content
+
+    if set(produced) != {path for path, operation in declared.items() if operation is TargetOperation.CREATE}:
+        # The patch and the targets disagree about what is created. `plan_writes` is where that is
+        # reported and named; here it is simply never a settled chunk.
+        return False
+
+    for path, operation in declared.items():
+        if path not in contents:
+            # Never read, so nothing is known about it — the pre-flight reports this as
+            # `NOT_OBSERVED`, and a question asked about an unread path cannot answer yes.
+            return False
+        if operation is TargetOperation.CREATE:
+            if contents[path] != produced[path]:
+                return False
+        elif contents[path] is not None:
+            return False
+    return True
 
 
 def _check_against_targets(planned: tuple[PlannedWrite, ...], declared: Mapping[str, TargetOperation]) -> None:

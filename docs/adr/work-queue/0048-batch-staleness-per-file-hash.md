@@ -117,16 +117,20 @@ already carries, and three observations falsify the choice:
   keeps the chunk the transaction unit and keeps within-chunk ordering meaningful.
 - **A redelivered chunk that had begun to apply fails the check and is rejected rather than
   replayed** — loud and non-destructive, at the cost that recovery from a crash mid-chunk becomes
-  producer regeneration. The named refinement, if that case proves common, is to record both the
-  pre- and post-apply hash per target so a redelivered chunk can skip targets already at their post
-  state: a change to what is compared, not to the reference this record fixes.
+  producer regeneration. A chunk whose work is *entirely* done does not pay that cost: it is settled
+  rather than parked, since acknowledging it leaves the vault exactly where applying it would. That
+  needs no post-apply hash for a create, whose post-image its own patch spells out in full; a modify
+  computes its post-image from a pre-image its application replaced, so a fully-applied chunk
+  carrying one is still rejected, and recording a post-apply hash per target remains the named
+  refinement for that half — a change to what is compared, not to the reference this record fixes.
 - **The raw layer's rule is untouched and stronger where it applies.** `05-raw/` is create-only,
   enforced in the same processor ([ADR-0015](../content-model/0015-raw-immutability.md)): an
   existing target is a refusal regardless of hash, and a create has no prior content to hash at
   all. The two compose as create → existence check, modify → hash check. The bootstrap import lands
   entirely in the write-once layer, so it is governed by the existence check and never by this one;
   this measure governs the later structural refactors that modify curated content.
-- **It cannot become a merge by another name.** The comparison's only outputs are apply-as-given
-  and reject-whole-chunk; no comparison result is ever used to transform a patch. Any future use of
-  the recorded hash to reconcile rather than to gate is the deleted subsystem returning under a
-  new name.
+- **It cannot become a merge by another name.** The comparison's only outputs are apply-as-given,
+  reject-whole-chunk, and — where every path already holds what the patch would produce — write
+  nothing at all; no comparison result is ever used to transform a patch. Any future use of the
+  recorded hash to reconcile rather than to gate is the deleted subsystem returning under a new
+  name.
