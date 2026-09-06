@@ -1,6 +1,6 @@
 # 0047. One subject namespace and one NATS account per message shape, with private service imports and no JetStream API for any producer
 
-**Status:** Proposed ·
+**Status:** Accepted ·
 **Pillar:** [Authority is carried by capability](../../../DESIGN.md#authority-is-carried-by-capability-not-by-network-position) ·
 **Serves:** [S1](../../../USE_CASES.md#s1--admitted)
 

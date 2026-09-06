@@ -87,11 +87,11 @@ build state never lives here.
 | 0022 | [Batch mechanics: FIFO, unsharded, stale-reject, fairness backpressure, watchdog](./work-queue/0022-batch-stream-mechanics.md) | Accepted |
 | 0023 | [Streams ship with their processors; the substrate alone carries no streams](./work-queue/0023-streams-ship-with-processors.md) | Accepted |
 | 0024 | [Captured drift rides the drift stream — superseding MinIO, keeping its siting gotcha](./work-queue/0024-drift-destination-stream-not-minio.md) | Accepted |
-| 0047 | [One subject namespace and one NATS account per message shape, private service imports, no JetStream API for any producer](./work-queue/0047-subject-scheme-and-account-topology.md) | **Proposed** |
-| 0048 | [Batch staleness is measured per file, by content hash, never against repo head](./work-queue/0048-batch-staleness-per-file-hash.md) | **Proposed** |
-| 0049 | [A processor whose run disables a gateway handle is scheduled, not supervised](./work-queue/0049-processor-scheduled-not-supervised.md) | **Proposed** |
-| 0050 | [Streams are created by a scheduled provisioner holding stream creation but not stream update](./work-queue/0050-stream-provisioner-create-not-update.md) | **Proposed** |
-| 0051 | [The consuming processor holds its own identity inside the stream-holding account](./work-queue/0051-consumer-identity-in-stream-account.md) | **Proposed** |
+| 0047 | [One subject namespace and one NATS account per message shape, private service imports, no JetStream API for any producer](./work-queue/0047-subject-scheme-and-account-topology.md) | Accepted |
+| 0048 | [Batch staleness is measured per file, by content hash, never against repo head](./work-queue/0048-batch-staleness-per-file-hash.md) | Accepted |
+| 0049 | [A processor whose run disables a gateway handle is scheduled, not supervised](./work-queue/0049-processor-scheduled-not-supervised.md) | Accepted |
+| 0050 | [Streams are created by a scheduled provisioner holding stream creation but not stream update](./work-queue/0050-stream-provisioner-create-not-update.md) | Accepted |
+| 0051 | [The consuming processor holds its own identity inside the stream-holding account](./work-queue/0051-consumer-identity-in-stream-account.md) | Accepted |
 
 ## Replication and devices — `replication/`
 
