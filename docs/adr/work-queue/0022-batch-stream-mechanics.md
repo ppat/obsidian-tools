@@ -56,3 +56,50 @@ Accepted cost is throughput: thousands of sequential round-trips through one eve
 mode" reduces to which gateway handle is enabled; promotion keeps draining mid-batch because it
 shares the ingestor handle. Quiescing the editor during a batch is not merely rejected but
 *unavailable* — batch writes travel through it.
+
+**A failed chunk stops itself and its direct dependents, and nothing else.** The run continues past
+a dead-lettered chunk — a bulk import is thousands of chunks, and one bad file must not discard the
+rest — and chunks of every other batch are unaffected in every case. What ordering buys has to be
+paid for explicitly here: a later chunk of the *same* batch that links to a page the failed chunk
+would have created is parked with its own dead-letter reason rather than applied, because applying
+it is precisely how the relink lands without its rename and a note is left pointing at a page nobody
+created. Only a create can be depended on this way, the new name of a rename included; a path the
+batch merely modified or deleted cannot be, because a batch touches each path at most once
+([ADR-0048](./0048-batch-staleness-per-file-hash.md)).
+
+**Parking is expensive, and it is still right, because the raw layer is where the alternative fails
+silently.** Applying a dependent writes a note whose link points at a page the run has just failed to
+create. `05-raw/` is write-once *and* validation-exempt
+([ADR-0015](../content-model/0015-raw-immutability.md)), and the lint pass reporting nothing about
+that layer is it working correctly — so the obvious defence, "apply it and let the lint pass find
+the broken link", is false exactly where a bulk import puts the majority of its content. Parking
+converts a wrong page nothing will ever report into an absent one: counted, copied to the dead-letter
+stream, and the run exits non-zero. That is the whole justification for the mechanism, and its price
+is a chunk's worth of notes deferred to the next cycle.
+
+**The parking is one hop deep, and the second hop is where that justification runs out.** A chunk
+parked as a dependent contributes nothing further to what is blocked. Chained instead, the rule parks
+the whole tail of a link-dense batch — measured, one refused write parked 31 of 36 chunks and left
+1,287 of 1,500 notes unwritten, against one parked for the same corpus with its links removed —
+because the reference test is deliberately an over-approximation, sound applied once and close to
+"discard everything after the first failure" applied thirty times. What a second-hop chunk links to
+is a page a *parked* chunk would create, and parked work is not lost: the producer regenerates the
+batch and the next cycle applies it, so that dangle closes on its own, where parking would cost a
+chunk's worth of notes on every cycle until it did. One hop remains expensive — at 45% link density
+one refused write parks 24 of the 30 chunks behind it, deferring 1,068 of 1,500 notes to the cycle
+that resolves the failure. That is the cost of the guarantee, stated rather than discovered.
+
+**Regeneration is what recovers a partial batch, and it converges where nothing genuinely
+conflicts.** Nothing consumes the dead-letter stream, so failed work stays undone until the producer
+emits the batch again — the whole of it, most of it already applied. A chunk whose every path already
+holds exactly what applying it would leave there is settled rather than parked, and that question is
+asked before any refusal, including the dependency one. Measured: two cycles take a batch killed at a
+third of the way through to complete, where before it was a fixed point at zero progress.
+
+Where a target *has* drifted, cycles stop short of complete and further cycles change nothing — the
+conflicting chunk is refused on its merits, its direct dependents are parked, and everything else
+settles. **That is a pause, not a loss, and the distinction is measured:** resolving the one
+conflicting note and regenerating completes the import on the very next cycle. So the residue is
+what a genuine conflict is supposed to cost — a human decision, which no number of further cycles
+can substitute for — and the run names it by exiting non-zero with the conflicting path in the
+rejection.

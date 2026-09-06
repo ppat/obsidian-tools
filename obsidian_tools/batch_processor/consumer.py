@@ -158,8 +158,11 @@ class BatchConsumer:
     async def next_chunk(self, timeout_seconds: float) -> DeliveredChunk | None:
         """The next chunk, or `None` when nothing arrived within `timeout_seconds`.
 
-        An empty fetch is the run's own completion signal — the stream has nothing left, so a run
-        triggered on a schedule against an empty stream costs one fetch and exits.
+        An empty fetch is the run's own completion signal, so a run triggered on a schedule against
+        an empty stream costs one fetch and exits. It is *not* the same claim as "the stream is
+        empty": a chunk left unsettled by a killed run withholds everything behind it until
+        `ack_wait` expires, and that fetch is empty too. `pending` is what tells those apart, and the
+        caller reports it rather than inferring the stream's state from this.
         """
         subscription = self._require_subscription()
         try:
@@ -247,6 +250,22 @@ class BatchConsumer:
                 f"could not read the depth of {self._promotion_stream}/{self._promotion_consumer}: {exc}"
             ) from exc
         return info.num_pending
+
+    async def pending(self) -> int:
+        """How many chunks this consumer still owes, counting the one it may be holding unsettled.
+
+        Both halves of the sum are needed and they describe different states. `num_pending` is what
+        has never been delivered; `num_ack_pending` is a chunk an earlier, killed run took and never
+        settled, which — with `max_ack_pending=1` — is also the thing that withholds every message
+        behind it until `ack_wait` expires. A run that fetched nothing because of that is not a run
+        against an empty stream, and only this distinguishes them.
+        """
+        jetstream = self._require_jetstream()
+        try:
+            info = await jetstream.consumer_info(self._stream, self._durable)
+        except (nats.errors.Error, nats.js.errors.Error) as exc:
+            raise BatchConsumerError(f"could not read the depth of {self._stream}/{self._durable}: {exc}") from exc
+        return (info.num_pending or 0) + (info.num_ack_pending or 0)
 
     async def close(self) -> None:
         if self._client is not None:
