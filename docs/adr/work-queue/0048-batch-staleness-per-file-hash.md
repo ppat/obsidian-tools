@@ -1,6 +1,6 @@
 # 0048. Batch staleness is measured per file, by content hash, never against repo head
 
-**Status:** Proposed ·
+**Status:** Accepted ·
 **Pillar:** [The volume is authoritative; git is derived history; no merge engine anywhere](../../../DESIGN.md#the-volume-is-authoritative-git-is-derived-history-no-merge-engine-anywhere) ·
 **Serves:** [S1](../../../USE_CASES.md#s1--admitted) ·
 **Unit:** [A2](../../../ROADMAP.md#group-a--pipeline-mechanisms) ·

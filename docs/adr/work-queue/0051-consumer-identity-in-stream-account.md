@@ -1,6 +1,6 @@
 # 0051. The consuming processor holds its own identity inside the stream-holding account
 
-**Status:** Proposed ·
+**Status:** Accepted ·
 **Pillar:** [Authority is carried by capability](../../../DESIGN.md#authority-is-carried-by-capability-not-by-network-position) ·
 **Serves:** [S1](../../../USE_CASES.md#s1--admitted) ·
 **Unit:** [A2](../../../ROADMAP.md#group-a--pipeline-mechanisms) ·

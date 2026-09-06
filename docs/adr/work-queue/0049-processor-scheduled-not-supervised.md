@@ -1,6 +1,6 @@
 # 0049. A processor whose run disables a gateway handle is scheduled, not supervised
 
-**Status:** Proposed ·
+**Status:** Accepted ·
 **Pillar:** [Bulk and drift are feeds into the one write path](../../../DESIGN.md#bulk-and-drift-are-feeds-into-the-one-write-path-never-lanes-around-it) ·
 **Serves:** [S1](../../../USE_CASES.md#s1--admitted) ·
 **Unit:** [A2](../../../ROADMAP.md#group-a--pipeline-mechanisms) ·

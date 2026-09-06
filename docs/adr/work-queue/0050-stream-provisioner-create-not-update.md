@@ -1,6 +1,6 @@
 # 0050. Streams are created by a scheduled provisioner holding stream creation but not stream update
 
-**Status:** Proposed ·
+**Status:** Accepted ·
 **Pillar:** [Authority is carried by capability](../../../DESIGN.md#authority-is-carried-by-capability-not-by-network-position) ·
 **Serves:** [S1](../../../USE_CASES.md#s1--admitted) ·
 **Unit:** [A2](../../../ROADMAP.md#group-a--pipeline-mechanisms) ·
