@@ -35,3 +35,16 @@ that drift needs makes credential-carried authority mandatory
 ([ADR-0021](./0021-authority-by-message-shape.md)); per-stream depth/ack/nack/dead-letter metrics
 are acceptance criteria on [A1](../../../ROADMAP.md#group-a--pipeline-mechanisms) because they are
 queue-native facts no envelope parsing can miss.
+
+**The construction the dead-letter path needs has one constraint that is easy to get wrong and
+silent when it is.** Dead-lettering here is a republish: a chunk that has exhausted its delivery
+budget, or failed for a reason redelivery cannot change, is published to a dead-letter subject and
+then terminated — the terminate is what makes it a path rather than a loop, the copy is what makes
+it a path rather than a deletion. **The dead-letter subject must therefore lie outside the source
+stream's own subject list.** Inside it, the republish puts the chunk back on the stream it was just
+taken from, the consumer that gave up on it receives it again with its delivery count reset, and
+the loop is infinite, unbounded and indistinguishable from ordinary redelivery. The check is
+token-wise rather than string-wise — `batch` and `batchx` share a string prefix and no subjects at
+all, while `batch` and `batch.dead` share every subject under the second — and it is made when the
+processor reads its configuration, so a stream and a dead-letter stream whose subjects overlap stop
+the processor at startup instead of consuming each other's messages.
