@@ -104,3 +104,22 @@ Two findings, both measured, decide the shape rather than merely decorating it:
 - **Permission changes apply to already-connected clients on a reload signal**, without a restart or
   a client reconnect, so revocation is a configuration change plus a signal rather than a
   redeployment.
+
+- **The account holding the streams also holds consumer identities, and the table above does not
+  describe them.** The table cuts accounts by what a message carries, which is a property producers
+  have and consumers do not. A processor draining a stream holds its own user inside the
+  stream-holding account, granted by literal subject and never administratively
+  ([ADR-0051](./0051-consumer-identity-in-stream-account.md)).
+
+- **The client port terminates TLS**, and this follows from two things already decided here rather
+  than being a choice of its own. Authentication is static-account, so a credential's password
+  crosses the connection on CONNECT; and the broker is reachable from outside the cluster, because
+  `local-replicator` publishes drift from a device that is not in it
+  ([ADR-0021](./0021-authority-by-message-shape.md)). Those two together put the whole authority
+  model in clear text on a network the cluster does not own. This is not a point of difference
+  against the decentralized JWT model rejected above — a signed nonce protects the credential but
+  not the traffic, so that model carries the identical obligation. One consequence of the
+  consequence is worth stating because it is invisible until it is noisy: a health probe that only
+  opens a socket against a TLS port completes a connection it never negotiates, and the broker logs
+  a handshake failure on every probe forever, so probes go to the broker's HTTP monitoring endpoint
+  instead.
