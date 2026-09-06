@@ -39,8 +39,8 @@ always fresh, and native Obsidian on devices via a one-way replication chain.
 | **LiteLLM gateway, two handles** (agent, ingestor) | Decide *who* may call and which tools they see | Cluster | Live |
 | **Git committer** | Turn the vault volume into git history, pushed to GitHub; never author content | Cluster (CronJob, every 15 min) | Live |
 | **`local-replicator`** (+ its spool and drainer) | Keep the device-facing iCloud vault current from git, one-way and non-destructively; capture device-side drift before overwriting it | The operator's Mac (launchd, every 15 min) | Live |
-| **The work queue** — NATS JetStream; batch, promotion and drift streams | Carry deferred work to its processor, with per-producer credentials scoping who may publish where | Cluster | Unbuilt |
-| **`batch-processor`** | Apply patch-carrying bulk work through the gated write path; enforce the raw layer's create-only rule | Cluster | Unbuilt |
+| **The work queue** — NATS JetStream; batch, promotion and drift streams | Carry deferred work to its processor, with per-producer credentials scoping who may publish where | Cluster | Broker, accounts, credentials and the batch stream built, not deployed; promotion and drift streams unbuilt |
+| **`batch-processor`** | Apply patch-carrying bulk work through the gated write path; enforce the raw layer's create-only rule | Cluster | Built, not deployed |
 | **`promotion-processor`** | Relocate notes out of the inbox into curated homes, in real time, gated by the admission validator | Cluster | Unbuilt |
 | **`drift-processor`** | Classify captured device edits (intentional or not), reconcile them against upstream history, and dispatch survivors into the funnel as ordinary ingest | Cluster | Unbuilt |
 | **The admission validator** | Decide whether content meets the schema and provenance bar at the curated boundary; quarantine, never delete | Library, called by the three processors above and lint | Unbuilt |

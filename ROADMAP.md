@@ -35,7 +35,9 @@ the unit it serves (one unit per ticket); every unit here names its tickets; and
 **Position** line below is re-dated whenever the checklists are reconciled against the tickets, so
 staleness is detectable instead of silent.
 
-**Position: 2026-09-04.**
+**Position: 2026-09-06** — reconciled against the V1 tickets, which were read against the merged
+pull requests and against these checklists; the two agree, and no unit has reached
+deployed-and-observed.
 
 ## Delivery posture
 
@@ -76,11 +78,12 @@ iterate-on-it-afterwards first pass; and post-done iterations are out of scope f
 | Substrate (namespace, volume, headless Obsidian, both MCP instances, network isolation, secrets) | **Deployed and observed** (`apps-ai-v0.8.0`) [measured 2026-08-27] |
 | Content foundation (schema, skeleton, settings lock, property types; agents read-only) | **Deployed**, with one known defect: the daily-note `format` key was never written to the instance — satisfied only by Obsidian's default [measured 2026-08-27] |
 | Read replication (committer → GitHub → `local-replicator` → iCloud), capture gate included | **Deployed and observed**: committer every 15 min in-cluster; `local-replicator` under launchd since 2026-08-28, acceptance closed at 5 of 6 criteria, no component defect found [measured 2026-08-28] |
-| Everything else (work queue, all three processors, validator, lint, connections, content, operability) | **Unbuilt** — zero NATS manifests, zero processor modules exist [measured 2026-08-28 by grep over both repos] |
-| **The delivery gap** | `v0.4.0` (2026-08-01) is the latest release and what runs everywhere; `main` is 15 commits ahead, including the `.obsidian/` overlay fix ([ot#71](https://github.com/ppat/obsidian-tools/pull/71)); release PR [`ot#54`](https://github.com/ppat/obsidian-tools/pull/54) (v0.5.0) open since 2026-08-08. Until it ships and the Mac is upgraded, "fixed" means "merged", nothing stronger. Separately, `apps-ai-v0.8.1` (released 2026-08-31) is not yet on any cluster: the clusters repo's pin still reads `apps-ai-v0.8.0`, with Renovate's bump PR [`clusters#1021`](https://github.com/ppat/homelab-ops-kubernetes-clusters/pull/1021) open and unmerged since 2026-09-01 |
+| Work queue and the batch path (broker, accounts, credentials, batch stream; `batch-processor`, the batch producer, the batch-mode watchdog, the vault-loaded exporter) | **Built and merged, never run**: the code is released in [`v0.5.1`](https://github.com/ppat/obsidian-tools/releases/tag/v0.5.1); the manifests are merged into the `apps-ai` module ([apps#3947](https://github.com/ppat/homelab-ops-kubernetes-apps/pull/3947), [apps#3953](https://github.com/ppat/homelab-ops-kubernetes-apps/pull/3953), [apps#3956](https://github.com/ppat/homelab-ops-kubernetes-apps/pull/3956)) and await the module release named in the delivery-gap row below [measured 2026-09-06] |
+| Everything else (promotion and drift streams, `promotion-processor`, `drift-processor`, validator, lint, the remaining connections, content, the rest of operability) | **Unbuilt** — no manifest and no module exists for any of them [measured 2026-09-06 by grep over both repos] |
+| **The delivery gap** | `v0.5.1` (2026-09-06) is the latest release and `main` carries nothing beyond it; the `.obsidian/` overlay fix ([ot#71](https://github.com/ppat/obsidian-tools/pull/71)) shipped in `v0.5.0`. Whether the Mac has been upgraded to either is **unmeasured** — the Mac is upgraded by hand, so for `local-replicator` "fixed" still means "released", nothing stronger. On the cluster side the clusters repo now pins `apps-ai-v0.8.1`; the module release carrying every manifest of this increment, [`apps#3910`](https://github.com/ppat/homelab-ops-kubernetes-apps/pull/3910) (`apps-ai-v0.8.2`), is open and unmerged, so none of the work above has reached a cluster [measured 2026-09-06] |
 
 Ruled harmless deliberately: nothing merged since 2026-08-28 is deployed, the Mac has no downstream
-consumer while NATS does not exist, and the committer bump rides the next production deployment.
+consumer while NATS is not deployed, and the committer bump rides the next production deployment.
 
 ## Delivered, mapped to outcomes
 
@@ -190,7 +193,10 @@ unit: the [verification catalogue](./docs/VERIFICATIONS.md).
 
 ### Group A — pipeline mechanisms
 
-Zero of Group A is implemented [measured 2026-08-28].
+A1 and A2 are built and merged — the code released in `v0.5.1`, the manifests awaiting the module
+release named in the delivery-gap row — and neither is deployed. A3 to A8 are unimplemented
+[measured 2026-09-06]. The boxes below track units, so both stay unticked until deployed and
+observed.
 
 - [ ] **A1 — NATS substrate and credential machinery** → [S1](./USE_CASES.md#s1--admitted) · [apps#3444](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3444) · [V1](#v1--content-in-content-readable)
   JetStream as a single-replica Deployment; the off-cluster ingress; one NATS account per producer
@@ -391,14 +397,16 @@ curated-targeting batch work waits for [V2](#v2--the-safeguard-minimum).
 | --- | --- | --- |
 | [B4](#group-b--connection-work)/[B5](#group-b--connection-work) → [A4](#group-a--pipeline-mechanisms) + [A5](#group-a--pipeline-mechanisms) | Opening writes before a gate and a maintenance loop exist means the first thing the vault accumulates is unvalidated slop | Half satisfiable today: [A5](#group-a--pipeline-mechanisms) is buildable now; "content to validate against" is not, absent [W1](./USE_CASES.md#axis-2--writers-connected)/[C1](#group-c--content-work) |
 | [A3](#group-a--pipeline-mechanisms)'s value → any writer connected | The promotion path has no traffic before a producer writes into the inbox (bulk lands in raw) | "No traffic", not "cannot function" — but its pointer-target check should not ship never exercised against real traffic |
-| [A7](#group-a--pipeline-mechanisms)'s calibration → v0.5.0 reaching the Mac | Until the overlay fix ships, a diverged device-settings path re-drifts every cycle (~96 identical patches/day/path, multi-MB entries) [measured 2026-08-28]; a classifier calibrated on that distribution is calibrated on an artifact | The fix is merged and unreleased |
+| [A7](#group-a--pipeline-mechanisms)'s calibration → v0.5.0 reaching the Mac | Until the overlay fix ships, a diverged device-settings path re-drifts every cycle (~96 identical patches/day/path, multi-MB entries) [measured 2026-08-28]; a classifier calibrated on that distribution is calibrated on an artifact | The fix shipped in `v0.5.0`; whether the Mac has been upgraded to it is unmeasured |
 | [R2](./USE_CASES.md#axis-3--readers-connected)–[R4](./USE_CASES.md#axis-3--readers-connected)'s value → [S2](./USE_CASES.md#s2--sound) + [S3](./USE_CASES.md#s3--placed) | Reader effort, the owner's own reason for sequencing readers late | Not a capability block |
 
 ### Operational — bookkeeping, not design
 
-- **Cut v0.5.0 and upgrade the Mac** (release PR [ot#54](https://github.com/ppat/obsidian-tools/pull/54)). Everything downstream on the [W6](./USE_CASES.md#axis-2--writers-connected) axis waits
-  on a merge, not a decision. A `local-replicator` upgrade currently **fails indistinguishably from
-  healthy** ([ot#66](https://github.com/ppat/obsidian-tools/issues/66)) — verify after upgrading, not just after installing.
+- **Upgrade the Mac to `v0.5.1`.** The release is cut ([ot#54](https://github.com/ppat/obsidian-tools/pull/54) merged, `v0.5.0` on
+  2026-09-05, `v0.5.1` on 2026-09-06); the install is a hand operation on the operator's Mac, so
+  everything downstream on the [W6](./USE_CASES.md#axis-2--writers-connected) axis waits on that and not on a decision. A
+  `local-replicator` upgrade **fails indistinguishably from healthy**
+  ([ot#66](https://github.com/ppat/obsidian-tools/issues/66)) — verify after upgrading, not just after installing.
 - **The two-repo round trip**: a module change reaches a cluster only after a release is cut *and*
   the clusters repo bumps its pinned tag. Recurs on essentially every unit here; it has already cost
   one 26-day stale-image window.
@@ -434,7 +442,7 @@ Where a decision is recorded, the row cites its ADR number; records are resolved
 | **When the apps go on** ([B8](#group-b--connection-work)) | [R1](./USE_CASES.md#axis-3--readers-connected), [ot#69](https://github.com/ppat/obsidian-tools/issues/69) | Owner's want; the stated criterion is "enough content to read". Preconditions [ot#47](https://github.com/ppat/obsidian-tools/issues/47), [ot#72](https://github.com/ppat/obsidian-tools/issues/72) |
 | **Batch staleness measurement** | [A2](#group-a--pipeline-mechanisms) | Recorded as ADR-0048 — per file, by content hash, never against repo head; status proposed, the owner has not ratified it |
 | **The `salience:`/`confidence:` correlation audit at ~200 notes** | [A8](#group-a--pipeline-mechanisms)'s fields | Scheduled decision: if they track, `salience:` is removed; the audit and its grounds are recorded in ADR-0012 |
-| **CI strategy for the vault workloads** ([apps#3440](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3440)) | Every Group A unit's validation | A gate that was passed without being resolved — vault PRs landed with no recorded decision. Narrower than the ticket's own text claims [measured 2026-09-02]: the suite has booted the real Obsidian image in kind and asserted it Ready since [apps#3462](https://github.com/ppat/homelab-ops-kubernetes-apps/pull/3462) (2026-07-29; the feared cost basis was a stale estimate inherited from the abandoned base image — the real one is 282 MB, ~9 s pull), and the MCP tier proves out with no Obsidian behind it. What remains: no repo ever executes the committer — or any future processor — as a workload (the owning repo cannot run its own components; [ot#25](https://github.com/ppat/obsidian-tools/issues/25)), and the sole-control NetworkPolicy kind cannot exercise |
+| **CI strategy for the vault workloads** ([apps#3440](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3440)) | Every Group A unit's validation | **Execution gap resolved, network isolation still open.** A position posted on the ticket on 2026-09-04 and adopted in V1 planning splits the two suites by role: component behaviour is proven in `obsidian-tools`' own CI, including integration tests against a real NATS JetStream rather than mocks standing in for its consume/acknowledge/redeliver/dead-letter semantics; this repo's chainsaw suite asserts only what it alone can — that the workload objects exist, are shaped correctly and become Ready — with no component-behaviour tests duplicated across the repository boundary. Every Group A workload PR of the V1 increment ([apps#3947](https://github.com/ppat/homelab-ops-kubernetes-apps/pull/3947), [apps#3953](https://github.com/ppat/homelab-ops-kubernetes-apps/pull/3953), [apps#3956](https://github.com/ppat/homelab-ops-kubernetes-apps/pull/3956)) was validated under it. [ot#25](https://github.com/ppat/obsidian-tools/issues/25) stays deferred: the position adopts its two-suite role split, not its consolidation proposals. Standing measurement [2026-09-02]: the suite has booted the real Obsidian image in kind and asserted it Ready since [apps#3462](https://github.com/ppat/homelab-ops-kubernetes-apps/pull/3462) (2026-07-29; the feared cost basis was a stale estimate inherited from the abandoned base image — the real one is 282 MB, ~9 s pull), and the MCP tier proves out with no Obsidian behind it. **Still open:** the sole-control NetworkPolicy kind cannot exercise — untouched by the position and still parked |
 | **The NetworkPolicy packet test** | Confidence in a sole control | Reopened on new evidence and re-parked on a smaller residual [measured 2026-09-02]: cluster-level enforcement is packet-proven by another project's standing probe on the same cluster; what remains config-level is the vault namespace's own policy objects — see the [verification catalogue](./docs/VERIFICATIONS.md) |
 | **[D5](#group-d--operability)'s outcome assignment** ([S1](./USE_CASES.md#s1--admitted) vs [O2](./USE_CASES.md#o2--survives-its-failure-modes)) | Bookkeeping only | Flagged as arguable, held at [S1](./USE_CASES.md#s1--admitted) |
 
