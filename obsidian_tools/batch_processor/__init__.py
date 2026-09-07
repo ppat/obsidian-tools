@@ -16,7 +16,7 @@ decision can be made:
 | Stale-reject, whole chunk, before any write lands | ADR-0048 | `preflight.py` |
 | `05-raw/` create-only, in this processor's own code | ADR-0015 | `preflight.py` |
 | Backpressure keyed on promotion-stream depth, not MCP health | ADR-0022 | `fairness.py` |
-| Re-enable the agent handle if this processor dies mid-run | ADR-0022, unit D4 | `watchdog.py` |
+| Start the agent MCP instance if this processor dies mid-run | ADR-0052, unit D4 | `watchdog.py` |
 
 Split pure/impure the way `local_replicator/drift.py` is split from `cycle.py`:
 
@@ -24,9 +24,9 @@ Split pure/impure the way `local_replicator/drift.py` is split from `cycle.py`:
 | --- | --- |
 | `envelope.py` — what an MCP response means | `mcp_client.py` — the one seam onto the gated path |
 | `preflight.py` — apply-or-reject, per chunk | `consumer.py` — the one seam onto JetStream |
-| `patching.py` — the diff, applied; the writes, planned | `agent_handle.py` — the one seam onto the gateway |
+| `patching.py` — the diff, applied; the writes, planned | `agent_instance.py` — the one seam onto the cluster |
 | `fairness.py` — yield-or-proceed, dead-letter-or-redeliver | `processor.py` — one batch run |
-| `watchdog.py` — re-enable or leave alone | |
+| `watchdog.py` — start, release or leave alone | |
 
 **The admission validator is a named absence, not an oversight.** A chunk entering curated space
 should cross ADR-0007's schema and provenance gate, and the roadmap records that dependency

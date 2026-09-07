@@ -1,6 +1,6 @@
 """The stdlib HTTP plumbing both of this component's HTTP seams sit on.
 
-`mcp_client.py` (the gated MCP path) and `agent_handle.py` (the gateway's key API) each carry a
+`mcp_client.py` (the gated MCP path) and `agent_instance.py` (the Kubernetes API) each carry a
 bearer credential that grants real authority, and each needs the same three things: TLS whose
 verification is a deliberate per-connection choice, a refusal to follow redirects, and a response
 delivered as status plus body rather than as an exception. Those are properties of the connection,
@@ -9,7 +9,8 @@ behind `GitRunner` (ADR-0046), applied at a smaller scale.
 
 **Never follow a redirect.** Both credentials are bearer tokens sent on every request; a redirect
 would let one response retarget the next request, sending the token somewhere the configuration
-never named. Neither endpoint has any legitimate reason to issue one.
+never named. Neither endpoint has any legitimate reason to issue one, and one of the two tokens is a
+service-account token the API server would honour from anywhere it was replayed.
 
 Stdlib `urllib`, deliberately, matching `vault_exporter/client.py` and `vault_git/known_hosts.py`:
 `pyproject.toml`'s runtime dependency list is spent one entry at a time, and a bearer header, a
@@ -59,13 +60,19 @@ class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
         )
 
 
-def build_opener(verify_tls: bool) -> urllib.request.OpenerDirector:
+def build_opener(verify_tls: bool, *, ca_path: str | None = None) -> urllib.request.OpenerDirector:
     """An opener that refuses redirects and verifies TLS unless told otherwise.
 
     `verify_tls=False`'s effect is scoped to this opener's own `SSLContext` and never touches
     global `ssl` state.
+
+    `ca_path` replaces the system trust store rather than adding to it, which is the point for the
+    Kubernetes API server: its certificate is signed by the cluster's own CA, which no public store
+    knows, and trusting that CA *alongside* the public roots would leave the connection satisfied by
+    any publicly-issued certificate for the same name. An unreadable or malformed file fails here,
+    at construction, rather than on the first request.
     """
-    context = ssl.create_default_context()
+    context = ssl.create_default_context(cafile=ca_path)
     if not verify_tls:
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE

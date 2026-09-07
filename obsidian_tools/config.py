@@ -9,6 +9,7 @@ rather than each subcommand growing its own ad hoc environment parsing.
 from __future__ import annotations
 
 import os
+import socket
 from dataclasses import dataclass
 
 from obsidian_tools.batch_processor.fairness import subjects_overlap
@@ -333,37 +334,75 @@ class VaultExporterConfig:
         )
 
 
-@dataclass(frozen=True, slots=True)
-class AgentHandleConfig:
-    """How to reach the gateway handle a batch run turns off, and which handle that is.
+# Where a Kubernetes workload's projected service-account credentials are mounted. Overridable
+# below only so the test suite can point at files it wrote; nothing in a manifest should need to.
+DEFAULT_SERVICE_ACCOUNT_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
 
-    Its own dataclass rather than the same five fields duplicated into two configs, because
+
+@dataclass(frozen=True, slots=True)
+class AgentInstanceConfig:
+    """Which agent MCP instance a batch run stops, which lease says so, and how to reach the
+    cluster's API to do either.
+
+    Its own dataclass rather than the same fields duplicated into two configs, because
     `batch-processor` and its watchdog are separate processes on separate schedules that must agree,
-    to the character, on which handle they mean — one disabling a handle the other is not watching
-    is exactly the silent, indefinite outage unit D4 exists to close. Composed into both rather than
-    inherited by either, matching how nothing else in this file uses subclassing.
+    to the character, on which objects they mean — one stopping an instance the other is not
+    watching is exactly the silent, indefinite outage unit D4 exists to close. Composed into both
+    rather than inherited by either, matching how nothing else in this file uses subclassing.
     """
 
-    gateway_url: str
-    # The gateway's own management credential, never the handle's. Distinct because neither
-    # component ever *uses* the agent handle — they only turn it off and on — and conflating the two
-    # would hand a batch run the agent handle's reach on top of the ingestor handle's.
-    gateway_admin_key: str
-    # Whatever the gateway's key API accepts as a key identifier. It names the handle and
-    # authenticates nothing.
-    agent_handle_key: str
-    gateway_timeout_seconds: float
-    gateway_verify_tls: bool
+    api_url: str
+    # All three required with no default, for the reason the MCP tool names are: each must equal the
+    # `resourceNames` entry in the RBAC grant character for character (ADR-0052 narrows that grant
+    # to the agent instance alone), and a default that disagreed with the grant would present as a
+    # 403 at the first call of every run rather than as a missing setting.
+    namespace: str
+    deployment: str
+    lease_name: str
+    # Who the lease says holds the door. `concurrencyPolicy: Forbid` prevents a second *scheduled*
+    # run, never a hand-run Job, so this is the only thing that makes an overlap visible.
+    holder_identity: str
+    token_path: str
+    # `None` disables the CA override, which is only ever right off-cluster; in-cluster the API
+    # server's certificate is signed by a CA no public trust store knows.
+    ca_path: str | None
+    timeout_seconds: float
+    verify_tls: bool
 
     @classmethod
-    def from_env(cls) -> AgentHandleConfig:
+    def from_env(cls) -> AgentInstanceConfig:
         return cls(
-            gateway_url=require_env("BATCH_GATEWAY_URL"),
-            gateway_admin_key=require_env("BATCH_GATEWAY_ADMIN_KEY"),
-            agent_handle_key=require_env("BATCH_AGENT_HANDLE_KEY"),
-            gateway_timeout_seconds=get_env_float("BATCH_GATEWAY_TIMEOUT_SECONDS", 10.0),
-            gateway_verify_tls=get_env_bool("BATCH_GATEWAY_VERIFY_TLS", True),
+            api_url=get_env("BATCH_KUBERNETES_API_URL", "") or _in_cluster_api_url(),
+            namespace=require_env("BATCH_AGENT_INSTANCE_NAMESPACE"),
+            deployment=require_env("BATCH_AGENT_INSTANCE_DEPLOYMENT"),
+            lease_name=require_env("BATCH_AGENT_INSTANCE_LEASE"),
+            # The pod's own name under the downward API, and the container's hostname without one.
+            # Either identifies the run well enough to answer "which one is holding this".
+            holder_identity=get_env("BATCH_RUN_IDENTITY", "") or socket.gethostname(),
+            token_path=get_env("BATCH_KUBERNETES_TOKEN_PATH", f"{DEFAULT_SERVICE_ACCOUNT_DIR}/token"),
+            ca_path=get_env("BATCH_KUBERNETES_CA_PATH", f"{DEFAULT_SERVICE_ACCOUNT_DIR}/ca.crt") or None,
+            timeout_seconds=get_env_float("BATCH_KUBERNETES_TIMEOUT_SECONDS", 10.0),
+            verify_tls=get_env_bool("BATCH_KUBERNETES_VERIFY_TLS", True),
         )
+
+
+def _in_cluster_api_url() -> str:
+    """The API server as the kubelet advertises it to every pod.
+
+    Not the `kubernetes.default.svc` name: these two variables are injected into every container in
+    the namespace and are the one address that works before any DNS resolver does — which matters
+    for a watchdog whose whole job is to run when other things are broken.
+    """
+    host = os.environ.get("KUBERNETES_SERVICE_HOST")
+    port = os.environ.get("KUBERNETES_SERVICE_PORT", "443")
+    if not host:
+        raise ConfigError(
+            "KUBERNETES_SERVICE_HOST is not set and BATCH_KUBERNETES_API_URL does not name an API server; "
+            "this component only runs in-cluster"
+        )
+    # A bare IPv6 literal is not a valid URL host without brackets, and the kubelet injects one
+    # unbracketed on dual-stack clusters.
+    return f"https://[{host}]:{port}" if ":" in host else f"https://{host}:{port}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -415,8 +454,8 @@ class BatchProcessorConfig:
     backoff_max_delay_seconds: float
     backoff_jitter_fraction: float
     # Bounds one specific wait, never the run: an undrained promotion stream would otherwise hold
-    # the agent handle down indefinitely. ADR-0022's maximum run duration is a different mechanism
-    # in a different ticket (ot#89).
+    # the agent instance stopped indefinitely. ADR-0022's maximum run duration is a different
+    # mechanism in a different ticket (ot#89).
     max_consecutive_yields: int
     mcp_url: str
     # Carries this component's write scope, the widest in the system. Never logged, never echoed in
@@ -440,7 +479,7 @@ class BatchProcessorConfig:
     # (before every chunk and every yield), never against how long a chunk takes: it is a liveness
     # signal, not a run budget.
     lease_ttl_seconds: float
-    agent_handle: AgentHandleConfig
+    agent_instance: AgentInstanceConfig
 
     @classmethod
     def from_env(cls) -> BatchProcessorConfig:
@@ -484,22 +523,24 @@ class BatchProcessorConfig:
             mcp_retries=get_env_int("BATCH_MCP_RETRIES", 3),
             raw_layer_prefix=get_env("BATCH_RAW_LAYER_PREFIX", DEFAULT_RAW_LAYER_PREFIX),
             lease_ttl_seconds=get_env_float("BATCH_LEASE_TTL_SECONDS", 300.0),
-            agent_handle=AgentHandleConfig.from_env(),
+            agent_instance=AgentInstanceConfig.from_env(),
         )
 
 
 @dataclass(frozen=True, slots=True)
 class WatchdogConfig:
-    """Configuration for the `watch-agent-handle` subcommand — unit D4's non-deferrable half.
+    """Configuration for the `watch-agent-instance` subcommand — unit D4's non-deferrable half.
 
-    Nothing but the handle. Giving the watchdog the processor's broker and MCP configuration would
+    Nothing but the instance. Giving the watchdog the processor's broker and MCP configuration would
     make it require an environment it has no use for — `DrainConfig`'s argument for not being a
     slice of `ReplicateConfig`, and here it is stronger: what the watchdog watches is precisely the
-    thing that may be broken, so it must not depend on any of it to start.
+    thing that may be broken, so it must not depend on any of it to start. What it does depend on
+    is the cluster's own API, which is the one dependency this mechanism trades for the previous
+    one's (ADR-0052).
     """
 
-    agent_handle: AgentHandleConfig
+    agent_instance: AgentInstanceConfig
 
     @classmethod
     def from_env(cls) -> WatchdogConfig:
-        return cls(agent_handle=AgentHandleConfig.from_env())
+        return cls(agent_instance=AgentInstanceConfig.from_env())
