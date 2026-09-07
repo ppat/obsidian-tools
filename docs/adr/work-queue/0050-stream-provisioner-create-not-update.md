@@ -53,9 +53,10 @@ introduces no credential the processor does not already need.
   the stream with it and nothing re-creates it; the queue is then absent, and the first symptom is
   a producer's publish failing.
 - **Folding provisioning into the batch-mode watchdog.** The watchdog's entire value is that it
-  depends on nothing `batch-processor` depends on — it restores the agent handle when the processor
-  has died, so a watchdog that needs the broker fails in the conditions it exists to survive. A
-  NATS dependency there removes the property [D4](../../../ROADMAP.md#group-d--operability) is for.
+  depends on nothing `batch-processor` depends on — it starts the agent MCP instance again when the
+  processor has died (ADR-0052), so a watchdog that needs the broker fails in the conditions it
+  exists to survive. A NATS dependency there removes the property
+  [D4](../../../ROADMAP.md#group-d--operability) is for.
 - **Granting the provisioner stream update, to reconcile stream configuration the way manifests
   reconcile everything else.** It buys convergence on a change that is rare and deliberate, and it
   costs the single largest authority in the write path: the component with the widest write scope
