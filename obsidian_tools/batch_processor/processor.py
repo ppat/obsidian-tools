@@ -3,24 +3,28 @@ the clock, and the order the named steps happen in.
 
 ## The run, and why it is a run rather than a loop
 
-A run disables the agent handle, drains the batch stream until it is empty, and re-enables the
-handle. That shape is what makes ADR-0022's triggering policy expressible without any code of its
-own: "at least once a day whenever non-empty, inside a permitted window" is a schedule, and "only
-when the stream has work" falls out of an empty stream costing exactly one fetch before the run
-exits. The one thing a schedule cannot express — that the handle must come back even if this
+A run stops the agent MCP instance, drains the batch stream until it is empty, and starts the
+instance again. That shape is what makes ADR-0022's triggering policy expressible without any code
+of its own: "at least once a day whenever non-empty, inside a permitted window" is a schedule, and
+"only when the stream has work" falls out of an empty stream costing exactly one fetch before the
+run exits. The one thing a schedule cannot express — that the instance must come back even if this
 process does not — is the watchdog's job (`watchdog.py`), not this file's.
 
-## Ordering, three places it is load-bearing
+## Ordering, four places it is load-bearing
 
-- **Both connections are opened before the handle goes down.** A broker or MCP outage then fails
+- **Both connections are opened before the instance goes down.** A broker or MCP outage then fails
   the run with agents still able to write, rather than blocking every interactive writer to
   discover the batch could not have run anyway.
+- **Inside `begin_run` the lease is taken before the stop, and inside `end_run` the instance is
+  started before the lease is released.** Both live in `agent_instance.py`, in one place rather than
+  restated here, because that pair is the whole reason "stopped with no lease" stays an operator's
+  own hold. A crash between either pair leaves the instance *running*.
 - **The lease is renewed before each chunk, and while yielding.** Renewing after would let a long
   chunk look like a death; not renewing during a yield would let fairness itself trip the watchdog.
-- **`end_run` is in a `finally`, and its own failure is logged rather than raised.** If the gateway
-  is unreachable at the end of a run, the handle stays down — and that is precisely the state the
-  watchdog exists to recover, so the correct behaviour here is to say so loudly and let the lease
-  expire, never to retry into the exit path.
+- **`end_run` is in a `finally`, and its own failure is logged rather than raised.** If the API
+  server is unreachable at the end of a run, the instance stays stopped — and that is precisely the
+  state the watchdog exists to recover, so the correct behaviour here is to say so loudly and let
+  the lease expire, never to retry into the exit path.
 
 ## What settles a chunk, and why the four verdicts are not interchangeable
 
@@ -110,7 +114,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from obsidian_tools.batch_processor.agent_handle import AgentHandleClient, AgentHandleError, build_handle_client
+from obsidian_tools.batch_processor.agent_instance import (
+    AgentInstanceClient,
+    AgentInstanceError,
+    build_instance_client,
+)
 from obsidian_tools.batch_processor.consumer import BatchConsumer, BatchConsumerError, DeliveredChunk
 from obsidian_tools.batch_processor.dependency import created_paths, referenced_blocked_paths
 from obsidian_tools.batch_processor.fairness import (
@@ -126,7 +134,6 @@ from obsidian_tools.batch_processor.mcp_client import (
 )
 from obsidian_tools.batch_processor.patching import PatchError, PlannedWrite, WriteKind, already_applied, plan_writes
 from obsidian_tools.batch_processor.preflight import assess_chunk, observed_state
-from obsidian_tools.batch_processor.watchdog import lease_expiry
 from obsidian_tools.batch_producer.chunk import Chunk, ChunkFormatError, chunk_id, decode_chunk
 from obsidian_tools.config import BatchProcessorConfig
 from obsidian_tools.logging_config import LOG_PATH_SAMPLE_LIMIT
@@ -152,16 +159,16 @@ def run(config: BatchProcessorConfig) -> int:
 # --- the named steps a crash can be injected between --------------------------------------------
 
 
-async def begin_run(handle: AgentHandleClient, config: BatchProcessorConfig) -> None:
-    await asyncio.to_thread(handle.begin_batch_run, lease_expiry(datetime.now(tz=UTC), config.lease_ttl_seconds))
+async def begin_run(instance: AgentInstanceClient, config: BatchProcessorConfig) -> None:
+    await asyncio.to_thread(instance.begin_batch_run, datetime.now(tz=UTC), config.lease_ttl_seconds)
 
 
-async def renew_run(handle: AgentHandleClient, config: BatchProcessorConfig) -> None:
-    await asyncio.to_thread(handle.renew_lease, lease_expiry(datetime.now(tz=UTC), config.lease_ttl_seconds))
+async def renew_run(instance: AgentInstanceClient, config: BatchProcessorConfig) -> None:
+    await asyncio.to_thread(instance.renew_lease, datetime.now(tz=UTC))
 
 
-async def end_run(handle: AgentHandleClient) -> None:
-    await asyncio.to_thread(handle.end_batch_run)
+async def end_run(instance: AgentInstanceClient) -> None:
+    await asyncio.to_thread(instance.end_batch_run)
 
 
 async def read_targets(mcp: McpClient, chunk: Chunk) -> dict[str, str | None]:
@@ -232,7 +239,7 @@ async def _run(config: BatchProcessorConfig) -> int:
         retries=config.mcp_retries,
         retry_base_delay_seconds=config.backoff_base_delay_seconds,
     )
-    handle = build_handle_client(config.agent_handle)
+    instance = build_instance_client(config.agent_instance)
     consumer = BatchConsumer(
         servers=config.nats_url,
         user=config.nats_user,
@@ -251,23 +258,23 @@ async def _run(config: BatchProcessorConfig) -> int:
     # Both connections first: see "Ordering" in the module docstring.
     await asyncio.to_thread(mcp.connect)
     async with consumer:
-        await begin_run(handle, config)
+        await begin_run(instance, config)
         try:
-            counts = await _drain(config, consumer, mcp, handle)
+            counts = await _drain(config, consumer, mcp, instance)
         finally:
             try:
-                await end_run(handle)
-            except AgentHandleError:
+                await end_run(instance)
+            except AgentInstanceError:
                 logger.exception(
-                    "could not re-enable the agent handle; the watchdog's lease is now the only thing that will",
-                    extra={"event": "agent_handle_stuck"},
+                    "could not start the agent MCP instance; the watchdog's lease is now the only thing that will",
+                    extra={"event": "agent_instance_stuck"},
                 )
     logger.info("batch run complete", extra={"event": "batch_run_complete", **counts})
     return EXIT_FAILED if counts["dead_lettered"] else EXIT_OK
 
 
 async def _drain(
-    config: BatchProcessorConfig, consumer: BatchConsumer, mcp: McpClient, handle: AgentHandleClient
+    config: BatchProcessorConfig, consumer: BatchConsumer, mcp: McpClient, instance: AgentInstanceClient
 ) -> Counter[str]:
     counts: Counter[str] = Counter({"applied": 0, "already_applied": 0, "rejected": 0, "dead_lettered": 0, "yields": 0})
     consecutive_yields = 0
@@ -300,7 +307,7 @@ async def _drain(
                     # Not ADR-0022's maximum run duration (ot#89): this bounds one specific wait,
                     # for one specific condition that is not clearing. Unbounded, a promotion
                     # stream that never drains — because its own processor is down — would hold the
-                    # agent handle disabled indefinitely, which is the outage the watchdog exists
+                    # agent instance stopped indefinitely, which is the outage the watchdog exists
                     # to end, arrived at by this component's own patience.
                     logger.warning(
                         "ending the run: the promotion stream has not drained",
@@ -317,7 +324,7 @@ async def _drain(
                         "consecutive_yields": consecutive_yields,
                     },
                 )
-                await renew_run(handle, config)
+                await renew_run(instance, config)
                 await asyncio.sleep(decision.delay_seconds)
                 continue
 
@@ -326,7 +333,7 @@ async def _drain(
         if delivered is None:
             await _record_what_is_left(consumer, counts)
             return counts
-        await renew_run(handle, config)
+        await renew_run(instance, config)
         await _process(config, consumer, mcp, delivered, counts, blocked)
 
 

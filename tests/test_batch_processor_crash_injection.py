@@ -8,16 +8,28 @@ substantially the same bugs as an exhaustive syscall-level fault injector at a f
 and because this project does not mock, so a finer injector here would mean faking NATS and HTTP
 internals.
 
-**A killed process runs no `finally`, and modelling that is the whole point.** `_run` re-enables the
-agent handle in a `finally`, so a stub that merely raises would model an *orderly* shutdown: the
-handle would come back on its own and every watchdog assertion below would pass while proving
-nothing. `_crash_at` therefore neutralises `end_run` as well, which is what makes the handle stay
-down exactly as it would after a SIGKILL, an OOM kill, or a lost node.
+**A killed process runs no `finally`, and modelling that is the whole point.** `_run` starts the
+agent MCP instance again in a `finally`, so a stub that merely raises would model an *orderly*
+shutdown: the instance would come back on its own and every watchdog assertion below would pass while
+proving nothing. `_crash_at` therefore neutralises `end_run` as well, which is what makes the
+instance stay stopped exactly as it would after a SIGKILL, an OOM kill, or a lost node.
+
+**Two of the seams are inside the instance seam rather than the orchestration, and deliberately.**
+ADR-0052 replaces atomicity with ordering: the lease is taken before the stop and the instance is
+started before the release, so that every interruption leaves the instance *running*. The only
+points where that claim could be false are between each ordered pair, so a kill is injected at
+exactly those two points — `stop_instance` (after the lease is held, before anything is stopped) and
+`release_lease` (after the instance is running again, before the lease is dropped). Injecting them
+in `processor.py` instead would have meant restating the ordering there, which is to say keeping the
+system's most load-bearing invariant in two places.
+
+The `release_lease` seam is the one that must *not* neutralise `end_run`: the whole point is to reach
+a kill on the second half of that call, so the first half has to really happen.
 
 **Every invariant is read off the broker and the vault, never off the model.** The model tracks only
 what cannot be re-derived: which chunks were published and what content each one would produce. What
-is pending, what was dead-lettered, what the vault holds and whether the handle is down are all read
-back live, each time.
+is pending, what was dead-lettered, what the vault holds and whether the instance is stopped are all
+read back live, each time.
 """
 
 from __future__ import annotations
@@ -50,16 +62,26 @@ from test_batch_processor_stream import (
 from vault_stub import TOOL_WRITE, FakeVault, running_vault
 
 from obsidian_tools.batch_processor import processor
-from obsidian_tools.batch_processor.agent_handle import build_handle_client, run_watchdog_once
+from obsidian_tools.batch_processor.agent_instance import (
+    AgentInstanceClient,
+    build_instance_client,
+    run_watchdog_once,
+)
 from obsidian_tools.batch_processor.watchdog import WatchdogVerdict
 from obsidian_tools.config import BatchProcessorConfig
 
 _PORT = 14224
 
-# The named collaborators `processor.py` calls by their own module-level names. A crash at each
-# models a kill at that exact point: everything before it really happened, everything after it never
-# runs at all.
-_CRASH_SEAMS = ("read_targets", "apply_writes", "settle")
+# Where a kill is injected, and on what. A crash at each models a kill at that exact point:
+# everything before it really happened, everything after it never runs at all. The first three are
+# the named collaborators `processor.py` calls by their own module-level names; the last two are the
+# two halves of ADR-0052's ordering, which live in the instance seam — see the module docstring.
+_DRAIN_SEAMS = ("read_targets", "apply_writes", "settle")
+_ORDERING_SEAMS = ("stop_instance", "release_lease")
+_CRASH_SEAMS = (*_DRAIN_SEAMS, *_ORDERING_SEAMS)
+
+# The one seam reached *through* `end_run`, so neutralising `end_run` would put it out of reach.
+_SEAM_INSIDE_THE_EXIT_PATH = "release_lease"
 
 _broker_url = ""
 
@@ -69,15 +91,22 @@ class _SimulatedCrash(RuntimeError):
     anywhere in `obsidian_tools`, only here."""
 
 
-def _crash_at(seam: str) -> tuple[object, object]:
-    """Replace `seam` with a stub that raises before doing any real work, and neutralise `end_run`.
+def _target(seam: str) -> object:
+    """Where the seam lives. Ordering seams are methods on the instance client, drain seams are
+    module-level names in `processor.py`."""
+    return AgentInstanceClient if seam in _ORDERING_SEAMS else processor
 
-    Returning both originals rather than one is not tidiness: see the module docstring — leaving the
-    real `end_run` in place would model a clean shutdown and quietly invalidate every watchdog
-    assertion in this file.
+
+def _crash_at(seam: str) -> tuple[object, object | None]:
+    """Replace `seam` with a stub that raises before doing any real work, and — unless the seam is
+    reached through it — neutralise `end_run`.
+
+    Returning the `end_run` original rather than only the seam's is not tidiness: see the module
+    docstring — leaving the real `end_run` in place would model a clean shutdown and quietly
+    invalidate every watchdog assertion in this file.
     """
-    original_seam = getattr(processor, seam)
-    original_end = processor.end_run
+    target = _target(seam)
+    original_seam = getattr(target, seam)
 
     def raise_crash(*_args: object, **_kwargs: object) -> None:
         raise _SimulatedCrash(seam)
@@ -85,14 +114,18 @@ def _crash_at(seam: str) -> tuple[object, object]:
     async def no_shutdown(*_args: object, **_kwargs: object) -> None:
         return None
 
-    setattr(processor, seam, raise_crash)
+    setattr(target, seam, raise_crash)
+    if seam == _SEAM_INSIDE_THE_EXIT_PATH:
+        return original_seam, None
+    original_end = processor.end_run
     processor.end_run = no_shutdown  # type: ignore[assignment]
     return original_seam, original_end
 
 
-def _restore(seam: str, originals: tuple[object, object]) -> None:
-    setattr(processor, seam, originals[0])
-    processor.end_run = originals[1]  # type: ignore[assignment]
+def _restore(seam: str, originals: tuple[object, object | None]) -> None:
+    setattr(_target(seam), seam, originals[0])
+    if originals[1] is not None:
+        processor.end_run = originals[1]  # type: ignore[assignment]
 
 
 def run_until_crash(config: BatchProcessorConfig, seam: str) -> None:
@@ -136,7 +169,7 @@ def watchdog_pass(config: BatchProcessorConfig, *, after_the_lease: bool = True)
     """One watchdog run. The clock is moved past the lease rather than the lease being shortened,
     so the thing under test is the decision rather than a configuration that made it inevitable."""
     offset = timedelta(seconds=config.lease_ttl_seconds + 1) if after_the_lease else timedelta(0)
-    return run_watchdog_once(build_handle_client(config.agent_handle), datetime.now(tz=UTC) + offset)
+    return run_watchdog_once(build_instance_client(config.agent_instance), datetime.now(tz=UTC) + offset)
 
 
 # --- the deterministic catalogue row --------------------------------------------------------------
@@ -163,21 +196,21 @@ def tag(broker: str) -> str:
     return marker
 
 
-@pytest.mark.parametrize("seam", _CRASH_SEAMS)
-def test_a_kill_mid_run_redelivers_the_chunk_and_the_watchdog_reopens_the_handle(
+@pytest.mark.parametrize("seam", _DRAIN_SEAMS)
+def test_a_kill_mid_run_redelivers_the_chunk_and_the_watchdog_restarts_the_instance(
     broker: str, vault: FakeVault, tag: str, seam: str
 ) -> None:
     """`docs/VERIFICATIONS.md`'s pending A2+D4 row, injected: kill `batch-processor` mid-run, and
-    both halves must hold — the chunk comes back, and the agent handle comes back.
+    both halves must hold — the chunk comes back, and the agent MCP instance comes back.
 
     Red in three separate ways, each of which is a different production incident:
 
     - if the killed run had acked or terminated the chunk before applying it, the work is gone and
       nothing says so;
-    - if the handle were left down with no lease, the watchdog is required to read that as an
-      operator's own hold and leave it, so every agent write in the system stops indefinitely;
-    - if the watchdog re-enabled without the lease having expired, it would open agent writes in the
-      middle of a live run.
+    - if the instance were left stopped with no lease, the watchdog is required to read that as an
+      operator's own hold and leave it, so every interactive write in the system stops indefinitely;
+    - if the watchdog restarted without the lease having expired, it would open interactive writes
+      in the middle of a live run.
 
     `ack_wait` is short here because it is the *only* thing that brings the chunk back: a killed
     process leaves the message delivered-but-unsettled, and the broker withholds it from every later
@@ -189,10 +222,11 @@ def test_a_kill_mid_run_redelivers_the_chunk_and_the_watchdog_reopens_the_handle
 
     run_until_crash(config, seam)
 
-    assert vault.handle_blocked is True, "a killed run leaves the agent handle down; that is the failure"
+    assert vault.agent_replicas == 0, "a killed run leaves the agent instance stopped; that is the failure"
     assert watchdog_pass(config, after_the_lease=False) is WatchdogVerdict.PROCESSOR_HOLDS_THE_LEASE
-    assert watchdog_pass(config) is WatchdogVerdict.RE_ENABLE
-    assert vault.handle_blocked is False
+    assert watchdog_pass(config) is WatchdogVerdict.RESTART_INSTANCE
+    assert vault.agent_replicas == 1
+    assert vault.lease == {}, "restarting the instance drops the lease with it"
 
     assert pending_on_the_batch_stream(config) == 1
     assert processor.run(config) == 0
@@ -252,6 +286,56 @@ def test_a_drained_stream_reports_nothing_left(
     assert getattr(complete, "left_pending", None) == 0
 
 
+def test_a_kill_between_taking_the_lease_and_stopping_leaves_the_instance_running(
+    broker: str, vault: FakeVault, tag: str
+) -> None:
+    """ADR-0052's ordering, injected at the one point it could be false. The lease is taken first
+    precisely so that a kill in this window leaves nothing stopped.
+
+    Red if the two writes were reversed. The instance would sit at zero replicas holding no lease —
+    the state the watchdog is required to read as an operator's own hold and leave exactly as found,
+    forever. Every interactive write in the system would stop, and no scheduled thing in the system
+    would ever notice. That is *worse* than the outage the watchdog exists to end, because it is the
+    one the watchdog is designed not to touch.
+
+    The debris left behind is the live lease, which the next pass past its deadline drops.
+    """
+    config = config_for(broker, vault, tag, ack_wait_seconds=1.0)
+    publish(broker, tag, chunk_of(*creating("10-areas/x.md", "one\n")))
+
+    run_until_crash(config, "stop_instance")
+
+    assert vault.agent_replicas == 1, "the lease is taken before the stop, so a kill here stops nothing"
+    assert vault.lease.get("holderIdentity") is not None
+    assert watchdog_pass(config) is WatchdogVerdict.RELEASE_STALE_LEASE
+    assert vault.agent_replicas == 1
+    assert vault.lease == {}
+    assert vault.notes == {}, "the run never reached the stream"
+
+
+def test_a_kill_between_starting_the_instance_and_releasing_the_lease_leaves_it_running(
+    broker: str, vault: FakeVault, tag: str
+) -> None:
+    """The same claim at the other end of the run, and the only crash seam deliberately reached
+    *through* `end_run` rather than around it — the start has to really happen for the kill to land
+    where it matters.
+
+    Red if the two writes were reversed: a kill in that window ends the run with the instance still
+    at zero and its lease already gone, which is again the operator's-hold state nothing recovers
+    from. Red equally if the chunk's own work were lost — the crash is in the exit path, after the
+    stream was drained.
+    """
+    config = config_for(broker, vault, tag, ack_wait_seconds=1.0)
+    publish(broker, tag, chunk_of(*creating("10-areas/x.md", "one\n")))
+
+    run_until_crash(config, "release_lease")
+
+    assert vault.agent_replicas == 1, "the instance is started before the lease is released"
+    assert vault.written("10-areas/x.md") == "one\n"
+    assert watchdog_pass(config) is WatchdogVerdict.RELEASE_STALE_LEASE
+    assert vault.lease == {}
+
+
 def test_a_kill_before_the_writes_leaves_the_vault_untouched(broker: str, vault: FakeVault, tag: str) -> None:
     """The pre-flight reads happen before any write, so a kill between them changes nothing. Red if
     reads and writes were ever interleaved per target — the chunk could then half-apply and be
@@ -287,7 +371,7 @@ class CrashInjectionMachine(RuleBasedStateMachine):
 
         # Model state, and deliberately only this: what content each published chunk would produce
         # if applied. Everything else -- what is pending, what was parked, what the vault holds, and
-        # whether the handle is down -- is read back off the broker and the stub each time.
+        # whether the instance is stopped -- is read back off the broker and the stub each time.
         self.legal_contents: dict[str, set[str]] = {}
         self.published = 0
 
@@ -351,13 +435,17 @@ class CrashInjectionMachine(RuleBasedStateMachine):
             )
 
     @invariant()
-    def a_watchdog_pass_never_leaves_the_handle_down(self) -> None:
+    def a_watchdog_pass_never_leaves_the_instance_stopped(self) -> None:
         """Unit D4's guarantee, checked after every step rather than only after a crash: run the
-        watchdog with the clock past any lease, and agent writes must be open. Red if any sequence
-        of crashes reaches a state the watchdog cannot recover from — which is the silent,
-        indefinite outage the component exists to make impossible."""
+        watchdog with the clock past any lease, and interactive writes must be open. Red if any
+        sequence of crashes reaches a state the watchdog cannot recover from — which is the silent,
+        indefinite outage the component exists to make impossible.
+
+        This is also where the ordering claim is checked against *sequences* rather than against one
+        kill: a crash between either ordered pair leaves debris, and a later crash on top of that
+        debris must still converge here."""
         watchdog_pass(self.config)
-        assert self.vault.handle_blocked is False
+        assert self.vault.agent_replicas > 0
 
     @invariant()
     def no_published_chunk_is_ever_unaccounted_for(self) -> None:

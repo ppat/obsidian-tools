@@ -24,12 +24,24 @@ from nats.aio.client import Client
 from nats.js import JetStreamContext
 from nats.js.api import ConsumerConfig, StreamConfig
 from nats_harness import running_broker
-from vault_stub import TOOL_DELETE, TOOL_READ, TOOL_WRITE, FakeVault, running_vault
+from vault_stub import (
+    DEPLOYMENT,
+    LEASE,
+    LEASE_PATH,
+    NAMESPACE,
+    SCALE_PATH,
+    TOKEN_PATH,
+    TOOL_DELETE,
+    TOOL_READ,
+    TOOL_WRITE,
+    FakeVault,
+    running_vault,
+)
 
 from obsidian_tools.batch_processor import processor
 from obsidian_tools.batch_producer.chunk import Chunk, decode_chunk, encode_chunk
 from obsidian_tools.batch_producer.staleness import ChunkTarget, TargetOperation, content_sha256
-from obsidian_tools.config import AgentHandleConfig, BatchProcessorConfig
+from obsidian_tools.config import AgentInstanceConfig, BatchProcessorConfig
 
 _PORT = 14223
 _USER = "streams"
@@ -135,12 +147,16 @@ def config_for(
         mcp_retries=mcp_retries,
         raw_layer_prefix="05-raw/",
         lease_ttl_seconds=300.0,
-        agent_handle=AgentHandleConfig(
-            gateway_url=vault.url,
-            gateway_admin_key="stub-admin",
-            agent_handle_key="stub-handle",
-            gateway_timeout_seconds=5.0,
-            gateway_verify_tls=False,
+        agent_instance=AgentInstanceConfig(
+            api_url=vault.url,
+            namespace=NAMESPACE,
+            deployment=DEPLOYMENT,
+            lease_name=LEASE,
+            holder_identity=f"stub-run-{tag}",
+            token_path=TOKEN_PATH,
+            ca_path=None,
+            timeout_seconds=5.0,
+            verify_tls=False,
         ),
     )
 
@@ -293,29 +309,54 @@ def test_chunks_apply_in_the_order_the_stream_delivered_them(broker: str, vault:
     assert dead_letters(broker, streams) == []
 
 
-def test_the_agent_handle_is_down_for_every_write_and_back_up_afterwards(
+def test_the_agent_instance_is_stopped_for_every_write_and_running_afterwards(
     broker: str, vault: FakeVault, streams: str
 ) -> None:
-    """ "Batch mode is exactly which handle is enabled" (ADR-0022), injected: the handle's state is
-    sampled *at* each write rather than after the run. Red if the handle were never disabled — bulk
-    would run alongside the interactive writers it exists to exclude — and equally red if it were
-    left down, which is the silent, indefinite outage unit D4's watchdog exists to end."""
+    """ "Batch mode is which of the two instances is running" (ADR-0052), injected: the instance's
+    desired replica count is sampled *at* each write rather than after the run. Red if the instance
+    were never stopped — bulk would run alongside the interactive writers it exists to exclude — and
+    equally red if it were left stopped, which is the silent, indefinite outage unit D4's watchdog
+    exists to end."""
     publish(broker, streams, chunk_of(*creating("10-areas/x.md", "one\n")))
 
     processor.run(config_for(broker, vault, streams))
 
-    assert vault.handle_state_during_writes == [True]
-    assert vault.handle_blocked is False
+    assert vault.agent_replicas_during_writes == [0]
+    assert vault.agent_replicas == 1
 
 
-def test_an_empty_stream_applies_nothing_and_restores_the_handle(broker: str, vault: FakeVault, streams: str) -> None:
+def test_a_run_takes_the_lease_before_stopping_and_starts_before_releasing(
+    broker: str, vault: FakeVault, streams: str
+) -> None:
+    """ADR-0052's ordering, read off the wire rather than off the code: the whole reason "stopped
+    with no lease" may be treated as an operator's own hold is that no partial run can produce it.
+
+    Red if either pair were reversed. Reversing the first leaves a run killed between its two writes
+    with the instance at zero and no lease, which the watchdog is required to leave exactly as found
+    — every interactive write in the system stops, permanently. Reversing the second leaves a run
+    killed at the end in the same state. The crash-injection harness proves the same claim by
+    actually being killed there; this one proves it in the ordinary, uninterrupted path, where the
+    mistake would otherwise be invisible because everything still works."""
+    publish(broker, streams, chunk_of(*creating("10-areas/x.md", "one\n")))
+
+    processor.run(config_for(broker, vault, streams))
+
+    patched = [path for method, path in vault.kube_calls if method == "PATCH"]
+    assert patched[0] == LEASE_PATH, "the lease is taken before the instance is stopped"
+    assert patched[1] == SCALE_PATH
+    assert patched[-2] == SCALE_PATH, "the instance is started before the lease is released"
+    assert patched[-1] == LEASE_PATH
+    assert vault.lease == {}, "a finished run leaves no lease behind"
+
+
+def test_an_empty_stream_applies_nothing_and_restarts_the_instance(broker: str, vault: FakeVault, streams: str) -> None:
     """ADR-0022's triggering policy is a schedule plus this. Red if an empty stream cost anything
-    more than one fetch, or left the handle down: a nightly run against an empty queue would block
-    every agent write for as long as it took to notice."""
+    more than one fetch, or left the instance stopped: a nightly run against an empty queue would
+    block every interactive write for as long as it took to notice."""
     assert processor.run(config_for(broker, vault, streams)) == 0
 
     assert vault.calls == []
-    assert vault.handle_blocked is False
+    assert vault.agent_replicas == 1
 
 
 def test_an_applied_chunk_is_not_redelivered_to_a_later_run(broker: str, vault: FakeVault, streams: str) -> None:
@@ -706,7 +747,7 @@ def test_a_deep_promotion_stream_stops_the_batch_before_it_takes_a_chunk(
     which is the starvation the fairness rule — not any health signal — exists to prevent.
 
     Red in the other direction too, and that half matters as much: the run *ends* rather than
-    yielding forever, so an undrained promotion stream cannot hold the agent handle down.
+    yielding forever, so an undrained promotion stream cannot hold the agent instance stopped.
     """
     fill_promotion(broker, streams, 3)
     publish(broker, streams, chunk_of(*creating("10-areas/x.md", "one\n")))
@@ -714,7 +755,7 @@ def test_a_deep_promotion_stream_stops_the_batch_before_it_takes_a_chunk(
     processor.run(config_for(broker, vault, streams, promotion=True, max_consecutive_yields=1))
 
     assert vault.calls == []
-    assert vault.handle_blocked is False
+    assert vault.agent_replicas == 1
 
 
 def test_the_batch_proceeds_once_the_promotion_stream_has_drained(broker: str, vault: FakeVault, streams: str) -> None:

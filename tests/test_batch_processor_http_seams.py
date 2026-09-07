@@ -1,14 +1,18 @@
-"""Tests for the two HTTP seams — `batch_processor/mcp_client.py` and `agent_handle.py` — against a
-real HTTP server on a real socket, never a patched `urlopen`.
+"""Tests for the two HTTP seams — `batch_processor/mcp_client.py` and `agent_instance.py` — against
+a real HTTP server on a real socket, never a patched `urlopen`.
 
 The stub answers with bytes chosen per test; what is *not* stubbed is anything this code does:
-`urllib`'s opener, the redirect handler, the retry loop, the header plumbing. A monkeypatched
-`urlopen` would agree with whatever these modules already believe about all four, which is the
-failure mode this repository's testing discipline names.
+`urllib`'s opener, the redirect handler, the retry loop, the header plumbing, the merge-patch bodies
+and the order they go out in. A monkeypatched `urlopen` would agree with whatever these modules
+already believe about all of it, which is the failure mode this repository's testing discipline
+names.
 
-The one thing no local stub can prove is the deployed vocabulary — the MCP tool names, and the
-gateway's `blocked`/`metadata` field shapes. Those are deployment facts (apps#3875), which is why
-the tool names are required configuration rather than defaults: a stub cannot make a guess true.
+Two things no local stub can prove. The deployed vocabulary — the MCP tool names, and the namespace,
+Deployment and Lease names — which is why all of them are required configuration rather than
+defaults: a stub cannot make a guess true. And the narrowness of the RBAC grant: this stub answers
+every request it is given, so only a real API server refusing one is evidence that the processor's
+identity cannot scale the ingestor instance or write the agent Deployment's body
+(`docs/VERIFICATIONS.md` §5).
 """
 
 from __future__ import annotations
@@ -17,15 +21,16 @@ import json
 import threading
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 import pytest
 
-from obsidian_tools.batch_processor.agent_handle import (
-    LEASE_FIELD,
-    AgentHandleClient,
-    AgentHandleError,
+from obsidian_tools.batch_processor.agent_instance import (
+    MERGE_PATCH,
+    AgentInstanceClient,
+    AgentInstanceError,
     run_watchdog_once,
 )
 from obsidian_tools.batch_processor.mcp_client import (
@@ -42,6 +47,7 @@ _KEY = "sk-secret-agent-handle-key"
 
 @dataclass
 class Recorded:
+    method: str
     path: str
     headers: dict[str, str]
     body: bytes
@@ -69,7 +75,7 @@ def stub() -> Iterator[Stub]:
         def _serve(self) -> None:
             length = int(self.headers.get("Content-Length") or 0)
             body = self.rfile.read(length) if length else b""
-            state.requests.append(Recorded(self.path, dict(self.headers.items()), body))
+            state.requests.append(Recorded(self.command, self.path, dict(self.headers.items()), body))
             status, payload, extra = state.next_reply()
             self.send_response(status)
             for name, value in extra.items():
@@ -82,6 +88,9 @@ def stub() -> Iterator[Stub]:
             self._serve()
 
         def do_GET(self) -> None:
+            self._serve()
+
+        def do_PATCH(self) -> None:
             self._serve()
 
         def log_message(self, format: str, *args: object) -> None:
@@ -247,126 +256,331 @@ def test_the_api_key_never_appears_in_a_failure_message(stub: Stub) -> None:
     assert _KEY not in str(caught.value)
 
 
-# --- the gateway handle ---------------------------------------------------------------------------
+# --- the agent MCP instance -----------------------------------------------------------------------
+
+_NAMESPACE = "obsidian-vault"
+_DEPLOYMENT = "mcp-obsidian-agent"
+_LEASE = "batch-mode"
+_SCALE_PATH = f"/apis/apps/v1/namespaces/{_NAMESPACE}/deployments/{_DEPLOYMENT}/scale"
+_LEASE_PATH = f"/apis/coordination.k8s.io/v1/namespaces/{_NAMESPACE}/leases/{_LEASE}"
+_TOKEN = "a-projected-service-account-token"
+
+NOW = datetime(2026, 9, 5, 12, 0, 0, tzinfo=UTC)
 
 
-def handle_client(stub: Stub) -> AgentHandleClient:
-    return AgentHandleClient(
-        base_url=stub.url, admin_key="sk-admin", handle_key=_KEY, timeout_seconds=5.0, verify_tls=False
+@pytest.fixture
+def token(tmp_path: Path) -> Path:
+    path = tmp_path / "token"
+    path.write_text(f"{_TOKEN}\n", encoding="utf-8")
+    return path
+
+
+def instance_client(stub: Stub, token: Path) -> AgentInstanceClient:
+    return AgentInstanceClient(
+        api_url=stub.url,
+        namespace=_NAMESPACE,
+        deployment=_DEPLOYMENT,
+        lease_name=_LEASE,
+        holder_identity="batch-processor-29123456-abcde",
+        token_path=str(token),
+        ca_path=None,
+        timeout_seconds=5.0,
+        verify_tls=False,
     )
 
 
-def key_info(*, blocked: bool, metadata: dict[str, object] | None = None) -> tuple[int, bytes, dict[str, str]]:
-    body = {"key": _KEY, "info": {"blocked": blocked, "metadata": metadata or {}}}
+def scale(replicas: int, *, observed: int = 0) -> tuple[int, bytes, dict[str, str]]:
+    """`status.replicas` deliberately disagrees with `spec.replicas`, so any code reading
+    availability instead of intent reads the wrong number rather than accidentally the right one."""
+    body = {"kind": "Scale", "spec": {"replicas": replicas}, "status": {"replicas": observed}}
     return 200, json.dumps(body).encode("utf-8"), {"Content-Type": "application/json"}
 
 
-def test_disabling_the_handle_and_stamping_the_lease_is_one_request(stub: Stub) -> None:
-    """Two requests would leave a killable window in which the handle is down with no lease — a
-    state the watchdog is required to read as an operator's own hold and leave alone, permanently.
-    Red if they were ever split."""
-    stub.replies = [key_info(blocked=False), key_info(blocked=True)]
-    deadline = datetime(2026, 9, 5, 12, 5, tzinfo=UTC)
-
-    handle_client(stub).begin_batch_run(deadline)
-
-    update = next(r for r in stub.requests if r.path == "/key/update")
-    sent = json.loads(update.body)
-    assert sent["blocked"] is True
-    assert sent["metadata"][LEASE_FIELD] == deadline.isoformat()
+def lease(**spec: object) -> tuple[int, bytes, dict[str, str]]:
+    body = {"kind": "Lease", "spec": spec}
+    return 200, json.dumps(body).encode("utf-8"), {"Content-Type": "application/json"}
 
 
-def test_existing_metadata_survives_a_lease_write(stub: Stub) -> None:
-    """The gateway's key update replaces metadata wholesale. Red if the write were not
-    read-modify-write: every other annotation on the agent handle would be deleted by the first
-    batch run, silently."""
-    stub.replies = [key_info(blocked=False, metadata={"owner": "platform", "note": "keep me"}), key_info(blocked=True)]
-
-    handle_client(stub).begin_batch_run(datetime(2026, 9, 5, 12, 5, tzinfo=UTC))
-
-    sent = json.loads(next(r for r in stub.requests if r.path == "/key/update").body)
-    assert sent["metadata"]["owner"] == "platform"
-    assert sent["metadata"]["note"] == "keep me"
+def held(*, renewed_at: datetime, seconds: int = 300) -> tuple[int, bytes, dict[str, str]]:
+    return lease(
+        holderIdentity="a-run",
+        acquireTime=renewed_at.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z",
+        renewTime=renewed_at.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z",
+        leaseDurationSeconds=seconds,
+    )
 
 
-def test_renewing_the_lease_changes_nothing_but_the_lease(stub: Stub) -> None:
-    """A renewal says one thing: this processor is still alive. Red if it also re-asserted
-    `blocked` — a renewal that disables would mask a run that never took the handle down (the
-    handle would end up down anyway, and no test could tell the two apart) and would silently
-    override whoever changed the handle mid-run."""
-    stub.replies = [key_info(blocked=False), key_info(blocked=False)]
-
-    handle_client(stub).renew_lease(datetime(2026, 9, 5, 12, 5, tzinfo=UTC))
-
-    sent = json.loads(next(r for r in stub.requests if r.path == "/key/update").body)
-    assert sent["blocked"] is False
-    assert sent["metadata"][LEASE_FIELD] == "2026-09-05T12:05:00+00:00"
+def patches(stub: Stub) -> list[Recorded]:
+    return [request for request in stub.requests if request.method == "PATCH"]
 
 
-def test_ending_a_run_re_enables_the_handle_and_drops_the_lease(stub: Stub) -> None:
-    """Red if the lease outlived the run: an enabled handle carrying a deadline is a fact about a
-    run that has already finished, and the next watchdog pass would be reasoning from debris."""
-    live = key_info(blocked=True, metadata={LEASE_FIELD: "2026-09-05T12:05:00+00:00"})
-    stub.replies = [live, key_info(blocked=False)]
+def test_a_run_takes_the_lease_before_it_stops_the_instance(stub: Stub, token: Path) -> None:
+    """ADR-0052's ordering, the half that replaces atomicity at the start of a run. A crash between
+    the two writes must leave the instance *running*, so the lease has to be the first write.
 
-    handle_client(stub).end_batch_run()
+    Red if reversed: a run killed in that window would leave the instance at zero replicas with no
+    lease — the exact state the watchdog is required to read as an operator's own hold and leave
+    alone, permanently. Every interactive write in the system would stop with nothing to recover
+    it."""
+    stub.replies = [lease(), scale(0)]
 
-    sent = json.loads(next(r for r in stub.requests if r.path == "/key/update").body)
-    assert sent["blocked"] is False
-    assert LEASE_FIELD not in sent["metadata"]
+    instance_client(stub, token).begin_batch_run(NOW, 300.0)
+
+    assert [request.path for request in patches(stub)] == [_LEASE_PATH, _SCALE_PATH]
 
 
-def test_the_watchdog_re_enables_a_handle_whose_lease_has_expired(stub: Stub) -> None:
+def test_a_run_starts_the_instance_before_it_releases_the_lease(stub: Stub, token: Path) -> None:
+    """The same ordering at the other end. Red if reversed: a run killed between the two writes ends
+    with the instance stopped and its lease already dropped, which is again unrecoverable by
+    design."""
+    stub.replies = [scale(1), lease()]
+
+    instance_client(stub, token).end_batch_run()
+
+    assert [request.path for request in patches(stub)] == [_SCALE_PATH, _LEASE_PATH]
+
+
+def test_the_stop_patches_the_scale_subresource_and_names_only_replicas(stub: Stub, token: Path) -> None:
+    """The narrowness of the grant, expressed as what the client actually sends. The Deployment's
+    own body carries `OBSIDIAN_WRITE_PATHS` — Gate 2 — and its image, so the authority to write it
+    is refused (ADR-0052) and this request would be refused with it.
+
+    Red if the path were the Deployment rather than its `scale`, or if the body carried any field
+    besides `spec.replicas`: a merge patch naming a field it did not set out to change is how a
+    write silently takes ownership of something it does not own."""
+    stub.replies = [lease(), scale(0)]
+
+    instance_client(stub, token).begin_batch_run(NOW, 300.0)
+
+    stop = patches(stub)[-1]
+    assert stop.path == _SCALE_PATH
+    assert stop.path.endswith("/scale")
+    assert json.loads(stop.body) == {"spec": {"replicas": 0}}
+
+
+def test_every_write_is_a_merge_patch(stub: Stub, token: Path) -> None:
+    """Red on any other content type. A strategic-merge or JSON patch would be answered differently
+    by the API server — and a `PUT` would replace the Lease wholesale, taking with it whatever the
+    manifest declares. Merge-patch is also what makes the release path expressible as nulls."""
+    stub.replies = [lease(), scale(0)]
+
+    instance_client(stub, token).begin_batch_run(NOW, 300.0)
+
+    assert {request.headers["Content-Type"] for request in patches(stub)} == {MERGE_PATCH}
+
+
+def test_the_lease_is_acquired_with_a_six_digit_fractional_timestamp(stub: Stub, token: Path) -> None:
+    """Kubernetes parses `MicroTime` with a Go layout whose zero-padded fraction requires exactly six
+    digits, and `datetime.isoformat()` omits the fraction entirely when `microsecond` is zero.
+
+    Red if `isoformat()` crept back in: roughly one lease write in a million — the ones stamped on a
+    whole second — would be rejected with a 400, which is the worst possible frequency for a bug in
+    the seam that stops interactive writes."""
+    stub.replies = [lease(), scale(0)]
+
+    instance_client(stub, token).begin_batch_run(NOW, 300.0)
+
+    sent = json.loads(patches(stub)[0].body)["spec"]
+    assert sent["renewTime"] == "2026-09-05T12:00:00.000000Z"
+    assert sent["acquireTime"] == sent["renewTime"]
+    assert sent["leaseDurationSeconds"] == 300
+    assert sent["holderIdentity"] == "batch-processor-29123456-abcde"
+
+
+def test_renewing_the_lease_touches_the_renewal_time_and_nothing_else(stub: Stub, token: Path) -> None:
+    """A renewal says one thing: this processor is still alive. Red if it also patched the scale — a
+    renewal that stops would mask a run that never stopped the instance (the instance would end up
+    stopped anyway, and no test could tell the two apart) and would silently override whoever
+    changed the instance mid-run. Red equally if it re-asserted the holder or the duration, which
+    would let a renewal steal a lease from another holder."""
+    stub.replies = [lease()]
+
+    instance_client(stub, token).renew_lease(NOW)
+
+    [renewal] = patches(stub)
+    assert renewal.path == _LEASE_PATH
+    assert json.loads(renewal.body) == {"spec": {"renewTime": "2026-09-05T12:00:00.000000Z"}}
+
+
+def test_releasing_the_lease_clears_every_field_the_run_wrote(stub: Stub, token: Path) -> None:
+    """Red if the lease outlived the run: a held lease on a running instance is a fact about a run
+    that has already finished, and the next hand-stop of the instance would be read as this system's
+    doing and undone. Nulls rather than a replace, because a replace would also erase whatever the
+    manifest declares on the object."""
+    stub.replies = [scale(1), lease()]
+
+    instance_client(stub, token).end_batch_run()
+
+    assert json.loads(patches(stub)[-1].body) == {
+        "spec": {"holderIdentity": None, "acquireTime": None, "renewTime": None, "leaseDurationSeconds": None}
+    }
+
+
+def test_running_is_read_from_desired_replicas_never_from_availability(stub: Stub, token: Path) -> None:
+    """The stub answers `spec.replicas: 1` with `status.replicas: 0` — a Deployment somebody asked to
+    run whose pod is not up, which is what an ordinary crashloop looks like.
+
+    Red if availability decided: a crashlooping agent instance would present as a batch run holding
+    the door, and the watchdog would either wait on a lease that will never appear or restart
+    something that is already meant to be running. Health is a different question with a different
+    owner."""
+    stub.replies = [scale(1, observed=0), lease()]
+
+    assert instance_client(stub, token).status().running is True
+
+
+def test_the_lease_deadline_is_read_off_the_object(stub: Stub, token: Path) -> None:
+    """Red if the deadline were taken from anywhere but `renewTime + leaseDurationSeconds`: the
+    watchdog's trigger would stop being the thing the processor actually renews."""
+    stub.replies = [scale(0), held(renewed_at=NOW, seconds=120)]
+
+    status = instance_client(stub, token).status()
+
+    assert status.running is False
+    assert status.lease_expires_at == datetime(2026, 9, 5, 12, 2, 0, tzinfo=UTC)
+
+
+def test_an_unheld_lease_reads_as_no_deadline(stub: Stub, token: Path) -> None:
+    """How the object ships in git, and how a released one looks. Red if an empty spec produced a
+    deadline: a stopped instance would stop being readable as an operator's own hold."""
+    stub.replies = [scale(0), lease()]
+
+    assert instance_client(stub, token).status().lease_expires_at is None
+
+
+def test_a_naive_renewal_time_is_refused_rather_than_assumed_to_be_utc(stub: Stub, token: Path) -> None:
+    """Red if a missing offset were filled in: the watchdog's trigger would shift by however many
+    hours the writer's host happens to be from UTC, in whichever direction, silently."""
+    stub.replies = [scale(0), lease(renewTime="2026-09-05T12:05:00", leaseDurationSeconds=300)]
+
+    with pytest.raises(AgentInstanceError, match="timezone"):
+        instance_client(stub, token).status()
+
+
+def test_a_scale_patch_that_stored_a_different_count_is_a_failure(stub: Stub, token: Path) -> None:
+    """The API server answers a scale patch with the `Scale` it stored, so the count it reports is
+    its own account rather than the client's hope.
+
+    Red if the 200 alone were trusted: a restore that changed nothing would be logged as a restore,
+    the run would exit clean, the lease would be released, and the instance would sit at zero with
+    nothing left to notice — the failure this whole component exists to make impossible, arrived at
+    from the inside. An admission webhook pinning replicas, or a `resourceNames` mismatch answered
+    as a no-op, both land here."""
+    stub.replies = [scale(0)]
+
+    with pytest.raises(AgentInstanceError, match="stored 0"):
+        instance_client(stub, token).start_instance()
+
+
+def test_a_forbidden_scale_patch_is_raised_rather_than_read_as_success(stub: Stub, token: Path) -> None:
+    """A grant whose `resourceNames` does not match this Deployment answers exactly this. Red if a
+    non-200 fell through: a run would proceed believing the door was shut while every interactive
+    writer still had it open."""
+    stub.replies = [(403, b'{"kind":"Status","reason":"Forbidden"}', {})]
+
+    with pytest.raises(AgentInstanceError, match="403"):
+        instance_client(stub, token).stop_instance()
+
+
+def test_a_missing_lease_names_the_object_and_says_it_is_not_this_workload_s_to_create(stub: Stub, token: Path) -> None:
+    """The grant carries no `create` verb, because RBAC cannot restrict `create` by `resourceNames`
+    and granting it would widen the grant to every Lease in the namespace. So a deleted Lease is
+    unrecoverable by this workload and must fail loudly.
+
+    Red if it read as a bare 404 or as a permissions error: an operator would go looking at the Role
+    rather than at the object a namespace recreate or a manifest tidy-up removed."""
+    stub.replies = [scale(0), (404, b'{"kind":"Status","reason":"NotFound"}', {})]
+
+    with pytest.raises(AgentInstanceError, match="does not exist"):
+        instance_client(stub, token).status()
+
+
+def test_the_service_account_token_is_read_on_every_request(stub: Stub, token: Path) -> None:
+    """Bound service-account tokens are rotated in place by the kubelet. Red if the token were
+    cached at construction: a run measured in hours would start answering 401 partway through, with
+    the instance already stopped — the one state that must never become permanent."""
+    stub.replies = [lease(), scale(0)]
+    client = instance_client(stub, token)
+
+    client.acquire_lease(NOW, 300.0)
+    token.write_text("a-rotated-token\n", encoding="utf-8")
+    client.stop_instance()
+
+    assert stub.requests[0].headers["Authorization"] == f"Bearer {_TOKEN}"
+    assert stub.requests[-1].headers["Authorization"] == "Bearer a-rotated-token"
+
+
+def test_the_service_account_token_never_appears_in_a_failure_message(stub: Stub, token: Path) -> None:
+    """Error text is built from the URL, the exception and the response body. Red if a header ever
+    reached a message — a token the API server honours from anywhere would be in the logs of every
+    failed watchdog pass, and the watchdog runs every five minutes."""
+    stub.replies = [(500, b"boom", {})]
+
+    with pytest.raises(AgentInstanceError) as caught:
+        instance_client(stub, token).status()
+
+    assert _TOKEN not in str(caught.value)
+
+
+def test_a_redirect_on_the_api_path_is_refused_rather_than_followed(stub: Stub, token: Path) -> None:
+    """The same refusal as on the MCP path, against the other credential. Red if a redirect were
+    followed — one response could retarget the next request and send a service-account token, which
+    the API server honours from anywhere, to a host the configuration never named."""
+    stub.replies = [(302, b"", {"Location": "http://127.0.0.1:1/evil"})]
+
+    with pytest.raises(AgentInstanceError):
+        instance_client(stub, token).status()
+
+    assert len(stub.requests) == 1
+
+
+# --- the watchdog's four dispatches, over the wire --------------------------------------------------
+
+
+def test_the_watchdog_restarts_an_instance_whose_lease_has_expired(stub: Stub, token: Path) -> None:
     """The end-to-end injection for unit D4: a processor that died mid-run leaves exactly this, and
-    the pass turns agent writes back on. Red if no update were issued — every agent write in the
-    system stays stopped."""
-    stub.replies = [
-        key_info(blocked=True, metadata={LEASE_FIELD: "2026-09-05T11:00:00+00:00"}),
-        key_info(blocked=True, metadata={LEASE_FIELD: "2026-09-05T11:00:00+00:00"}),
-        key_info(blocked=False),
-    ]
+    the pass turns interactive writes back on. Red if no scale patch were issued — every interactive
+    write in the system stays stopped. Red equally if the lease were not released with it: the
+    debris would outlive the run it describes."""
+    stub.replies = [scale(0), held(renewed_at=NOW - timedelta(hours=1)), scale(1), lease()]
 
-    verdict = run_watchdog_once(handle_client(stub), datetime(2026, 9, 5, 12, 0, tzinfo=UTC))
+    verdict = run_watchdog_once(instance_client(stub, token), NOW)
 
-    assert verdict is WatchdogVerdict.RE_ENABLE
-    assert json.loads(next(r for r in stub.requests if r.path == "/key/update").body)["blocked"] is False
+    assert verdict is WatchdogVerdict.RESTART_INSTANCE
+    assert [request.path for request in patches(stub)] == [_SCALE_PATH, _LEASE_PATH]
+    assert json.loads(patches(stub)[0].body) == {"spec": {"replicas": 1}}
 
 
-def test_the_watchdog_writes_nothing_while_a_lease_is_live(stub: Stub) -> None:
-    """Red if a live lease were re-enabled: agent writes would open mid-run, putting an interactive
-    writer and the batch through the single-threaded editor at the same time."""
-    stub.replies = [key_info(blocked=True, metadata={LEASE_FIELD: "2026-09-05T12:30:00+00:00"})]
+def test_the_watchdog_writes_nothing_while_a_lease_is_live(stub: Stub, token: Path) -> None:
+    """Red if a live lease were restarted: interactive writes would open mid-run, putting an
+    interactive writer and the batch through the single-threaded editor at the same time."""
+    stub.replies = [scale(0), held(renewed_at=NOW)]
 
-    verdict = run_watchdog_once(handle_client(stub), datetime(2026, 9, 5, 12, 0, tzinfo=UTC))
+    verdict = run_watchdog_once(instance_client(stub, token), NOW)
 
     assert verdict is WatchdogVerdict.PROCESSOR_HOLDS_THE_LEASE
-    assert [r.path for r in stub.requests if r.path == "/key/update"] == []
+    assert patches(stub) == []
 
 
-def test_the_watchdog_writes_nothing_to_a_handle_disabled_without_a_lease(stub: Stub) -> None:
-    """An operator's own hold. Red if it were re-enabled — the watchdog would undo a deliberate
-    human action on a schedule, silently, every pass."""
-    stub.replies = [key_info(blocked=True)]
+def test_the_watchdog_writes_nothing_to_an_instance_stopped_without_a_lease(stub: Stub, token: Path) -> None:
+    """An operator's own hold. Red if it were restarted — the watchdog would undo a deliberate human
+    action on a schedule, silently, every pass."""
+    stub.replies = [scale(0), lease()]
 
-    verdict = run_watchdog_once(handle_client(stub), datetime(2026, 9, 5, 12, 0, tzinfo=UTC))
+    verdict = run_watchdog_once(instance_client(stub, token), NOW)
 
-    assert verdict is WatchdogVerdict.DISABLED_BY_SOMEONE_ELSE
-    assert [r.path for r in stub.requests if r.path == "/key/update"] == []
-
-
-def test_a_naive_lease_timestamp_is_refused_rather_than_assumed_to_be_utc(stub: Stub) -> None:
-    """Red if a missing offset were filled in: the watchdog's trigger would shift by however many
-    hours the gateway's host happens to be from UTC, in whichever direction, silently."""
-    stub.replies = [key_info(blocked=True, metadata={LEASE_FIELD: "2026-09-05T12:05:00"})]
-
-    with pytest.raises(AgentHandleError, match="timezone"):
-        handle_client(stub).status()
+    assert verdict is WatchdogVerdict.STOPPED_BY_SOMEONE_ELSE
+    assert patches(stub) == []
 
 
-def test_a_gateway_error_status_is_raised_rather_than_read_as_an_enabled_handle(stub: Stub) -> None:
-    """Red if a non-200 fell through to the default `enabled=True`: an unreachable gateway would be
-    reported as a healthy handle, and the watchdog would report success having checked nothing."""
-    stub.replies = [(503, b"upstream unavailable", {})]
+def test_the_watchdog_drops_a_stale_lease_without_touching_a_running_instance(stub: Stub, token: Path) -> None:
+    """The debris a crash between either ordered pair leaves behind. Red if the pass also patched
+    the scale: it would be acting on the instance because of a fact about a finished run. Red if it
+    wrote nothing at all: the debris would survive to be met by the next operator hand-stop, which
+    the watchdog would then read as its own and undo."""
+    stub.replies = [scale(1), held(renewed_at=NOW - timedelta(hours=1)), lease()]
 
-    with pytest.raises(AgentHandleError, match="503"):
-        handle_client(stub).status()
+    verdict = run_watchdog_once(instance_client(stub, token), NOW)
+
+    assert verdict is WatchdogVerdict.RELEASE_STALE_LEASE
+    assert [request.path for request in patches(stub)] == [_LEASE_PATH]

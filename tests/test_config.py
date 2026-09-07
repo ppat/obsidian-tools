@@ -286,9 +286,10 @@ def _batch_processor_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "BATCH_MCP_TOOL_READ": "read",
         "BATCH_MCP_TOOL_WRITE": "write",
         "BATCH_MCP_TOOL_DELETE": "delete",
-        "BATCH_GATEWAY_URL": "https://gateway",
-        "BATCH_GATEWAY_ADMIN_KEY": "sk-admin",
-        "BATCH_AGENT_HANDLE_KEY": "sk-handle",
+        "BATCH_KUBERNETES_API_URL": "https://kubernetes.example:6443",
+        "BATCH_AGENT_INSTANCE_NAMESPACE": "obsidian-vault",
+        "BATCH_AGENT_INSTANCE_DEPLOYMENT": "mcp-obsidian-agent",
+        "BATCH_AGENT_INSTANCE_LEASE": "batch-mode",
     }.items():
         monkeypatch.setenv(name, value)
 
@@ -329,13 +330,62 @@ def test_batch_processor_config_requires_every_mcp_tool_name(monkeypatch: pytest
         BatchProcessorConfig.from_env()
 
 
-def test_the_watchdog_config_needs_nothing_but_the_handle(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_watchdog_config_needs_nothing_but_the_instance(monkeypatch: pytest.MonkeyPatch) -> None:
     """What the watchdog watches is precisely what may be broken, so it must not need the broker or
     the MCP surface to start. Red if it grew a dependency on either."""
     for name in ("BATCH_NATS_URL", "BATCH_PROCESSOR_NATS_PASSWORD", "BATCH_MCP_URL", "BATCH_MCP_API_KEY"):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("BATCH_GATEWAY_URL", "https://gateway")
-    monkeypatch.setenv("BATCH_GATEWAY_ADMIN_KEY", "sk-admin")
-    monkeypatch.setenv("BATCH_AGENT_HANDLE_KEY", "sk-handle")
+    monkeypatch.setenv("BATCH_KUBERNETES_API_URL", "https://kubernetes.example:6443")
+    monkeypatch.setenv("BATCH_AGENT_INSTANCE_NAMESPACE", "obsidian-vault")
+    monkeypatch.setenv("BATCH_AGENT_INSTANCE_DEPLOYMENT", "mcp-obsidian-agent")
+    monkeypatch.setenv("BATCH_AGENT_INSTANCE_LEASE", "batch-mode")
 
-    assert WatchdogConfig.from_env().agent_handle.gateway_url == "https://gateway"
+    assert WatchdogConfig.from_env().agent_instance.deployment == "mcp-obsidian-agent"
+
+
+@pytest.mark.parametrize(
+    "missing",
+    ["BATCH_AGENT_INSTANCE_NAMESPACE", "BATCH_AGENT_INSTANCE_DEPLOYMENT", "BATCH_AGENT_INSTANCE_LEASE"],
+)
+def test_the_watchdog_config_requires_every_object_name(monkeypatch: pytest.MonkeyPatch, missing: str) -> None:
+    """No defaults, for the reason the MCP tool names have none: each of these must equal the
+    `resourceNames` entry in the RBAC grant character for character (ADR-0052), and a default that
+    disagreed with the grant would present as a 403 at the first call of every run rather than as a
+    missing setting. Red if a default appeared — the deployment's own value would silently stop
+    mattering, and the failure would look like a permissions bug."""
+    monkeypatch.setenv("BATCH_KUBERNETES_API_URL", "https://kubernetes.example:6443")
+    monkeypatch.setenv("BATCH_AGENT_INSTANCE_NAMESPACE", "obsidian-vault")
+    monkeypatch.setenv("BATCH_AGENT_INSTANCE_DEPLOYMENT", "mcp-obsidian-agent")
+    monkeypatch.setenv("BATCH_AGENT_INSTANCE_LEASE", "batch-mode")
+    monkeypatch.delenv(missing, raising=False)
+
+    with pytest.raises(ConfigError, match=missing):
+        WatchdogConfig.from_env()
+
+
+def test_the_api_server_is_addressed_by_the_variables_the_kubelet_injects(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Not `kubernetes.default.svc`: these two are injected into every container and are the one
+    address that works before any DNS resolver does, which matters most for a watchdog whose whole
+    job is to run when other things are broken. Red if a DNS name were the default."""
+    monkeypatch.delenv("BATCH_KUBERNETES_API_URL", raising=False)
+    monkeypatch.setenv("KUBERNETES_SERVICE_HOST", "10.43.0.1")
+    monkeypatch.setenv("KUBERNETES_SERVICE_PORT", "443")
+    monkeypatch.setenv("BATCH_AGENT_INSTANCE_NAMESPACE", "obsidian-vault")
+    monkeypatch.setenv("BATCH_AGENT_INSTANCE_DEPLOYMENT", "mcp-obsidian-agent")
+    monkeypatch.setenv("BATCH_AGENT_INSTANCE_LEASE", "batch-mode")
+
+    assert WatchdogConfig.from_env().agent_instance.api_url == "https://10.43.0.1:443"
+
+
+def test_an_ipv6_api_server_address_is_bracketed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The kubelet injects the address unbracketed, and a bare IPv6 literal is not a valid URL host.
+    Red without the brackets: every request on a dual-stack cluster would fail to parse its own
+    URL, and the failure would read as an unreachable API server."""
+    monkeypatch.delenv("BATCH_KUBERNETES_API_URL", raising=False)
+    monkeypatch.setenv("KUBERNETES_SERVICE_HOST", "fd00::1")
+    monkeypatch.setenv("KUBERNETES_SERVICE_PORT", "443")
+    monkeypatch.setenv("BATCH_AGENT_INSTANCE_NAMESPACE", "obsidian-vault")
+    monkeypatch.setenv("BATCH_AGENT_INSTANCE_DEPLOYMENT", "mcp-obsidian-agent")
+    monkeypatch.setenv("BATCH_AGENT_INSTANCE_LEASE", "batch-mode")
+
+    assert WatchdogConfig.from_env().agent_instance.api_url == "https://[fd00::1]:443"

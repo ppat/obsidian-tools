@@ -123,14 +123,17 @@ def test_process_batch_subcommand_is_registered() -> None:
     assert callable(args.handler)
 
 
-def test_watch_agent_handle_subcommand_is_registered() -> None:
+def test_watch_agent_instance_subcommand_is_registered() -> None:
     """A subcommand of its own, deliberately: a watchdog sharing a process with `batch-processor`
-    would die with it, which is the failure it exists to catch."""
+    would die with it, which is the failure it exists to catch.
+
+    The name is also the container's `args:` value in the deployment's manifests, which is why the
+    code and manifest changes for ADR-0052 are not independently landable in either direction."""
     parser = build_parser()
 
-    args = parser.parse_args(["watch-agent-handle"])
+    args = parser.parse_args(["watch-agent-instance"])
 
-    assert args.subcommand == "watch-agent-handle"
+    assert args.subcommand == "watch-agent-instance"
     assert callable(args.handler)
 
 
@@ -147,9 +150,9 @@ def test_main_returns_config_error_exit_code_for_process_batch_when_required_env
         "BATCH_MCP_TOOL_READ",
         "BATCH_MCP_TOOL_WRITE",
         "BATCH_MCP_TOOL_DELETE",
-        "BATCH_GATEWAY_URL",
-        "BATCH_GATEWAY_ADMIN_KEY",
-        "BATCH_AGENT_HANDLE_KEY",
+        "BATCH_AGENT_INSTANCE_NAMESPACE",
+        "BATCH_AGENT_INSTANCE_DEPLOYMENT",
+        "BATCH_AGENT_INSTANCE_LEASE",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -159,10 +162,10 @@ def test_main_returns_config_error_exit_code_for_process_batch_when_required_env
 def test_main_returns_config_error_exit_code_for_the_watchdog_when_required_env_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    for name in ("BATCH_GATEWAY_URL", "BATCH_GATEWAY_ADMIN_KEY", "BATCH_AGENT_HANDLE_KEY"):
+    for name in ("BATCH_AGENT_INSTANCE_NAMESPACE", "BATCH_AGENT_INSTANCE_DEPLOYMENT", "BATCH_AGENT_INSTANCE_LEASE"):
         monkeypatch.delenv(name, raising=False)
 
-    assert main(["watch-agent-handle"]) == 2
+    assert main(["watch-agent-instance"]) == 2
 
 
 def test_installed_sigterm_handler_raises_graceful_shutdown() -> None:
