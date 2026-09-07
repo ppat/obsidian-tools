@@ -36,9 +36,11 @@ applies each through the same gated MCP path as ordinary ingest.
 - **Triggering policy:** a run starts when the stream exceeds a size threshold, or at least once a
   day whenever non-empty — and only inside a permitted time window.
 - **The watchdog exists before the stream ever runs unattended.** If the processor dies while the
-  agent handle is disabled for a run, every agent write stops silently and indefinitely — far worse
-  than a slow batch. The smallest shape ships (a dumb re-enable); the maximum-window and
-  post-disable drain are refinements ([D4](../../../ROADMAP.md#group-d--operability)). This
+  interactive door is shut for a run, every agent write stops silently and indefinitely — far worse
+  than a slow batch. What a run shuts, and what the watchdog reopens, is
+  [ADR-0052](./0052-batch-mode-stops-the-agent-instance.md). The smallest shape ships (a dumb
+  restore); the maximum-window and post-disable drain are refinements
+  ([D4](../../../ROADMAP.md#group-d--operability)). This
   placement is the arbitration of a contradiction the older records carried
   ([ROADMAP, supersessions](../../../ROADMAP.md#records-this-roadmap-supersedes-or-arbitrates)).
 
@@ -53,9 +55,10 @@ eliminated, not softened).
 ## Consequences
 
 Accepted cost is throughput: thousands of sequential round-trips through one event loop. "Batch
-mode" reduces to which gateway handle is enabled; promotion keeps draining mid-batch because it
-shares the ingestor handle. Quiescing the editor during a batch is not merely rejected but
-*unavailable* — batch writes travel through it.
+mode" reduces to which of the two MCP instances is running: the agent instance is stopped for the
+run's duration and the ingestor instance is not, which is what lets promotion keep draining
+mid-batch ([ADR-0052](./0052-batch-mode-stops-the-agent-instance.md)). Quiescing the editor during a
+batch is not merely rejected but *unavailable* — batch writes travel through it.
 
 **A failed chunk stops itself and its direct dependents, and nothing else.** The run continues past
 a dead-lettered chunk — a bulk import is thousands of chunks, and one bad file must not discard the

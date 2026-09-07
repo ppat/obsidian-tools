@@ -28,9 +28,10 @@ resolved as frontmatter-status updates plus appends to the log and nothing else 
 and no write path to the global todo, which holds queries only — n8n reaches the gateway through
 its own SSRF allowlist, and only the gateway); and **the human-facing browser
 chat is read-only** — the human is not a writer
-([the pillar](../../../DESIGN.md#humans-originate-agents-act)). Batch runs disable
-the agent handle only; the ingestor handle stays live, which is what lets promotion keep draining
-mid-batch.
+([the pillar](../../../DESIGN.md#humans-originate-agents-act)). Batch runs stop the agent
+*instance*, leaving every handle onto it unreachable and the ingestor instance untouched, which is
+what lets promotion keep draining mid-batch
+([ADR-0052](../work-queue/0052-batch-mode-stops-the-agent-instance.md)).
 
 **A third, promotion-scoped instance is deferred deliberately.** It would be strictly
 least-privilege for `promotion-processor` (which never creates in the raw layer or archives), but
