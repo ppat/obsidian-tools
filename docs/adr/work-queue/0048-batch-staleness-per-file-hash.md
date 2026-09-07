@@ -62,8 +62,9 @@ order relative to the other. The failure mode that remains inside a batch is a b
 which leaves an edit not yet made rather than a wrong one. What FIFO cannot cover is the other
 half: it orders the batch stream against itself and never against another writer. A semantic pair
 split between a batch chunk and a writer that is not on the batch stream is undetected here. The
-batch window narrows that set — the agent handle is disabled for a run — without emptying it:
-`promotion-processor` keeps draining on the shared ingestor handle, the lint pass is scheduled, and
+batch window narrows that set — the agent MCP instance is stopped for a run (ADR-0052) — without
+emptying it: `promotion-processor` keeps draining on the shared ingestor instance, the lint pass is
+scheduled, and
 the GUI exception is ungated by construction. That residue is caught downstream and after the fact
 by the lint pass, which repairs unambiguous dead links and flags the ambiguous ones
 ([ADR-0018](../content-model/0018-lint-pass-policy.md)) — detective, the posture this design
