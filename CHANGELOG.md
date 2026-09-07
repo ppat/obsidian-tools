@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.6.0](https://github.com/ppat/obsidian-tools/compare/v0.5.1...v0.6.0) (2026-09-07)
+
+
+### ⚠ BREAKING CHANGES
+
+* **processor:** the `watch-agent-handle` subcommand becomes `watch-agent-instance`, and BATCH_GATEWAY_URL, BATCH_GATEWAY_ADMIN_KEY and BATCH_AGENT_HANDLE_KEY are replaced by BATCH_AGENT_INSTANCE_NAMESPACE, BATCH_AGENT_INSTANCE_DEPLOYMENT and BATCH_AGENT_INSTANCE_LEASE, all three required with no defaults because each must equal a resourceNames entry in the deployment's RBAC grant character for character. Both workloads also need a ServiceAccount and a projected token. This release and the matching manifest change are not independently deployable in either direction.
+
+### 🛠 Improvements
+
+* **processor:** correct ADR-0048 and ADR-0050's stale agent-handle claim ([#154](https://github.com/ppat/obsidian-tools/issues/154)) ([aa6b955](https://github.com/ppat/obsidian-tools/commit/aa6b9553f36cd288f19d0c90cb1d1e33eec45142))
+* **processor:** ratify ADR-0047 through ADR-0051 ([#151](https://github.com/ppat/obsidian-tools/issues/151)) ([edad8eb](https://github.com/ppat/obsidian-tools/commit/edad8eb596198411e1ac9121e270cdaf5919044c))
+* **processor:** record that a batch run stops the agent MCP instance itself, scaled to zero (ADR-0052) ([#152](https://github.com/ppat/obsidian-tools/issues/152)) ([a4e03dd](https://github.com/ppat/obsidian-tools/commit/a4e03dd05e07a0862f2196b916750b94b42267ba))
+* **processor:** record the batch processor's workload shape, its stream provisioning and its consumer identity ([#149](https://github.com/ppat/obsidian-tools/issues/149)) ([7b36f79](https://github.com/ppat/obsidian-tools/commit/7b36f79bf76d7bac0bb3c5b25619ff9fc9f21a97))
+* reconcile DESIGN.md and ROADMAP.md with what the V1 work-queue increment actually built ([#148](https://github.com/ppat/obsidian-tools/issues/148)) ([f968dd3](https://github.com/ppat/obsidian-tools/commit/f968dd333ee75be413bc4138f2363b98732d082b))
+
+
+### ✨ Features
+
+* **processor:** stop the agent MCP instance for a batch run, taking the lease before the stop ([#153](https://github.com/ppat/obsidian-tools/issues/153)) ([3739e28](https://github.com/ppat/obsidian-tools/commit/3739e28030fc6a83dd716bf7c60aabb0adcad623))
+
 ## [0.5.1](https://github.com/ppat/obsidian-tools/compare/v0.5.0...v0.5.1) (2026-09-06)
 
 
