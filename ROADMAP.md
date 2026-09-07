@@ -61,7 +61,7 @@ silently catastrophic rather than merely later:
 - **The safety invariants the design already banks** — containment ([S1](./USE_CASES.md#s1--admitted)), fail-loud-destroy-nothing,
   capture-before-publish. These are built or structural; the posture never re-opens them.
 - **[D4](#group-d--operability)'s watchdog before the batch stream runs unattended** — a processor crash with the agent
-  handle disabled silently stops every agent write; the failure is invisible, so it cannot be
+  MCP instance stopped silently stops every agent write; the failure is invisible, so it cannot be
   "learned from" in production.
 - **[O1](./USE_CASES.md#o1--measured)'s metric emission** — an uninstrumented window is gone forever; emission is cheap and rides
   as acceptance criteria on units being built anyway. Dashboards and anything alert-shaped stay
@@ -318,9 +318,10 @@ shared mechanisms nothing else owns. *Criteria distribute; shared mechanisms do 
   pod-template-churn test of the single-writer window. Every subject is deployed today.
 - [ ] **D4 — batch-mode safety mechanisms** → [O2](./USE_CASES.md#o2--survives-its-failure-modes) · [ot#5](https://github.com/ppat/obsidian-tools/issues/5) (watchdog) + [ot#89](https://github.com/ppat/obsidian-tools/issues/89) (window + drain) · [V1](#v1--content-in-content-readable) (the watchdog); window +
   drain may follow in [V6](#v6--harden-and-tighten-from-experience)
-  The watchdog re-enabling the agent handle if `batch-processor` dies is **not deferrable**: it must
-  exist before the batch stream runs unattended, because the failure it closes is silent and
-  indefinite. The smallest shape that ships is enough — a dumb re-enable, not a framework. The
+  The watchdog starting the agent MCP instance again if `batch-processor` dies is **not
+  deferrable**: it must exist before the batch stream runs unattended, because the failure it closes
+  is silent and indefinite. The smallest shape that ships is enough — a dumb restore, not a
+  framework. The
   maximum-window and post-disable drain are hardening-band refinements.
 - [ ] **D5 — stronger container isolation** → [S1](./USE_CASES.md#s1--admitted) (a containment claim; arguable, flagged) ·
   [apps#3884](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3884) · [V6](#v6--harden-and-tighten-from-experience)

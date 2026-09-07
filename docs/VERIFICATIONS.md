@@ -66,8 +66,8 @@ half: the deployed credential's own refusal is still pending below, in §5.
 
 Run in the test suite against a real `nats-server` with JetStream and a real HTTP vault surface on a
 real socket. What is proven here is the *code* half of each control. The deployed halves — the
-gateway's own refusal of a write while the handle is down, and the deployed MCP tool surface — stay
-pending in §5.
+refusal an interactive caller actually meets while the agent MCP instance is stopped, and the
+deployed MCP tool surface — stay pending in §5.
 
 | Injection | Proves | Status |
 | --- | --- | --- |
@@ -90,7 +90,11 @@ pending in §5.
 
 | Injection | Proves | Pending on |
 | --- | --- | --- |
-| Fire an interactive-agent write against the deployed gateway while the agent handle is disabled for a batch run → refused | Batch mode is exactly which handle is enabled. The processor's own half — that it takes the handle down for every write and puts it back — is proven in §4; what is still owed is the gateway acting on it | A2's deploy ([apps#3875](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3875)) |
+| Fire an interactive-agent write while the agent MCP instance is stopped for a batch run → it fails; in the same window a chunk applies through the ingestor instance and a promotion pointer drains → both succeed | Batch mode is which of the two instances is running. **Both halves are the control**: an agent write that still lands means the door is not shut, and an ingestor write that fails means the run has stopped its own write path and promotion's along with it | A2's deploy ([apps#3875](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3875)) |
+| Kill a run mid-batch, running no exit handler, and let its lease expire → the next watchdog pass starts the agent instance again and the interactive write that was failing succeeds | The disaster the whole mechanism exists to prevent: a dead processor leaving every interactive write stopped indefinitely. An exit handler tidying up on the way out would leave nothing stuck, so the kill model is what makes this an injection rather than a demonstration | A2's deploy |
+| Stop the agent instance by hand, holding no lease → the watchdog reports it and leaves it exactly as found | The watchdog restores only what a batch run stopped. Proven in §4 against the code's own view of the world; what is owed is the same verdict against a real Deployment and a real lease | A2's deploy |
+| From the processor's own cluster identity, scale the ingestor instance, scale the editor, and write the agent instance's Deployment body → all three refused | The grant is as narrow as the decision requires (ADR-0052). A role definition read from a manifest is a claim about intent; only the API server's refusal is evidence — and the widening that would matter most, write access to the Deployment body and so to its write scope, looks in a listing much like the grant that is correct | A2's deploy |
+| Reconcile the declared state while a run holds the agent instance at zero → the instance stays stopped | The replica count is runtime state, not declared configuration. A reconciler or autoscaler owning that field restores the door mid-run, and the failure is silent in the dangerous direction: writes work, nothing looks wrong, and the batch races interactive writers exactly as the mechanism exists to prevent | A2's deploy |
 | Apply a chunk through the deployed MCP tool surface → the writes land, and a refusal arrives as HTTP 200 with the error in the envelope | The tool vocabulary. `batch-processor` requires its tool names as configuration with no defaults precisely because nothing in this repository has yet run against that surface | A2's deploy |
 | **Publish to the batch subject with `local-replicator`'s own legitimate drift credential → refused by subject permissions** | **The decisive authority test**: a legitimately held credential at a subject outside its grant is the *only* injection distinguishing real per-subject permissions from a NetworkPolicy-only implementation — in-cluster producers would be refused by the network anyway, for a reason unrelated to the control under test. Needs only the *credentials*, which are separable from the streams (ADR-0021) | A1 (credential half) + B7's credential issuance |
 | Publish to the promotion subject with the drift credential, and to the drift subject with a promotion credential → refused | The same check across every remaining pair, once all three streams and credentials are live | A1/A3/A7 |

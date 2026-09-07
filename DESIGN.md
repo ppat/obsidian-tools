@@ -219,14 +219,14 @@ defaults to this posture when it meets something it cannot reconcile.
 ### Bulk and drift are feeds into the one write path, never lanes around it
 
 Bulk work arrives as git patches on the batch stream and is applied by `batch-processor` *through
-the same MCP path and controls as ordinary ingest* — "batch mode" reduces to which gateway handle is
-enabled. Captured device edits arrive on the drift stream and are dispatched by `drift-processor`
-through the narrow agent-scoped handle into the inbox, like any other capture. The accepted cost is
-throughput (a bulk import takes hours, once); the purchased property is that there is no second
-write mode, no second operating state, and no direct filesystem write anywhere. Batch mode's safety
-mechanisms — a watchdog that re-enables the agent handle if the processor dies, a maximum window,
-a post-disable drain — must exist before the batch stream ever runs unattended, because a processor
-crash with the agent handle disabled silently stops every agent write.
+the same MCP path and controls as ordinary ingest* — "batch mode" reduces to which of the two MCP
+instances is running. Captured device edits arrive on the drift stream and are dispatched by
+`drift-processor` through the narrow agent-scoped path into the inbox, like any other capture. The
+accepted cost is throughput (a bulk import takes hours, once); the purchased property is that there
+is no second write mode, no second operating state, and no direct filesystem write anywhere. Batch
+mode's safety mechanisms — a watchdog that starts the agent instance again if the processor dies, a
+maximum window, a post-disable drain — must exist before the batch stream ever runs unattended,
+because a processor crash with the agent instance stopped silently stops every agent write.
 
 ### The device loop is non-destructive by ordering, not by hope
 
@@ -317,7 +317,7 @@ The ordered controls on a write, named as gates throughout the tickets and this 
 | Gate | Control | The question it answers | Character |
 | --- | --- | --- | --- |
 | 0 | Runner-level pre-write hook (exists for Claude Code's runner only) | should this write have happened | Detective, after the fact |
-| 1 | Gateway handle: per-caller tool visibility; delete withheld from the agent handle entirely | who may call, with which tools | Preventive |
+| 1 | The handle: per-caller tool visibility at whatever fronts the instances; delete withheld from the agent handle entirely | who may call, with which tools | Preventive |
 | 2 | MCP instance path scope (`OBSIDIAN_WRITE_PATHS`) | where may this write land | Preventive — path-granular only |
 | 3 | Editing primitives: anti-clobber create, append/patch preferred, optimistic concurrency on modify | does this write silently clobber a concurrent one | Preventive |
 | 4 | Serialisation at the editor's single event loop | do concurrent writes tear a file | Structural side-effect, never relied on as a guarantee |
@@ -493,12 +493,16 @@ different name, the retired synonym is noted.
 ### Write path
 
 - **Headless Obsidian** — the single in-cluster Obsidian process; the only writer of vault content.
-- **The handles** — LiteLLM gateway registrations deciding who may call and with which tools: the
-  **agent handle** (every interactive writer and `drift-processor`) and the **ingestor handle**
-  (`promotion-processor`, `batch-processor`, lint). Batch runs disable the agent handle only.
+- **The handles** — the caller-facing registrations at whatever fronts the MCP instances, deciding
+  who may call and with which tools: the **agent handle** (every interactive writer and
+  `drift-processor`) and the **ingestor handle** (`promotion-processor`, `batch-processor`, lint).
+  The *role* is what the design requires; which component occupies it is a deployment choice, and an
+  installation may have none.
 - **The instances** — the two MCP server deployments deciding where a write may land: the **agent
   instance** (scoped to the agent zone) and the **ingestor instance** (the wide scope). Handles and
-  instances are separate axes.
+  instances are separate axes. A batch run stops the agent instance and leaves the ingestor instance
+  running, so every handle onto the agent instance — write and read alike — is unreachable for the
+  run's duration.
 - **The gates** — the ordered controls on a write: Gate 0 (runner pre-write hook, detective,
   Claude Code only), Gate 1 (handle: tool visibility), Gate 2 (instance: path scope), Gate 3
   (editing primitives, anti-clobber, optimistic concurrency), Gate 4 (event-loop serialisation),
@@ -525,9 +529,9 @@ different name, the retired synonym is noted.
   `drift-processor`.
 - **Chunk** — one message on the batch stream: a logically-split piece of a git patch, and the
   transaction and redelivery unit — atomicity is per chunk, never per batch.
-- **The batch watchdog** — the mechanism that re-enables the agent handle if `batch-processor` dies
-  mid-run; with the maximum window and post-disable drain, it must exist before the batch stream
-  runs unattended.
+- **The batch watchdog** — the mechanism that starts the agent instance again if `batch-processor`
+  dies mid-run, and leaves a stopped instance no batch run's lease covers exactly as found; with the
+  maximum window and post-disable drain, it must exist before the batch stream runs unattended.
 
 ### Device loop and read path
 
