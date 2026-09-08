@@ -461,14 +461,15 @@ class BatchProcessorConfig:
     # Carries this component's write scope, the widest in the system. Never logged, never echoed in
     # an error message (`batch_processor/mcp_client.py`).
     mcp_api_key: str
-    # Required, with no default, all three. This repository has never run against the deployed MCP
-    # surface, and a guessed tool name would be wrong in a way that presents identically to a gate
-    # refusal at every call site. Requiring them makes the deployment state what it runs against.
+    # Required, with no default, all three: a tool's name is deployment identity. The gateway
+    # prefixes each with the access group the key reaches the server through, so a regrouping
+    # renames every tool while changing nothing about what any of them does, and a guessed name is
+    # wrong in a way that presents identically to a gate refusal at every call site. What a tool
+    # *accepts* is the opposite kind of fact and is not configuration at all: the argument shapes
+    # are fixed by the tools' schemas and live in `batch_processor/mcp_client.py`.
     mcp_tool_read: str
     mcp_tool_write: str
     mcp_tool_delete: str
-    mcp_path_argument: str
-    mcp_content_argument: str
     mcp_timeout_seconds: float
     mcp_verify_tls: bool
     mcp_retries: int
@@ -516,8 +517,6 @@ class BatchProcessorConfig:
             mcp_tool_read=require_env("BATCH_MCP_TOOL_READ"),
             mcp_tool_write=require_env("BATCH_MCP_TOOL_WRITE"),
             mcp_tool_delete=require_env("BATCH_MCP_TOOL_DELETE"),
-            mcp_path_argument=get_env("BATCH_MCP_PATH_ARGUMENT", "filepath"),
-            mcp_content_argument=get_env("BATCH_MCP_CONTENT_ARGUMENT", "content"),
             mcp_timeout_seconds=get_env_float("BATCH_MCP_TIMEOUT_SECONDS", 30.0),
             mcp_verify_tls=get_env_bool("BATCH_MCP_VERIFY_TLS", True),
             mcp_retries=get_env_int("BATCH_MCP_RETRIES", 3),

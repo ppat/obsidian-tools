@@ -1,0 +1,2 @@
+event: message
+data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"Error: Not found: 05-raw/does-not-exist-probe.md\n\nRecovery: Verify the path with obsidian_list_notes or use obsidian_search_notes to locate the note."}],"structuredContent":{"error":{"code":-32001,"message":"Not found: 05-raw/does-not-exist-probe.md","data":{"path":"05-raw/does-not-exist-probe.md","reason":"note_missing","recovery":{"hint":"Verify the path with obsidian_list_notes or use obsidian_search_notes to locate the note."},"upstream":{"message":"Not Found"}}}},"isError":true}}

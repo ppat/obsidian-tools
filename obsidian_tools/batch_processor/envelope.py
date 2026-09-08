@@ -14,6 +14,7 @@ plumbing — and decisions in this codebase are pure functions with tables behin
 | --- | --- | --- |
 | 200, `{"result": {"content": [...], "isError": false}}` | the write happened | `OK` |
 | 200, `{"result": {"content": [...], "isError": true}}` | **the gate refused it** | `REFUSED` |
+| the same, whose error names a reason of absence | the note is not there | `NOT_FOUND` |
 | 200, `{"error": {"code": …, "message": …}}` | the call was malformed, or the tool does not exist | `FAILED` |
 | a 5xx, a timeout, a dropped connection | nobody decided anything | `UNAVAILABLE` |
 
@@ -26,6 +27,20 @@ that it applied everything.
 Retrying a refusal re-runs a decision that is a property of static configuration, which turns a
 loud "this write is not permitted" into an unbounded quiet loop — the same failure the producer's
 `violations.py` exists to prevent one layer up.
+
+## A result carries two renderings of itself, and only one of them is the data
+
+A tool that declares an `outputSchema` answers with `structuredContent` — its typed result — *and*
+a `content[]` text block rendering the same thing for a reader. The rendering is free to decorate:
+the deployed read tool returns the note's body in `structuredContent` and, in `content[]`, that
+body behind a title line. So `content[]` is where a refusal's message lives and where an operator
+reads what went wrong, and it is never where a caller takes a value it intends to compare or hash.
+Both travel on `McpOutcome`; which one a given tool's caller must read is that tool's contract, and
+lives with the caller.
+
+The same split decides absence. A tool error carrying `structuredContent.error.data.reason` has
+stated its cause as a field, and that field is authoritative here; prose matching remains only for
+an error that carries no reason at all.
 
 ## Two shapes of body, both legal
 
@@ -49,13 +64,18 @@ from typing import cast
 # purpose. 408 and 429 join the 5xx range because both are the server explicitly asking for a retry.
 _RETRYABLE_STATUSES = frozenset({408, 429})
 
-# Substrings that mark a refusal as "the note is not there" rather than "you may not touch it".
-# The distinction is load-bearing in exactly one place — ADR-0048's create branch, where a target
-# must *not* exist — and it is the one classification here that rests on a server's prose rather
-# than on a structural field, because the MCP tool surface reports a missing note as an ordinary
-# tool error. Kept as data, matched case-insensitively, and treated as an allow-list: anything not
-# matching stays a refusal, so a wording change makes a create fail loudly rather than silently
-# concluding the target is absent and overwriting it.
+# The `reason` values that mark a tool error as "the note is not there" rather than "you may not
+# touch it". The distinction is load-bearing in exactly one place — ADR-0048's create branch, where
+# a target must *not* exist. An allow-list, so an unrecognised reason stays a refusal and a create
+# fails loudly rather than being let through in front of a note that exists.
+_ABSENT_REASONS = frozenset({"note_missing"})
+
+# The same distinction taken from the refusal's prose, used only when the error carries no
+# structured reason at all. Prose is the weaker instrument in both directions: it is a property of
+# the server's wording rather than of its contract, and a refusal for some *other* cause whose text
+# happens to match reads as absence. Kept because a surface that declares no structured error shape
+# would otherwise have no absence signal whatsoever, and matched case-insensitively as an
+# allow-list for the same reason `_ABSENT_REASONS` is one.
 _NOT_FOUND_MARKERS = ("not found", "does not exist", "no such file", "404")
 
 
@@ -67,7 +87,8 @@ class OutcomeKind(Enum):
     """The gate said no, inside a 200. Permanent for this chunk: the scope is server configuration."""
 
     NOT_FOUND = auto()
-    """A refusal whose text says the note is absent — a fact about the vault, not about authority."""
+    """A refusal whose stated reason — or, failing that, whose text — says the note is absent. A
+    fact about the vault, not about authority."""
 
     FAILED = auto()
     """A JSON-RPC error, a permanent HTTP status, or a body this module cannot read. Never retried."""
@@ -85,7 +106,18 @@ class McpOutcome:
     """Operator-facing text: the refusal's own message, the JSON-RPC error, or the status."""
 
     text: str = ""
-    """The tool's returned content, concatenated. Empty for everything but `OK`."""
+    """The tool's `content[]` blocks, concatenated. A *rendering* — for a human or a model — and
+    never the tool's data: see `structured`. Empty for everything but `OK`."""
+
+    structured: dict[str, object] | None = None
+    """The response's `structuredContent`, verbatim, when it carried one.
+
+    A tool declaring an `outputSchema` answers with its typed result here and a human-readable
+    rendering of the same thing in `content[]`, and the two are not interchangeable — the deployed
+    read tool prefixes the note's body with a title line in `content[]`. Which field a caller must
+    read is a fact about that tool's contract, so this module carries the object through and
+    `mcp_client.py` picks the field out.
+    """
 
     @property
     def retryable(self) -> bool:
@@ -127,10 +159,12 @@ def classify_response(status: int, body: bytes) -> McpOutcome:
 
     fields = cast("dict[str, object]", result)
     text = _content_text(fields.get("content"))
+    raw_structured = fields.get("structuredContent")
+    structured = cast("dict[str, object]", raw_structured) if isinstance(raw_structured, dict) else None
     if fields.get("isError") is True:
-        kind = OutcomeKind.NOT_FOUND if _reads_as_absent(text) else OutcomeKind.REFUSED
-        return McpOutcome(kind, text or "the tool reported an error with no message")
-    return McpOutcome(OutcomeKind.OK, "", text)
+        kind = OutcomeKind.NOT_FOUND if _reads_as_absent(structured, text) else OutcomeKind.REFUSED
+        return McpOutcome(kind, text or "the tool reported an error with no message", structured=structured)
+    return McpOutcome(OutcomeKind.OK, "", text, structured)
 
 
 def decode_body(body: bytes) -> dict[str, object]:
@@ -177,9 +211,34 @@ def _content_text(content: object) -> str:
     return "\n".join(parts)
 
 
-def _reads_as_absent(text: str) -> bool:
+def _reads_as_absent(structured: dict[str, object] | None, text: str) -> bool:
+    """Whether a tool error says the note is not there.
+
+    **The structured reason decides whenever there is one, and the prose is not consulted then.**
+    A refusal carrying a reason has already answered the question; falling through to the markers
+    after reading one would let a refusal whose *cause* is something else be read as absence
+    because its message happens to contain "not found" — the direction that puts a create in front
+    of a note that exists.
+    """
+    reason = _error_reason(structured)
+    if reason is not None:
+        return reason in _ABSENT_REASONS
     lowered = text.lower()
     return any(marker in lowered for marker in _NOT_FOUND_MARKERS)
+
+
+def _error_reason(structured: dict[str, object] | None) -> str | None:
+    """`structuredContent.error.data.reason`, when the whole path is there and is a string."""
+    if structured is None:
+        return None
+    error = structured.get("error")
+    if not isinstance(error, dict):
+        return None
+    data = cast("dict[str, object]", error).get("data")
+    if not isinstance(data, dict):
+        return None
+    reason = cast("dict[str, object]", data).get("reason")
+    return reason if isinstance(reason, str) else None
 
 
 def _render(error: object) -> str:

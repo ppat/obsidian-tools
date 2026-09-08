@@ -40,7 +40,9 @@ from obsidian_tools.batch_processor.mcp_client import (
     McpToolNames,
     McpUnavailableError,
 )
+from obsidian_tools.batch_processor.preflight import observed_state
 from obsidian_tools.batch_processor.watchdog import WatchdogVerdict
+from obsidian_tools.batch_producer.staleness import content_sha256
 
 _KEY = "sk-secret-agent-handle-key"
 
@@ -109,13 +111,57 @@ def stub() -> Iterator[Stub]:
         server.server_close()
 
 
+_FIXTURES = Path(__file__).parent / "fixtures" / "mcp"
+
+
+def captured(name: str) -> tuple[int, bytes, dict[str, str]]:
+    """A response captured from the deployed gateway, replayed byte for byte.
+
+    Both files are the gateway's own SSE framing around its own envelope. `get_note_absent.sse` is
+    verbatim; `get_note_content.sse` carries a short body in place of the note that was read, with
+    the rendering rebuilt by the surface's own rule — the title line the capture showed, glued to
+    the body — because the note itself is private vault content and its length is the only thing
+    about it this test uses.
+    """
+    return 200, (_FIXTURES / name).read_bytes(), {"Content-Type": "text/event-stream"}
+
+
 def ok(text: str) -> tuple[int, bytes, dict[str, str]]:
     body = {"jsonrpc": "2.0", "id": 1, "result": {"content": [{"type": "text", "text": text}], "isError": False}}
     return 200, json.dumps(body).encode("utf-8"), {"Content-Type": "application/json"}
 
 
+def read_ok(path: str, content: str) -> tuple[int, bytes, dict[str, str]]:
+    """A read the way the surface answers one: the bytes in the typed result, a decorated rendering
+    of them in the content array. The two differ on purpose — see `captured`."""
+    body = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "content": [{"type": "text", "text": f"**{path}** (format: content)\n\n{content}"}],
+            "structuredContent": {"result": {"format": "content", "path": path, "content": content}},
+            "isError": False,
+        },
+    }
+    return 200, json.dumps(body).encode("utf-8"), {"Content-Type": "application/json"}
+
+
 def refusal(text: str) -> tuple[int, bytes, dict[str, str]]:
     body = {"jsonrpc": "2.0", "id": 1, "result": {"content": [{"type": "text", "text": text}], "isError": True}}
+    return 200, json.dumps(body).encode("utf-8"), {"Content-Type": "application/json"}
+
+
+def tool_error(text: str, *, reason: str) -> tuple[int, bytes, dict[str, str]]:
+    """A tool's own failure, with its cause as a field — the shape the deployed surface returns."""
+    body = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "content": [{"type": "text", "text": text}],
+            "structuredContent": {"error": {"code": -32001, "message": text, "data": {"reason": reason}}},
+            "isError": True,
+        },
+    }
     return 200, json.dumps(body).encode("utf-8"), {"Content-Type": "application/json"}
 
 
@@ -127,8 +173,6 @@ def mcp_client(stub: Stub, *, retries: int = 3) -> McpClient:
             read="deployment_read_tool",
             write="deployment_write_tool",
             delete="deployment_delete_tool",
-            path_argument="filepath",
-            content_argument="content",
         ),
         timeout_seconds=5.0,
         verify_tls=False,
@@ -146,7 +190,7 @@ def test_a_refusal_arriving_as_http_200_raises_rather_than_returning_content(stu
     stub.replies = [refusal("path_forbidden: 10-areas/x.md is outside the active scope")]
 
     with pytest.raises(McpRefusedError, match="path_forbidden"):
-        mcp_client(stub).write_note("10-areas/x.md", "body\n")
+        mcp_client(stub).write_note("10-areas/x.md", "body\n", overwrite=True)
 
 
 def test_a_refusal_is_attempted_exactly_once(stub: Stub) -> None:
@@ -155,7 +199,7 @@ def test_a_refusal_is_attempted_exactly_once(stub: Stub) -> None:
     stub.replies = [refusal("path_forbidden")]
 
     with pytest.raises(McpRefusedError):
-        mcp_client(stub).write_note("10-areas/x.md", "body\n")
+        mcp_client(stub).write_note("10-areas/x.md", "body\n", overwrite=True)
 
     assert len(stub.requests) == 1
 
@@ -163,7 +207,7 @@ def test_a_refusal_is_attempted_exactly_once(stub: Stub) -> None:
 def test_a_transient_failure_is_retried_and_then_succeeds(stub: Stub) -> None:
     """Red if a restarting MCP pod failed the chunk outright — every chunk in flight during an
     ordinary rollout would be dead-lettered instead of waited for."""
-    stub.replies = [(503, b"", {}), ok("# a note\n")]
+    stub.replies = [(503, b"", {}), read_ok("10-areas/x.md", "# a note\n")]
 
     assert mcp_client(stub).read_note("10-areas/x.md") == "# a note\n"
     assert len(stub.requests) == 2
@@ -180,9 +224,10 @@ def test_a_persistent_transient_failure_exhausts_the_retries_and_stops(stub: Stu
     assert len(stub.requests) == 3
 
 
-def test_a_missing_note_reads_as_absent_rather_than_as_a_refusal(stub: Stub) -> None:
-    """ADR-0048's create branch. Red if absence raised: every create in the bootstrap import would
-    be dead-lettered for a target that was legitimately not there."""
+def test_a_missing_note_reads_as_absent_from_prose_when_no_reason_is_stated(stub: Stub) -> None:
+    """The fallback path: an error carrying no structured cause at all, where the wording is the
+    only signal there is. Red if the fallback were dropped — a surface that stops declaring an
+    error shape would fail every create rather than degrading to the weaker instrument."""
     stub.replies = [refusal("File not found: 05-raw/new.md")]
 
     assert mcp_client(stub).read_note("05-raw/new.md") is None
@@ -191,7 +236,7 @@ def test_a_missing_note_reads_as_absent_rather_than_as_a_refusal(stub: Stub) -> 
 def test_a_delete_of_an_already_absent_note_succeeds(stub: Stub) -> None:
     """Discipline 3: a retried delete that already landed must not fail a chunk that completed. Red
     if it raised — a redelivered chunk would be dead-lettered for having worked."""
-    stub.replies = [refusal("File not found: 10-areas/x.md")]
+    stub.replies = [tool_error("Not found: 10-areas/x.md", reason="note_missing")]
 
     mcp_client(stub).delete_note("10-areas/x.md")
 
@@ -207,24 +252,131 @@ def test_a_json_rpc_error_is_permanent_and_names_itself(stub: Stub) -> None:
     assert len(stub.requests) == 1
 
 
-def test_the_call_carries_the_configured_tool_name_and_argument_keys(stub: Stub) -> None:
+def test_the_call_carries_the_configured_tool_name(stub: Stub) -> None:
     """The tool vocabulary is deployment configuration, and this is what proves it is actually used
     rather than shadowed by a constant. Red if a hard-coded name crept back in — the deployment's
     own setting would silently have no effect."""
     stub.replies = [ok("")]
 
-    mcp_client(stub).write_note("10-areas/x.md", "body\n")
+    mcp_client(stub).write_note("10-areas/x.md", "body\n", overwrite=True)
 
     sent = json.loads(stub.requests[0].body)
     assert sent["method"] == "tools/call"
     assert sent["params"]["name"] == "deployment_write_tool"
-    assert sent["params"]["arguments"] == {"filepath": "10-areas/x.md", "content": "body\n"}
+
+
+def test_every_operation_addresses_its_note_as_a_path_target(stub: Stub) -> None:
+    """The surface addresses a note by a discriminated object, and the alternatives resolve against
+    a running editor. Red if any operation regressed to a flat key holding a string: the call is
+    rejected as malformed, every chunk in the run fails, and nothing distinguishes it from a tool
+    name that does not exist."""
+    stub.replies = [read_ok("10-areas/x.md", "# a note\n"), ok(""), ok("")]
+    client = mcp_client(stub)
+
+    client.read_note("10-areas/x.md")
+    client.write_note("10-areas/x.md", "body\n", overwrite=True)
+    client.delete_note("10-areas/x.md")
+
+    targets = [json.loads(request.body)["params"]["arguments"]["target"] for request in stub.requests]
+    assert targets == [{"type": "path", "path": "10-areas/x.md"}] * 3
+
+
+def test_a_read_asks_for_the_projection_the_hash_is_taken_over(stub: Stub) -> None:
+    """`format` is required by the schema and the richer projections answer questions this
+    component never asks. Red if it were dropped (the call is malformed) or widened (a bulk import
+    pays for parsed frontmatter and a structural map on every read)."""
+    stub.replies = [read_ok("10-areas/x.md", "# a note\n")]
+
+    mcp_client(stub).read_note("10-areas/x.md")
+
+    assert json.loads(stub.requests[0].body)["params"]["arguments"]["format"] == "content"
+
+
+def test_a_create_asserts_absence_on_the_wire_and_a_modify_does_not(stub: Stub) -> None:
+    """The anti-clobber flag, asserted where it is decided rather than through an outcome. A
+    surface that accepts both writes answers a create and a modify identically, so **inversion is
+    invisible except here**: red if the flag is inverted, defaulted or dropped, each of which
+    either clobbers a note this write was never permitted to replace or refuses every modify."""
+    stub.replies = [ok(""), ok("")]
+    client = mcp_client(stub)
+
+    client.write_note("05-raw/new.md", "body\n", overwrite=False)
+    client.write_note("10-areas/x.md", "body\n", overwrite=True)
+
+    assert [json.loads(request.body)["params"]["arguments"]["overwrite"] for request in stub.requests] == [
+        False,
+        True,
+    ]
+
+
+def test_a_read_returns_the_note_and_never_the_rendering_around_it(stub: Stub) -> None:
+    """Replayed from a captured response, and the assertion is the hash ADR-0048 compares.
+
+    The surface returns the note's bytes in its typed result and, in the content array, the same
+    bytes behind a title line. Red if the rendering were taken for the note: the hash matches no
+    file the producer ever hashed, **every modify in every batch is rejected as stale**, and the
+    defect presents as a producer that keeps generating stale patches rather than as a bug here."""
+    stub.replies = [captured("get_note_content.sse")]
+
+    content = mcp_client(stub).read_note("CLAUDE.md")
+
+    assert content == "# a note\n\nwith two lines\n"
+    assert observed_state(content).content_sha256 == content_sha256(b"# a note\n\nwith two lines\n")
+
+
+def test_a_success_carrying_no_typed_result_is_refused_rather_than_read_off_the_rendering(stub: Stub) -> None:
+    """The fallback that must not exist. Red if a rendering were accepted when the typed result is
+    missing — the failure above would return, silently, the moment the surface stopped declaring an
+    output schema."""
+    stub.replies = [ok("**10-areas/x.md** (format: content)\n\n# a note\n")]
+
+    with pytest.raises(McpFailedError, match="structured note content"):
+        mcp_client(stub).read_note("10-areas/x.md")
+
+
+def test_absence_is_recognised_from_the_stated_reason(stub: Stub) -> None:
+    """Replayed from a captured response to a note that is not there. ADR-0048's create branch: red
+    if it raised, and every create in the bootstrap import is dead-lettered for a target that was
+    legitimately absent."""
+    stub.replies = [captured("get_note_absent.sse")]
+
+    assert mcp_client(stub).read_note("05-raw/does-not-exist-probe.md") is None
+
+
+def test_a_refusal_stating_another_reason_is_not_absence_however_it_reads(stub: Stub) -> None:
+    """The false-absence direction, closed. A refusal that names its cause has answered the
+    question, so its prose is not consulted — red if the markers were matched anyway, which is how
+    a create is admitted in front of a note that exists and, but for `overwrite: false`, would
+    overwrite it."""
+    stub.replies = [tool_error("Not found: no vault mounted at that scope", reason="scope_unmounted")]
+
+    with pytest.raises(McpRefusedError):
+        mcp_client(stub).read_note("10-areas/x.md")
+
+
+def test_a_retried_create_meets_its_own_first_attempt_and_fails_loudly(stub: Stub) -> None:
+    """A create that landed and lost its response: the retry is refused `file_exists`, the chunk
+    fails half-applied and is regenerated. Discipline 3.
+
+    Red if someone "fixed" retries by relaxing the flag on the second attempt — every redelivered
+    create would become a whole-note overwrite of whatever is at the path, which is the silent lost
+    update the flag exists to prevent, and this test asserts the flag on *both* attempts rather
+    than only on the first."""
+    stub.replies = [(503, b"", {}), tool_error("file_exists: 05-raw/new.md already exists", reason="file_exists")]
+
+    with pytest.raises(McpRefusedError, match="file_exists"):
+        mcp_client(stub).write_note("05-raw/new.md", "body\n", overwrite=False)
+
+    assert [json.loads(request.body)["params"]["arguments"]["overwrite"] for request in stub.requests] == [
+        False,
+        False,
+    ]
 
 
 def test_a_session_id_from_the_handshake_rides_on_every_later_request(stub: Stub) -> None:
     """Streamable HTTP's session header. Red if it were dropped: a session-using server would
     refuse every call after `initialize`, and the refusals would look like gate refusals."""
-    stub.replies = [(*ok("")[:2], {"Mcp-Session-Id": "sess-123"}), ok("")]
+    stub.replies = [(*ok("")[:2], {"Mcp-Session-Id": "sess-123"}), read_ok("10-areas/x.md", "# a note\n")]
     client = mcp_client(stub)
 
     client.connect()
