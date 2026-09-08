@@ -140,8 +140,6 @@ def config_for(
         mcp_tool_read=TOOL_READ,
         mcp_tool_write=TOOL_WRITE,
         mcp_tool_delete=TOOL_DELETE,
-        mcp_path_argument="filepath",
-        mcp_content_argument="content",
         mcp_timeout_seconds=5.0,
         mcp_verify_tls=False,
         mcp_retries=mcp_retries,

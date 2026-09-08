@@ -1,0 +1,2 @@
+event: message
+data: {"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"**CLAUDE.md** (format: content)\n\n# a note\n\nwith two lines\n"}],"structuredContent":{"result":{"format":"content","path":"CLAUDE.md","content":"# a note\n\nwith two lines\n"}},"isError":false}}
