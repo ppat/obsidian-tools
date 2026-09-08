@@ -319,7 +319,7 @@ The ordered controls on a write, named as gates throughout the tickets and this 
 | 0 | Runner-level pre-write hook (exists for Claude Code's runner only) | should this write have happened | Detective, after the fact |
 | 1 | The handle: per-caller tool visibility at whatever fronts the instances; delete withheld from the agent handle entirely | who may call, with which tools | Preventive |
 | 2 | MCP instance path scope (`OBSIDIAN_WRITE_PATHS`) | where may this write land | Preventive — path-granular only |
-| 3 | Editing primitives: anti-clobber create, append/patch preferred, optimistic concurrency on modify | does this write silently clobber a concurrent one | Preventive |
+| 3 | Editing primitives: anti-clobber create; append/patch preferred wherever the writer holds a region-shaped edit; clobber self-detection on modify | does this write silently clobber a concurrent one | Preventive on create, detective on modify |
 | 4 | Serialisation at the editor's single event loop | do concurrent writes tear a file | Structural side-effect, never relied on as a guarantee |
 | 5 | The admission validator | does content meet the schema and provenance bar | **Preventive at the curated boundary — the decisive gate** |
 | 6 | Network isolation of the REST surface | can anything reach the editor around the door | Preventive; the *sole* control on the built-in second endpoint |
@@ -328,6 +328,17 @@ Gate 2 is *path*-granular only: it does not distinguish create from overwrite, s
 rules (the raw layer's create-only, the log's append-only) are enforced by the component positioned
 to see both sides — `batch-processor` for raw — or held by scope discipline where no backstop
 exists yet.
+
+Gate 3 is preventive on one half only, and the split matters wherever the gate is cited. The tool
+surface's whole-file write refuses an existing target unless the call asks to overwrite — an
+assertion of *absence*, and so a real anti-clobber control on creates. No write tool accepts a
+version, hash or etag argument, so a modify cannot be made conditional on the content it was
+computed from; what a write returns instead — whether it created the note, and the note's size
+before and after — makes a clobber answerable after the fact. A writer holding a region-shaped edit
+prefers the additive primitives and leaves a concurrent edit elsewhere in the same note standing; a
+writer holding a whole-note post-image, which is what applying a git patch produces, has no
+region-shaped edit to prefer, and its residual window is carried by the batch staleness measure
+(ADR-0053 and ADR-0048, through the [decision-record index](./docs/adr/README.md)).
 
 Deferred work rides the work queue: three streams, one per processor, each shipped *together with*
 its consumer and its credential grant so no stream is ever reachable with no consumer and no
@@ -429,6 +440,12 @@ records behind them (ADR-0006, ADR-0012, ADR-0022, ADR-0033 among others) are re
   inconsistent, because the property violated is a relation between files rather than a property of
   any one of them. Strict FIFO covers the intra-batch half by construction; what remains is caught
   after the fact by the lint pass, not prevented.
+- **No write-time precondition exists anywhere on the write path.** Every MCP write tool addresses
+  a note by path and takes no version, hash or etag argument, so the window between reading content
+  and writing content computed from it cannot be closed at the call — only narrowed, and only for
+  the writers a batch run's stopped agent instance covers (ADR-0048, ADR-0052, ADR-0053 via the
+  [decision-record index](./docs/adr/README.md)). Promotion, the lint pass and the GUI exception
+  stay inside the window; what crosses it is caught after the fact by the lint pass.
 - **`salience:` may prove redundant with `confidence:`** — at roughly 200 notes, their correlation
   is measured, and if they track, `salience:` is removed. The audit is a scheduled decision, not a
   hope.
@@ -505,9 +522,9 @@ different name, the retired synonym is noted.
   run's duration.
 - **The gates** — the ordered controls on a write: Gate 0 (runner pre-write hook, detective,
   Claude Code only), Gate 1 (handle: tool visibility), Gate 2 (instance: path scope), Gate 3
-  (editing primitives, anti-clobber, optimistic concurrency), Gate 4 (event-loop serialisation),
-  **Gate 5 — the admission validator, the decisive gate**, Gate 6 (network isolation of the REST
-  surface).
+  (editing primitives: anti-clobber create, clobber self-detection on modify), Gate 4 (event-loop
+  serialisation), **Gate 5 — the admission validator, the decisive gate**, Gate 6 (network
+  isolation of the REST surface).
 - **The admission validator** (Gate 5) — the one shared admission check at the curated boundary;
   quarantine-never-delete. *Retired synonyms: "promotion validator", "frontmatter validator" — same
   artifact, named in older sources by one of its callers.*

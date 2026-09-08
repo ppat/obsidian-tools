@@ -32,12 +32,23 @@ Three facts of this system constrain the answer:
 **Staleness is per file, by content hash, over the paths a chunk touches.** A chunk records, per
 target path, the hash of the content its patch was generated against. Before any write in the chunk
 lands, `batch-processor` reads each target and compares. Any mismatch rejects the whole chunk to
-the producer with nothing applied; all matching applies the chunk, each write carrying that hash as
-a write-time precondition wherever the tool surface accepts one — the optimistic-concurrency
-primitive Gate 3 names ([the gate table](../../../DESIGN.md#3-the-write-path-end-to-end), and
-[FINDINGS-v1](../../FINDINGS-v1-source-review.md) for the REST-level `ifMatch`/`version` pair it
-rests on). The pre-flight read establishes the measure; the precondition, where available, closes
-the window between checking and writing rather than assuming it away.
+the producer with nothing applied; all matching applies the chunk.
+
+**No write-time precondition rides with those writes, because the tool surface accepts none.**
+Every write tool addresses a note by path — as a structured target, alongside the active-file and
+periodic-note forms — and takes no version, hash or etag argument. The nearest thing to a
+precondition is the whole-file write's `overwrite` flag, which asserts the target's *absence* and
+so binds a create only ([ADR-0053](../write-model/0053-batch-writes-whole-note.md)). The REST layer
+underneath does carry an `ifMatch`/`version` pair
+([FINDINGS-v1](../../FINDINGS-v1-source-review.md)); the tool surface does not expose it, and this
+component reaches the vault only through that surface — the gated MCP path is the whole of its
+reach, which is the second of the three facts above. So the pre-flight read is the entire measure,
+and the window between checking and writing stays open rather than closed: narrowed by a batch run
+stopping the agent instance ([ADR-0052](./0052-batch-mode-stops-the-agent-instance.md)), never
+eliminated. What the surface returns *after* a write — whether the note was created, and its size
+before and after — makes a clobber answerable afterwards, and that is the whole of what
+[Gate 3](../../../DESIGN.md#3-the-write-path-end-to-end) offers a modify: detection, not
+prevention.
 
 Four properties are the point:
 
@@ -79,7 +90,7 @@ already carries, and three observations falsify the choice:
 | --- | --- |
 | Rejections dominated by files an earlier chunk of the *same* batch changed | Per-file hashing self-invalidates too — the disjointness claim is false, and this measure fails on the ground that disqualified repo head |
 | Lint-pass dead-link findings rising after batch runs while stale rejections stay near zero | The cross-file residue is material, not theoretical: chunks are passing that should have been stopped |
-| A clobber observed between the pre-flight check and the write | The pre-flight read alone is insufficient and the write-time precondition has to be mandatory rather than opportunistic |
+| A clobber observed between the pre-flight check and the write | The pre-flight read alone is insufficient — and with no precondition on the tool surface to make mandatory, the remedy is a change to the surface or to what may write during a run, never a flag on the call |
 
 ## Alternatives considered
 
