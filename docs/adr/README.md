@@ -58,6 +58,7 @@ build state never lives here.
 | 0007 | [One shared admission validator, three callers, fired at every curated-boundary crossing](./write-model/0007-validation-placement.md) | **Proposed** |
 | 0008 | [Drift intentionality is a separate authority, upstream of the validator](./write-model/0008-drift-classification-separate-authority.md) | Accepted |
 | 0045 | [Write-scope composition: enumerated allowlists, entries mirroring grants, the schema file outside every scope](./write-model/0045-write-scope-composition.md) | Accepted |
+| 0053 | [A chunk applies as whole-note writes, the create/modify distinction carried by the anti-clobber flag](./write-model/0053-batch-writes-whole-note.md) | **Proposed** |
 
 ## Content model — `content-model/`
 
