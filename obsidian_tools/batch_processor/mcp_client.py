@@ -86,11 +86,17 @@ class McpFailedError(McpError):
 
 @dataclass(frozen=True, slots=True)
 class McpToolNames:
-    """The deployed tool vocabulary. Every field is a deployment fact, not a preference."""
+    """The deployed tool vocabulary. Every field is a deployment fact, not a preference.
+
+    `delete` and `append` are optional because a key is granted only the tools its holder uses: the
+    lint pass never deletes and holds no delete tool (ADR-0004), `batch-processor` never appends.
+    Calling an operation whose tool is not configured fails before anything is sent.
+    """
 
     read: str
     write: str
-    delete: str
+    delete: str | None = None
+    append: str | None = None
 
 
 class McpClient:
@@ -106,7 +112,9 @@ class McpClient:
         verify_tls: bool,
         retries: int,
         retry_base_delay_seconds: float,
+        client_name: str = "obsidian-tools batch-processor",
     ) -> None:
+        self._client_name = client_name
         self._url = base_url.rstrip("/")
         self._api_key = api_key
         self._tools = tools
@@ -127,7 +135,7 @@ class McpClient:
             {
                 "protocolVersion": _PROTOCOL_VERSION,
                 "capabilities": {},
-                "clientInfo": {"name": "obsidian-tools batch-processor", "version": _PROTOCOL_VERSION},
+                "clientInfo": {"name": self._client_name, "version": _PROTOCOL_VERSION},
             },
         )
         _raise_for(outcome, "initialize")
@@ -168,10 +176,26 @@ class McpClient:
         _raise_for(outcome, f"write {path!r}")
 
     def delete_note(self, path: str) -> None:
-        outcome = self._call(self._tools.delete, {"target": _target(path)})
+        outcome = self._call(_configured(self._tools.delete, "delete"), {"target": _target(path)})
         if outcome.kind is OutcomeKind.NOT_FOUND:
             return  # see discipline 3: a retried delete that already landed must not fail the chunk
         _raise_for(outcome, f"delete {path!r}")
+
+    def append_note(self, path: str, content: str) -> None:
+        """Append `content` to the end of an existing note, with no section.
+
+        **Only for a target the caller already knows is there.** Without a section the tool creates
+        an absent target with the appended text as its whole content (its own schema says so), so an
+        append aimed at a note that has gone away lands as a fragment and reports success — the
+        third ground of ADR-0053. Whether the target exists is the caller's to establish; nothing on
+        this call can.
+
+        Retried like a modify, and not safe in the same way: an append that landed and lost its
+        response is appended again. The lint pass accepts that for its one log line, whose worst
+        case is a duplicate line in an append-only file, rather than failing the pass.
+        """
+        outcome = self._call(_configured(self._tools.append, "append"), {"target": _target(path), "content": content})
+        _raise_for(outcome, f"append to {path!r}")
 
     # --- the transport --------------------------------------------------------------------------
 
@@ -248,6 +272,12 @@ def _note_content(outcome: McpOutcome, path: str) -> str:
             "to hash that the surface has vouched for"
         )
     return content
+
+
+def _configured(tool: str | None, operation: str) -> str:
+    if tool is None:
+        raise McpFailedError(f"no {operation} tool is configured for this client, so it may not {operation}")
+    return tool
 
 
 def _raise_for(outcome: McpOutcome, what: str) -> None:

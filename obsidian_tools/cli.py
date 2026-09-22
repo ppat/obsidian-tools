@@ -15,7 +15,8 @@ producer (unit B1, ot#125): it runs in the Coder workspace rather than in-cluste
 and no mount at all, reading and writing the vault only through the gated MCP path.
 `watch-agent-instance` is unit D4's watchdog — deliberately a *separate* subcommand on a separate
 schedule, because a watchdog sharing a process with `batch-processor` would die with it, which is
-the failure it exists to catch.
+the failure it exists to catch. `lint` is the lint pass (unit A5, ot#83): in-cluster, scheduled,
+reading the vault from a read-only mount and writing only through the gated MCP path.
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ from obsidian_tools.commands import commit as commit_command
 from obsidian_tools.commands import drain as drain_command
 from obsidian_tools.commands import enqueue_batch as enqueue_batch_command
 from obsidian_tools.commands import export_metrics as export_metrics_command
+from obsidian_tools.commands import lint as lint_command
 from obsidian_tools.commands import process_batch as process_batch_command
 from obsidian_tools.commands import replicate as replicate_command
 from obsidian_tools.commands import watch_agent_instance as watch_agent_instance_command
@@ -40,6 +42,7 @@ from obsidian_tools.config import (
     CommitConfig,
     ConfigError,
     DrainConfig,
+    LintPassConfig,
     ReplicateConfig,
     VaultExporterConfig,
     WatchdogConfig,
@@ -121,6 +124,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     watch_agent_instance_parser.set_defaults(handler=_run_watch_agent_instance)
 
+    lint_parser = subparsers.add_parser(
+        "lint",
+        help="run the lint pass: check and normalise the whole vault, write the report, push the review digest",
+    )
+    lint_parser.set_defaults(handler=_run_lint)
+
     return parser
 
 
@@ -185,6 +194,15 @@ def _run_watch_agent_instance(_args: argparse.Namespace) -> int:
         logger.exception("invalid configuration", extra={"event": "config_error"})
         return 2
     return watch_agent_instance_command.run(config)
+
+
+def _run_lint(_args: argparse.Namespace) -> int:
+    try:
+        config = LintPassConfig.from_env()
+    except ConfigError:
+        logger.exception("invalid configuration", extra={"event": "config_error"})
+        return 2
+    return lint_command.run(config)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

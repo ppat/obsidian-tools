@@ -91,6 +91,25 @@ deployed MCP tool surface — stay pending in §5.
 | Enqueue bare notes into `05-raw/` and `00-inbox/` with a delete of a curated note that fails the bar; and a create whose refusable note the vault already holds byte for byte → all apply, and the second is settled without a write | The gate's edges. The raw layer is exempt (ADR-0015) and the agent zone detective only, and a delete adds nothing to curated space. "Is this work already done?" is asked before admission as before every refusal (ADR-0022), so a re-run converges over content that reached the vault by a path this gate never saw — the lint pass's to report | Proven — standing injections in the test suite, re-proven on every run |
 | Kill the processor after a chunk's writes but before its acknowledgement, then restart inside the acknowledgement window → the run reports what it left queued | A run that fetched nothing because the broker is withholding everything behind an unsettled chunk was otherwise bit-identical to a healthy run against an empty stream — same five INFO lines, same zero counts, same exit code — with the whole import still pending. A green that means "did not run" is what this catalogue exists to make impossible | Proven — crash-injection harness, with the drained-stream control beside it |
 
+## 4a. Proven — the lint pass's own controls ([A5](../ROADMAP.md#group-a--pipeline-mechanisms), [A6](../ROADMAP.md#group-a--pipeline-mechanisms))
+
+Run in the test suite against a real directory standing in for the read-only mount, the vault stub
+as the ingestor door on a real socket, and a stub hook endpoint for the digest. What is proven here
+is the *code* half of each control; the deployed halves — the real mount, the real door, a real push
+reaching OpenClaw — stay pending in §5.
+
+| Injection | Proves | Status |
+| --- | --- | --- |
+| Plant one instance of every tolerance-line row that can be planted, beside a clean control vault → each lands in its tier (refused, fixed, reported or tolerated) and the control stays silent | [S2](../USE_CASES.md#s2--sound)'s tolerance line is behaviour, not prose. The expected tier is stated in the test rather than read from the table under test, so moving a row's tier, dropping a row, or adding one with no plant each turns a named test red | Proven — standing table in the test suite, re-proven on every run |
+| A curated note stamped `trigger: schedule` with `authority: human` → reported; no fix planned for the note | The consistency check fires, and neither field is "corrected" — which one is wrong is a judgment (ADR-0009, ADR-0018) | Proven in the suite; the deployed half stays pending in §5 |
+| Plant an orphan, a dangling link and a note past its area's `reviewed:` dial → all three reported, none modified | The mechanical hygiene checks fire and stay report-only. Links match exactly — a mis-cased link is dangling — and a link from the pass's own report never rescues an orphan | Proven in the suite; the deployed half stays pending in §5 |
+| A curated note in the GUI template's own shape (empty `source:`, `authority: human`, `trigger: human`, empty `confidence:`) → reported unstamped and empty-confidence; its empty dates stamped, its empty claims left empty | The only signal of a GUI-exception write a pass without history can see. The limit, stated: a GUI edit that leaves every frontmatter field intact is invisible to it | Proven in the suite; the deployed half stays pending in §5 |
+| A schema-violating note under `05-raw/` → zero findings and zero writes, and a link into it is not dangling | Silence about raw is [S2](../USE_CASES.md#s2--sound) working, and raw's exemption does not leak into the notes that cite it | Proven — standing injection in the test suite |
+| Normalise generated frontmatter → every pre-existing key keeps an equal value (a date's spelling and a tag's case the only rewrites, each checked against its meaning), nothing absent is filled with a claim, the body is byte-identical, and a second pass changes nothing | Normalisation never overwrites a value (ADR-0018) — the one lint mechanism with an independent oracle, so a property rather than examples | Proven — standing property in the test suite, with examples pinning each transform |
+| A curated note with a fixable key order *and* no `type` → the fix is withheld, reported "withheld by admission", and nothing is written | The lint pass never writes a curated post-image the validator has not admitted (ADR-0007): the bytes that land are the bytes `admit` judged | Proven — standing injection in the test suite |
+| Change a note through the door between the mount read and its fix → the fix is skipped as changed since read, and the concurrent content survives | The hash re-check narrows the lost-update window the pass sits inside (DESIGN.md §5; ADR-0048's measure). No write tool takes a precondition, so this narrows and does not close it | Proven — standing injection in the test suite, with its control beside it |
+| Twelve findings → seven digest items in rank order, finance first; no findings → no push; the hook answering 500 → the pass exits non-zero with its report and log line still written | The capped, ranked digest (ADR-0018), the silence rule for a single operator, and a failed push read from the exit rather than lost | Proven — standing injections in the test suite; one real push stays pending in §5 |
+
 ## 5. Pending — keyed to the unit that delivers the control
 
 ### The work queue and its credentials ([A1](../ROADMAP.md#group-a--pipeline-mechanisms), [A2](../ROADMAP.md#group-a--pipeline-mechanisms), [B1](../ROADMAP.md#group-b--connection-work))
@@ -131,11 +150,17 @@ deployed MCP tool surface — stay pending in §5.
 
 ### The lint pass and the provenance contract ([A5](../ROADMAP.md#group-a--pipeline-mechanisms))
 
+The code half of each row below is proven in §4a; what is owed is the same verdict from a real pass
+against the deployed vault (the lint CronJob, [apps#3445](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3445)).
+
 | Injection | Proves | Pending on |
 | --- | --- | --- |
-| Write a note stamped `trigger: schedule` with `authority: human` → flagged by the next pass | The consistency check — **the entire return on splitting the provenance field**, proved by firing (ADR-0009) | A5 |
-| Plant an orphan, a dangling link, a contradiction and a stale claim → all four appear; the mechanical two auto-fixed, the content two flagged only | The auto-fix boundary (ADR-0018) | A5 |
-| Make a GUI edit → it appears in the next report, unstamped and unvalidated | The lint pass is the GUI exception's only observer (ADR-0002) | A5 |
+| Write a note stamped `trigger: schedule` with `authority: human` → flagged by the next pass | The consistency check — **the entire return on splitting the provenance field**, proved by firing (ADR-0009) | A5's deploy |
+| Plant an orphan, a dangling link and a stale note through the door → all three in the next report, none modified | The mechanical hygiene checks, against the real mount and door | A5's deploy |
+| Plant a contradiction, and a claim a model would judge stale → both flagged, neither applied | The judgment half of the auto-fix boundary (ADR-0018). Outside the first pass by the tolerance line ("not checked": model judgment), so silence here is not a verdict | A judgment pass, after A5's first pass |
+| Make a GUI edit → it appears in the next report, unstamped and unvalidated | The lint pass is the GUI exception's only observer (ADR-0002) | A5's deploy |
+| From a Job built from the lint CronJob's pod template, attempt a write under `/vault` → `EROFS` | The three-mount contract's read-only half holds for its newest mounter (ADR-0001) | A5's deploy |
+| Run a pass with findings → one digest reaches OpenClaw's hook and a `lint_pass_complete` line reaches the log store with counts matching the planted set | The review loop's push and the pass's O1 emission, end to end | A5's deploy |
 
 ### Content gate ([C3](../ROADMAP.md#group-c--content-work))
 

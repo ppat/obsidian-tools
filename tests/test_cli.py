@@ -216,3 +216,28 @@ def test_main_stops_gracefully_and_returns_143_on_sigterm(monkeypatch: pytest.Mo
         assert main(["commit"]) == 143
     finally:
         signal.signal(signal.SIGTERM, previous)
+
+
+def test_lint_subcommand_is_registered() -> None:
+    """The name is also the container's `args:` value in the lint CronJob's manifest."""
+    args = build_parser().parse_args(["lint"])
+
+    assert args.subcommand == "lint"
+    assert callable(args.handler)
+
+
+def test_main_returns_config_error_exit_code_for_lint_when_required_env_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in (
+        "LINT_MCP_URL",
+        "LINT_MCP_API_KEY",
+        "LINT_MCP_TOOL_READ",
+        "LINT_MCP_TOOL_WRITE",
+        "LINT_MCP_TOOL_APPEND",
+        "LINT_DIGEST_HOOK_URL",
+        "LINT_DIGEST_HOOK_TOKEN",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    assert main(["lint"]) == 2

@@ -7,6 +7,7 @@ from obsidian_tools.config import (
     CommitConfig,
     ConfigError,
     DrainConfig,
+    LintPassConfig,
     ReplicateConfig,
     VaultExporterConfig,
     WatchdogConfig,
@@ -389,3 +390,50 @@ def test_an_ipv6_api_server_address_is_bracketed(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setenv("BATCH_AGENT_INSTANCE_LEASE", "batch-mode")
 
     assert WatchdogConfig.from_env().agent_instance.api_url == "https://[fd00::1]:443"
+
+
+_LINT_ENV = {
+    "LINT_MCP_URL": "http://gateway/obsidian_ingestor_mcp/mcp",
+    "LINT_MCP_API_KEY": "sk-key",
+    "LINT_MCP_TOOL_READ": "read",
+    "LINT_MCP_TOOL_WRITE": "write",
+    "LINT_MCP_TOOL_APPEND": "append",
+    "LINT_DIGEST_HOOK_URL": "http://openclaw/hooks/agent",
+    "LINT_DIGEST_HOOK_TOKEN": "hooks-token",
+}
+
+
+def _lint_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name, value in _LINT_ENV.items():
+        monkeypatch.setenv(name, value)
+
+
+def test_lint_pass_config_reads_the_mount_path_and_the_digest_cap_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    _lint_env(monkeypatch)
+    monkeypatch.delenv("LINT_VAULT_DIR", raising=False)
+    monkeypatch.delenv("LINT_DIGEST_MAX_ITEMS", raising=False)
+
+    config = LintPassConfig.from_env()
+
+    assert config.vault_dir == "/vault/brain"
+    assert config.digest_max_items == 7
+    assert not hasattr(config, "mcp_tool_delete")  # the lint key holds no delete tool (ADR-0004)
+
+
+@pytest.mark.parametrize("missing", sorted(_LINT_ENV))
+def test_lint_pass_config_requires_every_deployment_fact(monkeypatch: pytest.MonkeyPatch, missing: str) -> None:
+    """Tool names, the door, the key, the hook and its token have no defaults: each is deployment
+    identity, and a guessed one fails as a refusal wherever it is used."""
+    _lint_env(monkeypatch)
+    monkeypatch.delenv(missing, raising=False)
+
+    with pytest.raises(ConfigError, match=missing):
+        LintPassConfig.from_env()
+
+
+def test_lint_pass_config_refuses_a_digest_cap_below_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    _lint_env(monkeypatch)
+    monkeypatch.setenv("LINT_DIGEST_MAX_ITEMS", "0")
+
+    with pytest.raises(ConfigError, match="LINT_DIGEST_MAX_ITEMS"):
+        LintPassConfig.from_env()

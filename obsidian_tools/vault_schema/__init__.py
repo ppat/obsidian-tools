@@ -11,7 +11,7 @@ admission or lint policy — those are its callers' (`admission/`, the lint pass
 | `fields.py` | Every declared field's type, vocabulary and requiredness, in canonical key order | §3 table |
 | `dates.py` | Which date spellings are dates at all | §3, §9 |
 | `slug.py` | `slug(title)` — the filename rule | §7.2 |
-| `zones.py` | The folder map's curated and finance prefixes | §1, §2 |
+| `zones.py` | The folder map's prefixes that carry rules, and the §6 staleness dials | §1, §2, §6, §7.2 |
 
 Where the schema file and an accepted decision record disagree, the record governs, and this
 package follows the record (ADR-0010 on finance `authority:`; ADR-0019 removed the entity kind
