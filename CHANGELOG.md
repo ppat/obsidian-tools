@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.7.0](https://github.com/ppat/obsidian-tools/compare/v0.6.0...v0.7.0) (2026-09-22)
+
+
+### 🛠 Improvements
+
+* **processor:** batch chunks apply as whole-note writes, and no write-time precondition exists on the MCP surface ([#155](https://github.com/ppat/obsidian-tools/issues/155)) ([6de632d](https://github.com/ppat/obsidian-tools/commit/6de632d6eeef1e49b3625e82dfc392132950a31f))
+
+
+### ✨ Features
+
+* **processor:** write chunks against the deployed tool contract, with create and modify told apart on the wire ([#156](https://github.com/ppat/obsidian-tools/issues/156)) ([00b0d2e](https://github.com/ppat/obsidian-tools/commit/00b0d2ed411bb15458fc9972faf56464411bed64))
+
+
+### 🚀 Enhancements + Bug Fixes
+
+* update @commitlint/cli (21.2.2 -&gt; 21.2.3) ([#165](https://github.com/ppat/obsidian-tools/issues/165)) ([e6c039a](https://github.com/ppat/obsidian-tools/commit/e6c039adbfe31a5d89695355df1bad1fb2947ee7))
+
 ## [0.6.0](https://github.com/ppat/obsidian-tools/compare/v0.5.1...v0.6.0) (2026-09-07)
 
 
