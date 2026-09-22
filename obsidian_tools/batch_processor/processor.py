@@ -206,7 +206,13 @@ async def apply_writes(mcp: McpClient, writes: tuple[PlannedWrite, ...]) -> Writ
             if write.kind is WriteKind.DELETE:
                 await asyncio.to_thread(mcp.delete_note, write.path)
             else:
-                await asyncio.to_thread(mcp.write_note, write.path, write.content or "")
+                # The chunk's declared operation is what sets the anti-clobber flag (ADR-0053), so
+                # a create asserts the target's absence at the server and a modify does not. Read
+                # off `kind` rather than off the pre-flight's observation: the pre-flight decided
+                # whether this chunk may apply at all, and the flag says what this one call is.
+                await asyncio.to_thread(
+                    mcp.write_note, write.path, write.content or "", overwrite=write.kind is not WriteKind.CREATE
+                )
         except McpError as exc:
             return WriteOutcome(applied, exc)
         applied += 1
@@ -231,8 +237,6 @@ async def _run(config: BatchProcessorConfig) -> int:
             read=config.mcp_tool_read,
             write=config.mcp_tool_write,
             delete=config.mcp_tool_delete,
-            path_argument=config.mcp_path_argument,
-            content_argument=config.mcp_content_argument,
         ),
         timeout_seconds=config.mcp_timeout_seconds,
         verify_tls=config.mcp_verify_tls,

@@ -8,12 +8,23 @@ read off real state rather than off a recording of intentions.
 **What this is and is not evidence for.** It is a real HTTP server on a real socket, so everything
 between `McpClient`/`AgentInstanceClient` and the wire is exercised for real: the opener, the
 envelope, the retry loop, the session header, the merge-patch bodies, the ordering of calls. It is
-*not* evidence about the deployed MCP surface — the tool names, the argument keys and the refusal
-wording are this stub's choices, and the deployed ones are apps#3875's. That is exactly why the tool
-names are required configuration with no defaults: no stub can make a guess about them true. It is
+*not* evidence about the deployed MCP surface — the tool names and the refusal wording are this
+stub's choices, and its response shapes are modelled on captured responses rather than being them
+(`tests/fixtures/mcp/`, used directly where a real shape carries the argument). That is exactly why
+the tool names are required configuration with no defaults: no stub can make a guess about them
+true. Nor is it evidence that the deployed surface acts on `overwrite: false` — a stub that refuses
+because a test told it to refuse proves the client sends the flag, never that the server honours it
+(`docs/VERIFICATIONS.md` §5). It is
 equally not evidence about the RBAC grant: this stub answers every request, and only a real API
 server refusing one proves the grant is as narrow as ADR-0052 requires
 (`docs/VERIFICATIONS.md` §5).
+
+**What it enforces rather than accepts.** The stub honours `overwrite: false` with its own
+existence test and answers a read with the deployed surface's two renderings — the note's bytes in
+the typed result, a decorated rendering of them in the content array. Both are the point: a
+permissive stub would answer a create and a modify identically, so an inverted or dropped flag
+would be invisible; a stub returning the body in both fields would agree with a client that hashed
+either.
 
 The failure injection is by path (`refuse_paths`) *and* by count (`unavailable_writes`,
 `fail_after_writes`), because the two failures a test needs to distinguish are distinguished by
@@ -84,6 +95,17 @@ class FakeVault:
 
     writes: int = 0
 
+    write_arguments: list[tuple[str, bool]] = field(default_factory=list[tuple[str, bool]])
+    """`(path, overwrite)` for every write that reached the tool, in order — the flag as it arrived
+    on the wire. Recorded because this stub, like the deployed surface, answers a create and a
+    modify of an absent path identically: an inverted flag is invisible in the outcome and visible
+    only here."""
+
+    appear_before_first_write: dict[str, str] = field(default_factory=dict[str, str])
+    """Notes that materialise in the vault the instant before the first write of a run — a writer
+    racing the pre-flight. The violation injection for `overwrite: false`: the processor has read
+    the path as absent and is about to create it, and by the time it does, it is not."""
+
     agent_replicas_during_writes: list[int] = field(default_factory=list[int])
     """The agent instance's desired replica count at the moment of each write. Recorded here rather
     than asserted after the run, because "the instance was stopped while the batch wrote" is a
@@ -93,9 +115,31 @@ class FakeVault:
         return self.notes.get(path)
 
 
-def _mcp_result(text: str, *, is_error: bool = False) -> bytes:
-    body = {"jsonrpc": "2.0", "id": 1, "result": {"content": [{"type": "text", "text": text}], "isError": is_error}}
-    return json.dumps(body).encode("utf-8")
+def _mcp_result(text: str, *, is_error: bool = False, structured: dict[str, object] | None = None) -> bytes:
+    result: dict[str, object] = {"content": [{"type": "text", "text": text}], "isError": is_error}
+    if structured is not None:
+        result["structuredContent"] = structured
+    return json.dumps({"jsonrpc": "2.0", "id": 1, "result": result}).encode("utf-8")
+
+
+def _read_result(path: str, content: str) -> bytes:
+    """A read answered the way the deployed surface answers one: the note's bytes in the typed
+    result, and a *rendering* of them — body behind a title line — in the content array.
+
+    The two differ deliberately. A stub returning the body in both would agree with a client that
+    read either field, and the whole staleness measure rests on which one it reads."""
+    rendered = f"**{path}** (format: content)\n\n{content}"
+    structured: dict[str, object] = {"result": {"format": "content", "path": path, "content": content}}
+    return _mcp_result(rendered, structured=structured)
+
+
+def _tool_error(message: str, *, reason: str, path: str) -> bytes:
+    """A tool's own failure: prose for a reader, and the cause as a field. `reason` is what
+    `envelope.py` classifies on, so a stub that omitted it would prove nothing about that path."""
+    structured: dict[str, object] = {
+        "error": {"code": -32001, "message": message, "data": {"path": path, "reason": reason}}
+    }
+    return _mcp_result(f"Error: {message}", is_error=True, structured=structured)
 
 
 @contextmanager
@@ -176,42 +220,62 @@ def running_vault(vault: FakeVault) -> Generator[FakeVault]:
                 return
             params = cast("dict[str, object]", request.get("params") or {})
             tool = cast("str", params.get("name"))
-            arguments = cast("dict[str, str]", params.get("arguments") or {})
-            path = arguments.get("filepath", "")
+            arguments = cast("dict[str, object]", params.get("arguments") or {})
+            target = arguments.get("target")
+            # Addressed the way the surface's schema requires, so a client that regressed to a flat
+            # key reaches no note at all rather than quietly reaching the wrong one.
+            path = cast("str", cast("dict[str, object]", target).get("path", "")) if isinstance(target, dict) else ""
             vault.calls.append((tool, path))
 
             if tool == TOOL_READ:
                 content = vault.notes.get(path)
                 if content is None:
-                    self._reply(200, _mcp_result(f"File not found: {path}", is_error=True))
+                    self._reply(200, _tool_error(f"Not found: {path}", reason="note_missing", path=path))
                 else:
-                    self._reply(200, _mcp_result(content))
+                    self._reply(200, _read_result(path, content))
                 return
 
             if vault.unavailable_writes > 0:
                 vault.unavailable_writes -= 1
                 self._reply(503, b"")
                 return
+            # The racing writer lands here rather than at the top of the handler: the reads of the
+            # pre-flight have already happened, and this is the last moment before the write.
+            if vault.appear_before_first_write:
+                vault.notes.update(vault.appear_before_first_write)
+                vault.appear_before_first_write = {}
             if path in vault.refuse_paths or (
                 vault.fail_after_writes is not None and vault.writes >= vault.fail_after_writes
             ):
+                # The gateway's own refusal, which carries prose and no structured cause — the
+                # shape proven at content-foundation acceptance (`docs/VERIFICATIONS.md` §1).
                 self._reply(200, _mcp_result(f"path_forbidden: {path}", is_error=True))
                 return
 
             if tool == TOOL_WRITE:
-                vault.notes[path] = arguments.get("content", "")
+                overwrite = arguments.get("overwrite")
+                vault.write_arguments.append((path, overwrite is True))
+                if overwrite is not True and path in vault.notes:
+                    # The surface's own existence test, honoured rather than assumed: a stub that
+                    # accepted every write would give the same green whatever flag arrived.
+                    self._reply(
+                        200,
+                        _tool_error(f"file_exists: {path} already exists", reason="file_exists", path=path),
+                    )
+                    return
+                vault.notes[path] = cast("str", arguments.get("content", ""))
                 vault.writes += 1
                 vault.agent_replicas_during_writes.append(vault.agent_replicas)
-                self._reply(200, _mcp_result(""))
+                self._reply(200, _mcp_result(f"**{path}** written"))
                 return
             if tool == TOOL_DELETE:
                 if path not in vault.notes:
-                    self._reply(200, _mcp_result(f"File not found: {path}", is_error=True))
+                    self._reply(200, _tool_error(f"Not found: {path}", reason="note_missing", path=path))
                     return
                 del vault.notes[path]
                 vault.writes += 1
                 vault.agent_replicas_during_writes.append(vault.agent_replicas)
-                self._reply(200, _mcp_result(""))
+                self._reply(200, _mcp_result(f"**{path}** deleted"))
                 return
             self._reply(200, b'{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown tool"}}')
 
