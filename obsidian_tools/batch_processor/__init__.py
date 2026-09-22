@@ -28,11 +28,12 @@ Split pure/impure the way `local_replicator/drift.py` is split from `cycle.py`:
 | `fairness.py` — yield-or-proceed, dead-letter-or-redeliver | `processor.py` — one batch run |
 | `watchdog.py` — start, release or leave alone | |
 
-**The admission validator is a named absence, not an oversight.** A chunk entering curated space
-should cross ADR-0007's schema and provenance gate, and the roadmap records that dependency
-explicitly (A2 depends on A4); the validator is unbuilt (ot#6), and the bootstrap import this
-component exists for lands entirely in the validation-exempt raw layer. When it ships, its call
-belongs between the pre-flight and the writes in `processor.py`.
+**Every chunk entering curated space crosses the admission validator** (ADR-0007, `admission/`),
+called in `processor.py` between planning the writes and performing them. The check itself is not
+this component's — it is one validator with three callers — but calling it is, because a batch
+chunk carries the widest write scope in the system and nothing downstream of this processor judges
+what it writes. What a refusal does to the chunk, and why it is judged after the settle question rather
+than before it, is `processor.py`'s "Admission" section.
 """
 
 from __future__ import annotations

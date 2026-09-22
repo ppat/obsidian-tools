@@ -33,6 +33,7 @@ process does not — is the watchdog's job (`watchdog.py`), not this file's.
 | Applied | `ack` | done |
 | Already applied | `ack` | done, by an earlier delivery or an earlier run |
 | Stale, raw-refused, undecodable, unapplicable, refused | dead-letter, then `term` | redelivery changes none of them |
+| Refused admission to curated space | dead-letter, then `term` | only the producer can change the note |
 | Dependent on a chunk that failed | dead-letter, then `term` | the work it needs is undone |
 | Broker or MCP unavailable | `nak` with backoff, to `max_deliver` | the next delivery may well succeed |
 
@@ -96,6 +97,37 @@ cycle, so that dangle closes on its own — whereas parking it costs a chunk's w
 cycle until it does. One hop is still expensive, measured: at 45% link density one refused write
 parks 24 of the 30 chunks behind it. That is the price of the mechanism, not a defect in it.
 
+## Admission: every curated post-image is judged before the first write
+
+The admission validator (ADR-0007) is asked of every create and modify the chunk would perform,
+over the post-images `plan_writes` has just computed — the bytes the writes will carry, so what is
+judged is exactly what would land. `admit` owns the zone rule, so a write outside curated space
+comes back as no crossing rather than being filtered out here, and the raw layer stays exempt
+(ADR-0015) without this file restating where curated space begins.
+
+- **One refused post-image refuses the whole chunk**, its admissible notes and its writes outside
+  curated space included. The chunk is the transaction unit (ADR-0022, ADR-0048); writing the
+  admissible part would half-apply a chunk on purpose, and its regeneration would then meet its own
+  earlier writes and reject as stale.
+- **Deletes are not asked.** They carry no content to judge, and removing a note adds nothing to
+  curated space. A rename's new path is a create, so a rename *into* curated space is judged, and
+  its delete of the old path is withheld with everything else when the new one is refused.
+- **Refusal is a dead-letter with reason `admission_refused`**, the detail naming every refused
+  path with its reason codes. That is the quarantine on this path: nothing destroyed, counted, and
+  handed back to the one producer able to fix it. Writing the refused notes into `_ops/quarantine/`
+  instead would put vault writes outside the chunk's transaction.
+- **Its creates are blocked like any failed chunk's**, because refusal funnels through
+  `_dead_letter`: a later chunk of the batch linking to a refused note is parked, one hop deep.
+- **It runs after the settle question, never before it.** ADR-0022 asks "is this work already
+  done?" ahead of every refusal, and admission is one. A chunk whose every path already holds what
+  it would write performs no write, so it crosses no boundary; refusing it would stop a re-run
+  converging over content that is present whatever this run decides. A refused chunk writes
+  nothing, so its own redelivery can never be what settles it — bytes like that reach the vault
+  only by a path this gate never saw (the GUI exception, or a run from before the gate), and
+  reporting them is the lint pass's job.
+- **Counted per rule.** `batch_run_complete` carries `admission_refused_<code>`, one per refused
+  post-image carrying that code, beside the per-chunk `dead_lettered_admission_refused`.
+
 ## The crash-injection seams
 
 `read_targets`, `apply_writes`, `settle`, `begin_run` and `end_run` are module-level functions
@@ -114,6 +146,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from obsidian_tools.admission.validator import Verdict, admit
 from obsidian_tools.batch_processor.agent_instance import (
     AgentInstanceClient,
     AgentInstanceError,
@@ -150,6 +183,7 @@ _REASON_REFUSED = "mcp_refused"
 _REASON_PARTIALLY_APPLIED = "partially_applied"
 _REASON_REDELIVERY_EXHAUSTED = "redelivery_exhausted"
 _REASON_DEPENDS_ON_FAILED = "depends_on_failed_chunk"
+_REASON_ADMISSION_REFUSED = "admission_refused"
 
 
 def run(config: BatchProcessorConfig) -> int:
@@ -460,6 +494,28 @@ async def _process(
         await _dead_letter(config, consumer, delivered, chunk, _REASON_UNAPPLICABLE, str(exc), counts, blocked)
         return
 
+    refused = _admission_refusals(writes)
+    if refused:
+        for verdict in refused:
+            for code in verdict.codes:
+                counts[f"admission_refused_{code}"] += 1
+        logger.warning(
+            "chunk refused admission to curated space, with nothing applied",
+            extra={
+                "event": "chunk_admission_refused",
+                "chunk_id": identity,
+                "paths": [verdict.path for verdict in refused][:LOG_PATH_SAMPLE_LIMIT],
+                "refused_count": len(refused),
+                "detail": "; ".join(f"{verdict.path}: {verdict.summary()}" for verdict in refused),
+            },
+        )
+        detail = "; ".join(
+            f"{verdict.path}: {', '.join(_code_and_field(r.code, r.field) for r in verdict.refusals)}"
+            for verdict in refused
+        )
+        await _dead_letter(config, consumer, delivered, chunk, _REASON_ADMISSION_REFUSED, detail, counts, blocked)
+        return
+
     outcome = await apply_writes(mcp, writes)
     if outcome.failure is not None:
         if outcome.applied == 0 and isinstance(outcome.failure, McpUnavailableError):
@@ -496,6 +552,25 @@ async def _process(
             "paths": [write.path for write in writes][:LOG_PATH_SAMPLE_LIMIT],
         },
     )
+
+
+def _admission_refusals(writes: tuple[PlannedWrite, ...]) -> tuple[Verdict, ...]:
+    """The verdict on every planned post-image that admission refuses. Empty means none is refused.
+
+    Pure. Judges `write.content or ""`, the exact expression `apply_writes` sends, so no reading of
+    a post-image can differ between the gate and the write. See "Admission" in the module docstring.
+    """
+    judged = (admit(write.path, write.content or "") for write in writes if write.kind is not WriteKind.DELETE)
+    return tuple(verdict for verdict in judged if not verdict.admitted)
+
+
+def _code_and_field(code: str, field: str | None) -> str:
+    """One refusal as the dead-letter detail carries it: the reason code, and the key it judged.
+
+    Codes rather than prose, so the detail stays readable at the header's length cap across a chunk
+    of many notes; the prose for each rides on the `chunk_admission_refused` log line.
+    """
+    return code if field is None else f"{code} ({field})"
 
 
 def _work_already_done(chunk: Chunk, contents: Mapping[str, str | None]) -> bool:
