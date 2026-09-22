@@ -26,7 +26,7 @@ repos:
   - id: yamllint
     args: [--strict]
 - repo: https://github.com/DavidAnson/markdownlint-cli2
-  rev: v0.23.2
+  rev: v0.23.3
   hooks:
   - id: markdownlint-cli2
     args: ["--fix", "--config", ".markdownlint-cli2.yaml"]
@@ -41,13 +41,13 @@ repos:
     args:
     - --failure-threshold=warning
 - repo: https://github.com/astral-sh/ruff-pre-commit
-  rev: v0.16.5
+  rev: v0.16.8
   hooks:
   - id: ruff
     args: [--fix]
   - id: ruff-format
 - repo: https://github.com/RobertCraigie/pyright-python
-  rev: v1.1.411
+  rev: v1.1.414
   hooks:
   - id: pyright
 - repo: https://github.com/alessandrojcm/commitlint-pre-commit-hook
