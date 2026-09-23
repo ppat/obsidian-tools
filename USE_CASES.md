@@ -39,8 +39,9 @@ These are not outcomes; they bound every outcome and every design choice.
   reads cleanly while being wrong — not human-vs-agent edit collisions, which are rare by
   construction.
 - **One operator, no team.** Anything that produces noise a single person cannot triage is negative
-  value. This is why alerting is an explicit non-outcome ([O3](#o3--alerting)) and why review surfaces are ranked and
-  hard-capped.
+  value. This is why alerting is an explicit non-outcome ([O3](#o3--alerting)) and why the platform pushes
+  nothing to the owner for action: resolving what the vault finds is agents' work — the vault's own
+  — not his.
 - **Acceptance criteria must be falsifiable.** A criterion that cannot fail is not one. Every
   outcome below states what would falsify it, and a control is proven by making it fire (violation
   injection), never by observing that nothing bad happened.
@@ -105,6 +106,8 @@ and quarantined rather than accumulating silently.**
   inconsistency that is the entire return on splitting the provenance field.
 - A note missing a required `type`, or a finance note with an unsourced number, is admitted to
   curated space rather than quarantined.
+- A lint finding reaches the owner as a request for action, rather than being resolved by the
+  vault's agentic workflow or recorded in the lint report.
 
 *Two scope notes, without which this criterion is not falsifiable:*
 
@@ -172,12 +175,16 @@ the rare direct path, not "the human path". Every writer shares one acceptance s
 
 | # | Writer | What it exists to land |
 | --- | --- | --- |
-| **W1** | Claude Code, from the operator's workspace | The one-time scattered pile (bulk, via the batch stream), and later structural refactors; plus ordinary incremental writes |
+| **W1** | A development-environment agent (for example Claude Code, from the operator's workspace) | The one-time scattered pile (bulk, via the batch stream), and later structural refactors; plus ordinary incremental writes |
 | **W2** | A watched NFS drop on the Synology NAS | Documents dropped by hand into a share, picked up and fed to bulk import |
-| **W3** | OpenClaw (WhatsApp-triggered; Home Assistant voice hands off to it) | Conversational captures — the "add milk to my todo" path, where a human is waiting on the reply |
-| **W4** | n8n | Automation-originated notes and the daily organise workflow |
+| **W3** | A conversational agent a human is talking to (for example OpenClaw — WhatsApp-triggered, with Home Assistant voice handing off to it) | Conversational captures — the "add milk to my todo" path, where a human is waiting on the reply |
+| **W4** | An automation platform (for example n8n) | Automation-originated notes and scheduled workflows (for example a daily organise) |
 | **W5** | One-off and ad-hoc scripts | Whatever does not justify a standing integration |
 | **W6** | Humans, from laptop or phone | Edits made on a device, captured and fed back into the funnel. Deferred to the end of the project by the owner |
+
+The writers are kinds of client, and each named product is an example: the vault's design and behaviour
+depend only on the credential a writer presents — its message shape and grant — never on which
+client holds it, nor on whether that client runs batch or interactive work.
 
 *Scope note on W6:* it has two separable halves — **capture** (a device edit is recorded
 non-destructively and never silently overwritten; delivered) and **dispatch** (the captured edit is
@@ -187,9 +194,9 @@ rare — so capture's value (a non-destructive read replica) is banked, while di
 event that is rare by design.
 
 *Scope note on W2:* the owner's framing routes the NAS drop to bulk import, but the batch stream is
-patch-carrying and closed to every producer except the operator's workspace — so W2 currently has no
-place in the authority model, and connecting it requires a design decision, not just a credential
-(see [`ROADMAP.md`'s open decisions](./ROADMAP.md#open-decisions)).
+patch-carrying and closed to every producer except the one client issued the batch credential — so W2
+currently has no place in the authority model, and connecting it requires a design decision, not
+just a credential (see [`ROADMAP.md`'s open decisions](./ROADMAP.md#open-decisions)).
 
 ## Axis 3 — Readers connected
 
@@ -207,15 +214,14 @@ carries no information. The criterion is about the owner's actual complaint — 
 | # | Reader | State |
 | --- | --- | --- |
 | **R1** | Humans, on macOS and iOS, in the native Obsidian app on the device — rich, offline, laggier | Content reaches the devices; no app is installed yet, deliberately |
-| **R2** | OpenClaw | Access delivered |
-| **R3** | n8n | Access delivered |
-| **R4** | Claude Code | Access delivered |
-| **R5** | Humans, conversationally — WhatsApp via OpenClaw, or Open WebUI in a browser; always fresh, works anywhere, Mac-independent | Delivered |
+| **R2** | A conversational agent (for example OpenClaw) | Access delivered |
+| **R3** | An automation platform (for example n8n) | Access delivered |
+| **R4** | A development-environment agent (for example Claude Code) | Access delivered |
+| **R5** | Humans, conversationally, through a chat client holding a read handle (for example WhatsApp via OpenClaw, or Open WebUI in a browser); always fresh, works anywhere, Mac-independent | Delivered |
 
 *Scope note on R5:* the design treats the conversational surface as the **primary** phone reading
 experience even once native iOS reading works, because it is always fresh and independent of any
-device being awake — and because it pushes (digests, "what's due today") rather than waiting to be
-opened. R1 is the richer, laggier complement, not the primary surface.
+device being awake. R1 is the richer, laggier complement, not the primary surface.
 
 ## Axis 4 — Operability
 

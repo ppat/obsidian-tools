@@ -14,8 +14,8 @@ entirely.
 ## Decision
 
 Markdown only. Video, audio, PDFs and documents are converted to markdown **before** entering, and
-the conversion lives outside the vault boundary — in the systems that own the capture channel
-(OpenClaw, n8n), out of scope for this design. Everything enters through the inbox after
+the conversion lives outside the vault boundary — in the clients that own the capture channel
+(for example OpenClaw or n8n), out of scope for this design. Everything enters through the inbox after
 conversion; the bootstrap pile is converted first and then lands via the batch stream. Images are
 wanted but deferred past the first pass; `_attachments/` keeps a committed placeholder and the
 attachment-location setting is locked day one (both retroactively painful), so nothing has to move
@@ -30,7 +30,7 @@ later — the folder holds nothing yet.
 
 ## Consequences
 
-- "Bulk import" is *not a component*: conversion (out of scope) + patch generation by Claude Code
+- "Bulk import" is *not a component*: conversion (out of scope) + patch generation by the batch producer, a client
   ([B1](../../../ROADMAP.md#group-b--connection-work)) + application by `batch-processor`
   ([A2](../../../ROADMAP.md#group-a--pipeline-mechanisms)). Anyone looking for an import pipeline to
   build will not find one, correctly.
