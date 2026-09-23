@@ -39,8 +39,8 @@ staleness is detectable instead of silent.
 repositories, the clusters repo's pins and the running cluster. Four V1 units are completed and
 ticked: [A1](#group-a--pipeline-mechanisms) and [D1](#group-d--operability) are also deployed, [A2](#group-a--pipeline-mechanisms) and [B1](#group-b--connection-work) are not yet. [C1](#group-c--content-work) is
 deferred by the owner, and [D4](#group-d--operability)'s window and drain are unbuilt. Of [V2](#v2--the-safeguard-minimum), [A4](#group-a--pipeline-mechanisms) and [A6](#group-a--pipeline-mechanisms) are
-completed and ticked, neither yet released or deployed; [A5](#group-a--pipeline-mechanisms) is in progress — its code is merged, its
-deployment is not.
+completed and ticked, neither yet released or deployed; [A5](#group-a--pipeline-mechanisms) is in progress — its first-pass code is
+merged, its deployment is outstanding, and its second pass ([ot#177](https://github.com/ppat/obsidian-tools/issues/177)) is unbuilt.
 
 ## Delivery posture
 
@@ -209,8 +209,9 @@ completed: the completed work running on the cluster. A1 is completed and deploy
 decisive credential-refusal injection in the [verification catalogue](./docs/VERIFICATIONS.md). A2 is
 completed — its corrected write path is released and its manifest merged — but not yet deployed: the
 cluster still runs the earlier release, so no batch has drained. A4 and A6 are completed — their code
-merged, awaiting the next release — and not yet deployed. A5 is in progress: its code is merged, its
-deployment is not. A3, A7 and A8 are unimplemented [measured 2026-09-23].
+merged, awaiting the next release — and not yet deployed. A5's first-pass code is merged, its
+deployment is outstanding, and its second pass ([ot#177](https://github.com/ppat/obsidian-tools/issues/177)) is unbuilt, so A5 is not completed. A3, A7
+and A8 are unimplemented [measured 2026-09-23].
 
 - [x] **A1 — NATS substrate and credential machinery** → [S1](./USE_CASES.md#s1--admitted) · [apps#3444](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3444) · [V1](#v1--content-in-content-readable)
   JetStream as a single-replica Deployment; the off-cluster ingress; one NATS account per producer
@@ -233,7 +234,7 @@ deployment is not. A3, A7 and A8 are unimplemented [measured 2026-09-23].
   quarantine-never-delete with machine-readable reasons, counted. First pass: the mechanical checks
   and the finance hard block, nothing speculative. See [Open decisions](#open-decisions) for the
   ratification this unit needs.
-- [ ] **A5 — the lint pass** → [S2](./USE_CASES.md#s2--sound) · [ot#83](https://github.com/ppat/obsidian-tools/issues/83) (code) + [apps#3445](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3445) (CronJob manifests) · [V2](#v2--the-safeguard-minimum)
+- [ ] **A5 — the lint pass** → [S2](./USE_CASES.md#s2--sound) · [ot#83](https://github.com/ppat/obsidian-tools/issues/83) (code, first pass) + [apps#3445](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3445) (CronJob manifests) · [V2](#v2--the-safeguard-minimum) · [ot#177](https://github.com/ppat/obsidian-tools/issues/177) (code, second pass — outside V2)
   Whole-vault conformance and hygiene; the `trigger:`/`authority:` consistency check; additive-only
   normalisation in the pass's own code; the review digest. Runs against whatever content exists —
   it does not depend on agent writes being open. *Criteria:* inbox depth, quarantine depth,
