@@ -1,6 +1,6 @@
 # 0018. The lint pass's policy: normalisation in-pass and in-code, a mechanical/judgment auto-fix boundary, and the capped review digest
 
-**Status:** Accepted ·
+**Status:** Accepted — parts superseded, marked where they stand: its judgement boundary and review digest by [ADR-0055](./0055-lint-findings-resolved-by-the-vault.md); its `reviewed:`-age staleness signal by [ADR-0061](./0061-freshness-is-the-vaults-own-verdict.md) (both Proposed) ·
 **Serves:** [S2](../../../USE_CASES.md#s2--sound) ·
 **Unit:** [A5](../../../ROADMAP.md#group-a--pipeline-mechanisms) ·
 **Ticket:** [ot#6](https://github.com/ppat/obsidian-tools/issues/6)
@@ -28,7 +28,7 @@ who lives on a phone.
   near-duplicate merges, broken queries, a filename stem no longer matching its slug,
   `trigger:`/`authority:` contradictions — which field is wrong is itself a judgment — and any
   promotion). Deterministic checks run in code; contradiction and stale-claim detection is
-  judgment and runs through the gateway's models.
+  judgment and runs through the gateway's models. *The judgement half of this boundary superseded by [ADR-0055](./0055-lint-findings-resolved-by-the-vault.md), pending its ratification.* *The `reviewed:`-age signal superseded by [ADR-0061](./0061-freshness-is-the-vaults-own-verdict.md), pending its ratification.*
 - **Every normalisation change is logged to the audit trail** (`_ops/audit/`) — the third
   granularity of history beside git and the append-only log.
 - **Findings surface in three tiers**: the full report in `_ops/lint/` (plus a one-line append to
@@ -37,7 +37,7 @@ who lives on a phone.
   actionable replies (approve/skip/explain) that flow back through the ordinary gated path; and
   metrics. The cap and the push are the phone constraint taken seriously: the review loop closes
   with zero new components, arriving where the human already is, which is what makes the mandatory
-  review gate something that actually happens.
+  review gate something that actually happens. *The review digest superseded by [ADR-0055](./0055-lint-findings-resolved-by-the-vault.md), pending its ratification.*
 
 ## Alternatives considered
 

@@ -1,6 +1,6 @@
 # 0042. The adopted community pattern: an LLM-maintained wiki with three operations — plus the regeneration-safety conventions
 
-**Status:** Accepted ·
+**Status:** Accepted — agent-maintained indexes and the page-level lease superseded by [ADR-0060](../work-queue/0060-roll-up-pass-owned-by-promotion-processor.md) (Proposed), marked where they stand ·
 **Serves:** [S2](../../../USE_CASES.md#s2--sound), [S3](../../../USE_CASES.md#s3--placed)
 
 ## Context
@@ -19,7 +19,7 @@ Adopt the pattern's principles, not any folder religion: a strict **ownership co
 better and bound an agent edit's blast radius); **machine-readable structure** (typed frontmatter —
 the make-or-break variable at write volume); and a **promotion path** from raw toward curated. Two
 navigation layers coexist deliberately: a hand-curated home note (human intent) and agent-maintained
-indexes. Two conventions specifically protect content across regeneration, and the definition-of-done
+indexes. *Agent-maintained indexes superseded by [ADR-0060](../work-queue/0060-roll-up-pass-owned-by-promotion-processor.md), pending its ratification.* Two conventions specifically protect content across regeneration, and the definition-of-done
 gate's round-trip test exists to prove them by firing
 ([obsidian-vault#3](https://github.com/ppat/obsidian-vault/issues/3)):
 
@@ -29,7 +29,7 @@ gate's round-trip test exists to prove them by firing
 - **A page-level lease**, held only by regeneration and bulk jobs — leases exist for whole-page
   rewrites only; ordinary writes rely on the commuting primitives and optimistic concurrency
   instead. No general lock protocol exists (deleted with the multi-writer subsystem,
-  [ADR-0001](../write-model/0001-single-writer-one-door.md)).
+  [ADR-0001](../write-model/0001-single-writer-one-door.md)). *The page-level lease and optimistic concurrency superseded by [ADR-0060](../work-queue/0060-roll-up-pass-owned-by-promotion-processor.md), pending its ratification.*
 
 One more adopted mechanism: **`refs:` as directed dependencies** (distinct from associative
 `related:`) supports a computed dependency graph for *push-based staleness* — when a source

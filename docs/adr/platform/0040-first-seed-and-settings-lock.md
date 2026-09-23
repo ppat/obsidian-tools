@@ -1,6 +1,6 @@
 # 0040. Content foundation provisioning: a one-time manual seed, the file-mode discipline, and the day-one settings lock
 
-**Status:** Accepted ·
+**Status:** Accepted — property types declared after day one superseded by [ADR-0063](../content-model/0063-schema-published-from-this-repository.md) (Proposed), marked where it stands ·
 **Serves:** [S1](../../../USE_CASES.md#s1--admitted), [S2](../../../USE_CASES.md#s2--sound)
 
 ## Context
@@ -28,7 +28,7 @@ prohibitively expensive to retrofit have to be right before content exists.
   folder, template folder, trash behaviour, and the **property types declared before any note
   exists** — adding a required field once notes exist means backfilling every one, and
   `authority:` is the worst possible field to backfill, since the information needed to answer it
-  is gone by then.
+  is gone by then. *Declaring later property types at the GUI superseded by [ADR-0063](../content-model/0063-schema-published-from-this-repository.md), pending its ratification.*
 
 ## Alternatives considered
 

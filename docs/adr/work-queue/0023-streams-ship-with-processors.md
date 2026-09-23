@@ -1,6 +1,6 @@
 # 0023. Streams ship with their processors and credential grants; the substrate alone carries no streams
 
-**Status:** Accepted ·
+**Status:** Accepted — issuance as a named producer's connection unit superseded by [ADR-0057](../write-model/0057-grants-by-kind-of-access.md) (Proposed), marked where it stands ·
 **Unit:** [A1](../../../ROADMAP.md#group-a--pipeline-mechanisms) ·
 **Serves:** [S1](../../../USE_CASES.md#s1--admitted)
 
@@ -21,7 +21,7 @@ nothing, which is not the forbidden state. Hence
 [A2](../../../ROADMAP.md#group-a--pipeline-mechanisms)/[A3](../../../ROADMAP.md#group-a--pipeline-mechanisms)/[A7](../../../ROADMAP.md#group-a--pipeline-mechanisms)
 each carry their own stream. One further split keeps it honest: the subject **grant** ships with
 the stream; the **issuance** of a credential to a named producer is that producer's connection unit
-([Group B](../../../ROADMAP.md#group-b--connection-work)).
+([Group B](../../../ROADMAP.md#group-b--connection-work)). *Issuance as a named producer's connection unit superseded by [ADR-0057](../write-model/0057-grants-by-kind-of-access.md), pending its ratification.*
 
 ## Alternatives considered
 

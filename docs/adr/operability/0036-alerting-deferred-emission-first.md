@@ -1,7 +1,7 @@
 # 0036. Alerting is deferred until AI triage exists; emission is front-loaded — the asymmetry is reversibility
 
-**Status:** Accepted ·
-**Pillar:** [Instrument early, alert never (until AI triage exists)](../../../DESIGN.md#instrument-early-alert-never-until-ai-triage-exists) ·
+**Status:** Accepted — the "until AI triage exists" condition superseded by [ADR-0062](./0062-nothing-is-pushed-to-a-person.md) (Proposed), marked where it stands ·
+**Pillar:** [Instrument early, alert never](../../../DESIGN.md#instrument-early-alert-never) ·
 **Serves:** [O1](../../../USE_CASES.md#o1--measured), [O3](../../../USE_CASES.md#o3--alerting)
 
 ## Context
@@ -14,7 +14,7 @@ forever — metrics cannot be backfilled, while rules over existing metrics are 
 
 **No alert rules until an AI triage layer exists** to filter noise before anything reaches the
 human — [O3](../../../USE_CASES.md#o3--alerting) is an explicit non-outcome, recorded so nobody
-"fixes" the absence. **Emission moves to the front**: the owner's own correction — metrics and
+"fixes" the absence. *The "until" condition superseded by [ADR-0062](./0062-nothing-is-pushed-to-a-person.md), pending its ratification.* **Emission moves to the front**: the owner's own correction — metrics and
 logging up front, maybe dashboards; rules can wait till the end — reversed an earlier
 observability-last ordering. Signals ride as acceptance criteria on the units able to produce them
 ([Group D's preamble](../../../ROADMAP.md#group-d--operability): criteria distribute, shared

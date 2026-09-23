@@ -63,7 +63,7 @@ instance mid-batch by design — so they take the shape ADR-0023 gives them.
 
 - **The readiness assertion a supervised workload gets for free is unavailable.** A
   Deployment-Ready check has nothing to wait on for a run that has not fired, and this workload's
-  dependencies — a broker on a load-balancer hostname, a gateway key held in the gateway's own
+  dependencies — a broker on a load-balancer hostname, a key held in the front's own
   store — are not ones a CI cluster can supply, so it cannot be made to run there either. That is
   the ceiling the committer's workload sits at, for the same reason
   ([ADR-0030](../replication/0030-committer-shape.md)): manifest-level CI can prove shape and

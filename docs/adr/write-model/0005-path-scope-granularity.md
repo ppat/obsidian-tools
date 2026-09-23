@@ -1,6 +1,6 @@
 # 0005. Path scope is path-granular only; per-operation rules get named backstops
 
-**Status:** Accepted ·
+**Status:** Accepted — the log row's tool-scope holding superseded by [ADR-0057](./0057-grants-by-kind-of-access.md) (Proposed), marked where it stands ·
 **Serves:** [S1](../../../USE_CASES.md#s1--admitted)
 
 ## Context
@@ -21,7 +21,7 @@ backstop** owned by the component positioned to enforce it — never an implied 
 | --- | --- |
 | Raw layer create-only | `batch-processor` ([ADR-0015](../content-model/0015-raw-immutability.md)) — the only component on both sides of that boundary |
 | Curated-space content bar | The admission validator ([ADR-0007](./0007-validation-placement.md)) |
-| Append-only log | **No backstop exists today** — held by tool scope mostly lacking overwrite, recorded honestly rather than claimed |
+| Append-only log | **No backstop exists today** — held by tool scope mostly lacking overwrite, recorded honestly rather than claimed. *The tool-scope holding superseded by [ADR-0057](./0057-grants-by-kind-of-access.md), pending its ratification.* |
 
 An earlier revision of the design claimed whole-file overwrite was "on no agent key"; that
 overclaimed what is enforced, and the correction is recorded rather than silently fixed — the

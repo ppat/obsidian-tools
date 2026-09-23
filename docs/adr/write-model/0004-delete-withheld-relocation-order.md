@@ -1,6 +1,6 @@
 # 0004. Delete withheld from the agent handle at the gateway; relocation writes before it deletes
 
-**Status:** Accepted ·
+**Status:** Accepted — where the withholding is enforced superseded by [ADR-0059](./0059-one-holder-per-credential-access-record.md) (Proposed), marked where it stands ·
 **Serves:** [S1](../../../USE_CASES.md#s1--admitted)
 
 ## Context
@@ -17,7 +17,7 @@ read-only flag bundles delete with six other write tools, with no per-tool switc
 `obsidian_delete_note` is withheld one layer up, at the gateway: per-tool `disallowed_tools` on the
 agent MCP registration. This was a live gap before the fix, not a theoretical one — `tools/list`
 against the agent instance advertised delete regardless, and a violation-injection test deleted a
-note through it (21 bytes to 0) to prove the hole before closing it.
+note through it (21 bytes to 0) to prove the hole before closing it. *Where it is withheld superseded by [ADR-0059](./0059-one-holder-per-credential-access-record.md), pending its ratification.*
 
 Where relocation happens, **order is load-bearing: write to the new path first, delete the source
 second, never the reverse.** A crash between the two leaves a recoverable duplicate (the lint pass

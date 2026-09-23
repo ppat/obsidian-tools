@@ -8,19 +8,21 @@ record lives beside this file: [`USE_CASES.md`](./USE_CASES.md) (the outcomes),
 
 ## Status
 
-Two components are shipped and running (`v0.4.0` released; later fixes are merged and ride the next
-release — see [`ROADMAP.md`](./ROADMAP.md) for the delivery gap and everything below):
+Two components have run in production longest — the others' state, and the gap between what is
+released and what the cluster runs, are in [`ROADMAP.md`](./ROADMAP.md):
 
 - **The git committer** (`obsidian-tools commit`) — runs in-cluster on a schedule, turning the vault
-  volume into git history pushed to two remotes. It never authors content.
+  volume into git history pushed to its one remote, GitHub. It never authors content.
 - **`local-replicator`** (`obsidian-tools replicate` + `obsidian-tools drain`) — runs on the
   operator's Mac under launchd, keeping the device-facing iCloud vault current from git, one-way and
   non-destructively: device-side drift is captured to a durable local spool before anything is
-  overwritten. The drainer's destination is a deliberate stub (discard) until the work queue exists.
+  overwritten. The drainer's destination is a deliberate stub (discard) until the drift stream exists.
 
-Still to build, each specified in the design and tracked on the roadmap: the work queue and its
-three processors (`batch-processor`, `promotion-processor`, `drift-processor`), the admission
-validator, and the lint pass.
+The other components, each specified in the design and tracked on the roadmap with its exact state:
+the work queue and its three processors (`batch-processor`, `promotion-processor`,
+`drift-processor`), the batch producer, the admission validator, the lint pass, and the agent
+runtime — the vault system's own agentic workflow, so that nothing it does rests on an outside
+agent.
 
 ## Documentation
 
@@ -35,7 +37,7 @@ validator, and the lint pass.
 
 - [`ppat/obsidian-vault`](https://github.com/ppat/obsidian-vault) — the vault content itself (private).
 - [`ppat/homelab-ops-kubernetes-apps`](https://github.com/ppat/homelab-ops-kubernetes-apps) — the
-  deployment manifests (module `apps-ai`) for the in-cluster workloads built here.
+  deployment manifests (module `apps-obsidian-vault`) for the in-cluster workloads built here.
 - [`ppat/homelab-ops-kubernetes-clusters`](https://github.com/ppat/homelab-ops-kubernetes-clusters) —
   composes those modules onto the real clusters at pinned release tags.
 

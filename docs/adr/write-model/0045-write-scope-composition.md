@@ -1,6 +1,6 @@
 # 0045. Write-scope composition: enumerated allowlists, entries mirroring grants, the schema file outside every scope
 
-**Status:** Accepted ·
+**Status:** Accepted — the client grant `log.md` mirrored superseded by [ADR-0057](./0057-grants-by-kind-of-access.md), and the count of paths to the excluded files by [ADR-0063](../content-model/0063-schema-published-from-this-repository.md) (both Proposed), marked where they stand ·
 **Pillar:** [Layered content, one ownership contract](../../../DESIGN.md#layered-content-one-ownership-contract) ·
 **Serves:** [S1](../../../USE_CASES.md#s1--admitted)
 
@@ -36,14 +36,16 @@ Two properties are the point of the enumeration:
   those files are the two declared exceptions to the gate system: a human at the headless
   instance's own GUI (the GUI exception,
   [ADR-0002](./0002-gui-exception-dormant-vnc.md)), and operator-triggered restore (the recovery
-  exception).
+  exception). *"The only paths … the two declared exceptions" superseded by
+  [ADR-0063](../content-model/0063-schema-published-from-this-repository.md), pending its
+  ratification.*
 - **Entries mirror grants.** `log.md` appears in the *agent* scope as a bare filename — a prefix
   matching only itself — because the gateway grants n8n "append to `log.md`, and nothing else"
   ([ADR-0003](./0003-two-instances-two-handles.md)), and a gateway grant is exercisable only if
   the instance's path scope also admits the path: who-may-call (the handle) and
   where-a-write-may-land (the scope) are separate layers, and a write needs both to say yes.
   A scope entry that looks stray may therefore be load-bearing for a grant recorded elsewhere;
-  removing it disables that grant silently.
+  removing it disables that grant silently. *The named client's grant this entry mirrored superseded by [ADR-0057](./0057-grants-by-kind-of-access.md), pending its ratification.*
 
 ## Alternatives considered
 

@@ -1,6 +1,6 @@
 # 0039. One schema file, one owner: `CLAUDE.md` at the vault root, with `AGENTS.md` as a one-line plain-text pointer
 
-**Status:** Accepted ·
+**Status:** Accepted — the schema file's home and later property types superseded by [ADR-0063](./0063-schema-published-from-this-repository.md) (Proposed), marked where they stand ·
 **Serves:** [S1](../../../USE_CASES.md#s1--admitted), [S2](../../../USE_CASES.md#s2--sound)
 
 ## Context
@@ -37,3 +37,4 @@ Every schema change is one file, one review; the property types the schema decla
 day one at the settings lock ([ADR-0040](../platform/0040-first-seed-and-settings-lock.md)) because
 retrofitting a required field once notes exist means backfilling every note — and `authority:` is
 the worst possible field to backfill, since the information needed to answer it is gone by then.
+*Property types set only at the settings lock, and the schema file as the schema's only home superseded by [ADR-0063](./0063-schema-published-from-this-repository.md), pending its ratification.*

@@ -1,6 +1,6 @@
 # 0041. The MCP stack: Local REST API + the path-scoping MCP server + the gateway — and the fork it resolved
 
-**Status:** Accepted ·
+**Status:** Accepted — where tool grants are enforced superseded by [ADR-0059](../write-model/0059-one-holder-per-credential-access-record.md) (Proposed), marked where it stands ·
 **Serves:** [S1](../../../USE_CASES.md#s1--admitted)
 
 ## Context
@@ -22,7 +22,7 @@ with per-client virtual keys and per-tool allow/deny — its filtering is server
 **not** path-scoped, which is exactly why both layers exist: the gateway decides which tools a
 client sees, the server's path scope decides where a write may land. `obsidian_execute_command`
 sits on no agent key; delete is withheld at the gateway
-([ADR-0004](../write-model/0004-delete-withheld-relocation-order.md)).
+([ADR-0004](../write-model/0004-delete-withheld-relocation-order.md)). *Where tool grants are enforced superseded by [ADR-0059](../write-model/0059-one-holder-per-credential-access-record.md), pending its ratification.*
 
 ## Alternatives considered
 

@@ -23,11 +23,12 @@ it in a form a *dead* processor stops producing, since a flag the processor clea
 exactly the failure it would have to report.
 
 **The mechanism must be a property of the vault's own components.** The design's write path is the
-two MCP instances and the headless editor behind them. *Something fronting the instances decides who
-may call and with which tools* is a role the design names; which component occupies that role is a
-deployment choice, and an installation may have none. A mechanism that lives in the occupant is one
-that some installations cannot have, and a control the design cannot rely on everywhere is not a
-control the design may specify.
+two MCP instances and the headless editor behind them. *Deciding who may call and with which tools* is
+a role the design names. The vault's own access gate in front of each instance fills it
+([ADR-0059](../write-model/0059-one-holder-per-credential-access-record.md)), and a separate front is
+a deployment choice some installations do not make. A mechanism that lives in a front is one that
+some installations cannot have, and a control the design cannot rely on everywhere is not a control
+the design may specify.
 
 **Stopping the wrong thing is worse than stopping nothing.** The ingestor instance is the door bulk
 work writes through, and promotion drains through it mid-run by design. Anything that takes the
@@ -42,9 +43,9 @@ pass.
 **A batch run stops the agent MCP instance for the run's duration by scaling its Deployment to zero,
 and starts it again when the run ends. The ingestor instance is untouched.** The door is shut; no
 credential is withheld, revoked or altered, and no caller's identity changes. The agent instance
-becomes unreachable to every caller at once — those the design knows about, those a particular
-installation adds, and an operator's own port-forward alike — because there is nothing left to
-reach.
+becomes unreachable to every caller at once — every client of the agent handle, whoever it is, the
+vault system's own callers of that instance, and an operator's own port-forward alike — because
+there is nothing left to reach.
 
 ### The authority this may hold, and the authority it may not
 
@@ -177,7 +178,8 @@ scale anything but the agent instance.
   answer, not the caller's.
 - **Everything onto the agent instance stops, reads included.** The instance is a coarser object
   than a credential: stopping it stops read-only callers of that instance as well as writers, so
-  conversational reads through it are unavailable for the run's duration. This is a cost, not a
+  reads through it — a human's conversational reads included — are unavailable for the run's
+  duration. This is a cost, not a
   side-benefit, and it sharpens two existing decisions rather than reopening them — the permitted
   time window ([ADR-0022](./0022-batch-stream-mechanics.md)) is what keeps the outage where nobody
   is waiting, and the deferred read-scoped third instance

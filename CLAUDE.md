@@ -25,12 +25,24 @@ stable documents cite decision records **by number, through the index only** —
 One Python package holding every BRAIN component. Shipped and running: the **git committer**
 (`obsidian_tools/commands/commit.py` — in-cluster CronJob) and **`local-replicator`**
 (`replicate.py` + `drain.py` — launchd on the operator's Mac; the drainer discards by design until
-the work queue exists). Specified but unbuilt: the work queue's three processors, the admission
-validator, the lint pass — see [`ROADMAP.md`](./ROADMAP.md), which also names each unit's tickets.
+the work queue exists). Also deployed: `batch-processor` and its watchdog (never yet
+observed draining a batch) and the vault-loaded exporter. Built, not deployed: the admission
+validator and the lint pass's first pass; the batch producer is released, and runs only when an
+operator runs it. Specified but unbuilt: `promotion-processor` and its inbox sweep,
+`drift-processor`, the agent runtime, `promotion-processor`'s roll-up pass, and the lint pass's
+resolution of judged findings — see [`ROADMAP.md`](./ROADMAP.md), which carries the exact state and names each unit's
+tickets.
+
+**The vault system does not know its clients, and pushes nothing to a person.** Agents consume its
+APIs; it knows each only by the credential it presents and that credential's kind of access, and
+relies on none of them to do its own job — its agentic work is its own agent runtime's, and the
+problems it finds it resolves itself rather than handing to a human. Products named in the documents are examples.
+Never wire a component to a named client, and never add a client's name to a grant, a stream's
+producer set, a vocabulary or an acceptance criterion ([`DESIGN.md`](./DESIGN.md#clients-are-known-by-credential-never-by-name)).
 
 **`main` is not deployed state, in either direction.** A change reaches the cluster only after
 release-please cuts a tag *and* the apps/clusters repos bump their pins; the Mac is upgraded by
-hand. `main` can also *understate* what exists (work sitting on open PR branches). Distinguish
+hand today, and by design converges on the cluster's pinned version by itself (unit D8). `main` can also *understate* what exists (work sitting on open PR branches). Distinguish
 *authored → merged → released → deployed-and-observed* in every status claim, and tag claims
 **[measured]** or **[inferred]**.
 
@@ -71,7 +83,8 @@ lychee.toml · mise.toml · pyproject.toml · commitlint.config.js · release-pl
   looks — verify against current upstream, the way this scaffold was built.
 - **Exactly three processes may ever mount the vault volume** (headless Obsidian read-write on
   content; the lint pass read-only; the committer read-only on content with git metadata on its own
-  volume). The processors take **no mount** — they write only through the gated MCP path. A fourth
+  volume). The processors take **no mount** — they write only through the gated MCP path — and the
+  agent runtime takes neither a mount nor a vault credential. A fourth
   mounter is a design change to ADR-0001, not a manifest detail — see
   [`DESIGN.md`](./DESIGN.md#one-writer-one-door).
 
@@ -106,8 +119,9 @@ lychee.toml · mise.toml · pyproject.toml · commitlint.config.js · release-pl
 - **Claims are falsifiable** — an acceptance criterion that cannot fail is not one.
 - **One decision per record** in `docs/adr/`, merged only when reversing one would force re-arguing
   the others; superseding a decision mints a new number, never an edit-in-place.
-- **No alerting until AI triage exists** — propose instrumentation and queryable metrics, never
-  alert rules ([O3](./USE_CASES.md#o3--alerting) is an explicit non-outcome).
+- **Nothing is pushed to a person, ever** — propose instrumentation and queryable metrics, never
+  alert rules, digests or notifications ([O3](./USE_CASES.md#o3--alerting) is excluded, not
+  deferred), and never design a finding that only a human can clear.
 
 ## Gotchas that cost real effort
 
@@ -117,8 +131,10 @@ lychee.toml · mise.toml · pyproject.toml · commitlint.config.js · release-pl
   metric can ever observe the gate; parse the envelope or use queue-native facts.
 - **A `local-replicator` upgrade fails indistinguishably from healthy**
   ([ot#66](https://github.com/ppat/obsidian-tools/issues/66)): the install path is version-scoped
-  while the launchd plist needs an absolute path, so an upgrade silently strands the schedule —
-  verify after upgrading, not just after installing.
+  while the launchd plist needs an absolute path, so an upgrade silently strands the schedule. The
+  design's answer is a self-upgrade to a version-independent path that proves its own schedule
+  (unit D8, ADR-0065 via the index); until it exists, verify after upgrading, not just after
+  installing.
 - **The committer's git dir is a derivable cache, never durable state**: cloned when missing (never
   `git init` — that would re-root history), with every per-clone setting (`fileMode`,
   `skip-worktree`, the ignore rule, `quotePath`) reapplied idempotently on every run.
@@ -126,7 +142,7 @@ lychee.toml · mise.toml · pyproject.toml · commitlint.config.js · release-pl
 ## Where things are deployed
 
 This repository holds code only. The in-cluster workloads are container images referenced by
-`ppat/homelab-ops-kubernetes-apps` (module `apps-ai`) and pinned onto clusters by
+`ppat/homelab-ops-kubernetes-apps` (module `apps-obsidian-vault`) and pinned onto clusters by
 `ppat/homelab-ops-kubernetes-clusters`; `local-replicator` is installed by hand on the operator's
-Mac per `docs/local-replicator.md`. Which component runs where: the component table in
+Mac per `docs/local-replicator.md` — the first install stays a hand act by design; later versions do not. Which component runs where: the component table in
 [`DESIGN.md`](./DESIGN.md#components-one-job-each).

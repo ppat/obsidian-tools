@@ -1,6 +1,6 @@
 # 0003. Two MCP instances × two gateway handles; a third instance deferred; credential choices
 
-**Status:** Accepted ·
+**Status:** Accepted — parts superseded, marked where they stand: its per-client tool grants by [ADR-0057](./0057-grants-by-kind-of-access.md); its disabled scope checks and its no-revocation token choice by [ADR-0059](./0059-one-holder-per-credential-access-record.md) (both Proposed) ·
 **Pillar:** [Authority is carried by capability](../../../DESIGN.md#authority-is-carried-by-capability-not-by-network-position) ·
 **Serves:** [S1](../../../USE_CASES.md#s1--admitted)
 
@@ -28,7 +28,7 @@ resolved as frontmatter-status updates plus appends to the log and nothing else 
 and no write path to the global todo, which holds queries only — n8n reaches the gateway through
 its own SSRF allowlist, and only the gateway); and **the human-facing browser
 chat is read-only** — the human is not a writer
-([the pillar](../../../DESIGN.md#humans-originate-agents-act)). Batch runs stop the agent
+([the pillar](../../../DESIGN.md#humans-originate-agents-act)). *Superseded by [ADR-0057](./0057-grants-by-kind-of-access.md), pending its ratification.* Batch runs stop the agent
 *instance*, leaving every handle onto it unreachable and the ingestor instance untouched, which is
 what lets promotion keep draining mid-batch
 ([ADR-0052](../work-queue/0052-batch-mode-stops-the-agent-instance.md)).
@@ -52,11 +52,11 @@ on the first incident implicating the extra width, or when provisioning stops be
   transits the gateway and gateways log requests) points at the real gap — no visibility into MCP
   auth failures — which needs closing either way
   ([D2](../../../ROADMAP.md#group-d--operability)). Rotation triggers on an event (exposure,
-  re-scoping), never on a date.
+  re-scoping), never on a date. *The no-revocation premise superseded by [ADR-0059](./0059-one-holder-per-credential-access-record.md), pending its ratification.*
 - **Server-side scope checks are disabled** (`MCP_AUTH_DISABLE_SCOPE_CHECKS=true`): the gateway
   sends one static token per registered server, so a scope claim cannot distinguish callers —
   distinguishing callers is the handle's job. Signature, audience, issuer and expiry validation stay
-  on.
+  on. *Superseded by [ADR-0059](./0059-one-holder-per-credential-access-record.md), pending its ratification.*
 
 ## Alternatives considered
 

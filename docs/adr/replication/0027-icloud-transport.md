@@ -40,10 +40,10 @@ ships a pull-only mode, is the named trigger to revisit if the free path sours).
 ## Consequences
 
 Device freshness is gated on the Mac waking — only the Mac can write its own iCloud directory, and
-nothing in the cluster can push to iOS. That is accepted *because* the conversational surface
-([R5](../../../USE_CASES.md#axis-3--readers-connected)) is the primary, always-fresh phone reader;
-native reading is the rich, laggier complement. The whole tree is carried (markdown-only keeps the
+nothing in the cluster can push to iOS. That is accepted *because* live reads through a read handle
+([R2](../../../USE_CASES.md#axis-3--readers-connected)) are always fresh and need no device awake —
+whichever agent client a human converses with on the phone reads that way; native reading is the
+rich, laggier complement. The whole tree is carried (markdown-only keeps the
 payload small — [ADR-0014](../content-model/0014-markdown-only-vault.md)), so no curated-subset
 replication is needed — and periodic replication (not continuous sync) is acceptable for the same
-two reasons: the payload is small, and the conversational plane absorbs the freshness-sensitive
-reading.
+two reasons: the payload is small, and live reads absorb the freshness-sensitive reading.

@@ -1,6 +1,6 @@
 # 0009. Provenance is three fields: `source:` / `authority:` / `trigger:`
 
-**Status:** Accepted ·
+**Status:** Accepted — `source:`'s verifiability superseded by [ADR-0058](./0058-source-values-open-for-outside-writers.md) (Proposed), marked where it stands ·
 **Pillar:** [Provenance is three questions](../../../DESIGN.md#provenance-is-three-questions-and-self-report-never-unlocks-a-gate) ·
 **Serves:** [S1](../../../USE_CASES.md#s1--admitted), [S2](../../../USE_CASES.md#s2--sound)
 
@@ -20,6 +20,8 @@ Three fields, one question each:
 | `source:` | Which process performed the write | Mechanical — the handle and key identify the caller |
 | `authority:` | Whose claim the content is (`human`/`agent`/`import`) | Self-reported — trusted, never privileged |
 | `trigger:` | What caused the write (`human`/`schedule`/`event`) | Mechanical — the invoker knows which applies |
+
+*The `source:` row's verifiability superseded by [ADR-0058](./0058-source-values-open-for-outside-writers.md), pending its ratification.*
 
 `trigger:` earns a field (not documentation) because it makes `authority:`'s trust *checkable*:
 `trigger: schedule` with `authority: human` is a mechanical contradiction — a cron job cannot be

@@ -1,6 +1,6 @@
 # 0001. One writer, one door — and two-way device sync deleted rather than mitigated
 
-**Status:** Accepted ·
+**Status:** Accepted — the count of declared bypasses superseded by [ADR-0063](../content-model/0063-schema-published-from-this-repository.md) (Proposed), marked where it stands ·
 **Pillar:** [One writer, one door](../../../DESIGN.md#one-writer-one-door) ·
 **Serves:** [S1](../../../USE_CASES.md#s1--admitted)
 
@@ -25,7 +25,7 @@ pass (read-only, whole-vault visibility), the committer (read-only content, git 
 volume). Two paths bypass the door, both declared: the GUI exception
 ([ADR-0002](./0002-gui-exception-dormant-vnc.md)) and operator-triggered disaster-recovery restore —
 rare, outside ordinary operation, exercised only at the recovery drill
-([D3](../../../ROADMAP.md#group-d--operability)).
+([D3](../../../ROADMAP.md#group-d--operability)). *"Two paths" superseded by [ADR-0063](../content-model/0063-schema-published-from-this-repository.md), pending its ratification.*
 
 ## Alternatives considered
 

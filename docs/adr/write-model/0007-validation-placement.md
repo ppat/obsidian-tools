@@ -31,7 +31,7 @@ finance overlay), flag-only where detection is judgment. Around that boundary:
 | Curated space | **Preventive** — nothing enters or changes except through the validator |
 | Direct agent writes | No admission question arises — containment (Gate 2) already denies them the curated boundary |
 
-The review digest is downstream of the lint pass's *output*, not a gate on content arrival.
+Resolving the lint pass's findings ([ADR-0055](../content-model/0055-lint-findings-resolved-by-the-vault.md)) is downstream of its *output*, not a gate on content arrival; its curated writes are the lint pass's, through this validator.
 
 ## Alternatives considered (scored in the original enforcement analysis)
 

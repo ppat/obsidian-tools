@@ -40,7 +40,10 @@ The convention is Nygard-derived, with two deliberate additions and one delibera
   stay separate records when independently reversible — one can flip while its neighbours stand.
   A record found to be carrying two separable decisions is split at the next substantive touch,
   each half keeping or taking a number per the rule above; two records found to always travel
-  together merge the same way.
+  together merge the same way. When a supersession covers only part of a record, the new record
+  decides that part afresh; the original keeps its number and status, its status line names the
+  superseding record, and the superseded passage stays in place, unedited, with an inline marker
+  naming the record that superseded it.
 
 Records state decisions; the [roadmap](../../ROADMAP.md) tracks what is built versus pending —
 build state never lives here.
@@ -49,22 +52,24 @@ build state never lives here.
 
 | # | Record | Status |
 | --- | --- | --- |
-| 0001 | [One writer, one door; two-way device sync deleted](./write-model/0001-single-writer-one-door.md) | Accepted |
+| 0001 | [One writer, one door; two-way device sync deleted](./write-model/0001-single-writer-one-door.md) | Accepted — the count of declared bypasses superseded by 0063 (pending ratification) |
 | 0002 | [The GUI exception: one pod, dormant VNC, port-forward only](./write-model/0002-gui-exception-dormant-vnc.md) | Accepted |
-| 0003 | [Two MCP instances × two handles; third instance deferred; credential choices](./write-model/0003-two-instances-two-handles.md) | Accepted |
-| 0004 | [Delete withheld at the gateway; relocation writes before it deletes](./write-model/0004-delete-withheld-relocation-order.md) | Accepted |
-| 0005 | [Path scope is path-granular only; per-operation rules get named backstops](./write-model/0005-path-scope-granularity.md) | Accepted |
+| 0003 | [Two MCP instances × two handles; third instance deferred; credential choices](./write-model/0003-two-instances-two-handles.md) | Accepted — per-client grants superseded by 0057; scope checks and no-revocation premise by 0059 (pending ratification) |
+| 0004 | [Delete withheld at the gateway; relocation writes before it deletes](./write-model/0004-delete-withheld-relocation-order.md) | Accepted — where delete is withheld superseded by 0059 (pending ratification) |
+| 0005 | [Path scope is path-granular only; per-operation rules get named backstops](./write-model/0005-path-scope-granularity.md) | Accepted — the log row's tool-scope holding superseded by 0057 (pending ratification) |
 | 0006 | [NetworkPolicy as the sole control on the undisableable second MCP endpoint](./write-model/0006-networkpolicy-sole-control.md) | Accepted |
 | 0007 | [One shared admission validator, three callers, fired at every curated-boundary crossing](./write-model/0007-validation-placement.md) | **Proposed** |
 | 0008 | [Drift intentionality is a separate authority, upstream of the validator](./write-model/0008-drift-classification-separate-authority.md) | Accepted |
-| 0045 | [Write-scope composition: enumerated allowlists, entries mirroring grants, the schema file outside every scope](./write-model/0045-write-scope-composition.md) | Accepted |
+| 0045 | [Write-scope composition: enumerated allowlists, entries mirroring grants, the schema file outside every scope](./write-model/0045-write-scope-composition.md) | Accepted — the client grant `log.md` mirrored superseded by 0057 (pending ratification) |
 | 0053 | [A chunk applies as whole-note writes, the create/modify distinction carried by the anti-clobber flag](./write-model/0053-batch-writes-whole-note.md) | **Proposed** |
+| 0057 | [Grants on the handles are cut by kind of access, never by named client](./write-model/0057-grants-by-kind-of-access.md) | **Proposed** |
+| 0059 | [Every credential has one holder, and the vault's own access gate verifies it, enforces its tool grant and records the call](./write-model/0059-one-holder-per-credential-access-record.md) | **Proposed** |
 
 ## Content model — `content-model/`
 
 | # | Record | Status |
 | --- | --- | --- |
-| 0009 | [Provenance is three fields: `source:` / `authority:` / `trigger:`](./content-model/0009-three-field-provenance-split.md) | Accepted |
+| 0009 | [Provenance is three fields: `source:` / `authority:` / `trigger:`](./content-model/0009-three-field-provenance-split.md) | Accepted — `source:`'s verifiability superseded by 0058, pending its ratification |
 | 0010 | [`authority: human` unlocks nothing; the finance block keys on evidence](./content-model/0010-authority-human-loses-privilege.md) | Accepted |
 | 0011 | [`confidence:` stays a three-level enum; `stated` removed; no float](./content-model/0011-confidence-enum.md) | Accepted |
 | 0012 | [`salience:` and `consolidated:` for the roll-up pass, with the removal audit](./content-model/0012-salience-consolidated-fields.md) | Accepted |
@@ -73,27 +78,33 @@ build state never lives here.
 | 0015 | [The raw layer: write-once, validation-exempt, enforced in `batch-processor`](./content-model/0015-raw-immutability.md) | Accepted |
 | 0016 | [Task metadata: the bracket format, settled vault-wide](./content-model/0016-task-metadata-bracket-format.md) | Accepted |
 | 0017 | [Community plugins: Tasks and Dataview only; no in-app validation plugin](./content-model/0017-plugin-set-tasks-dataview.md) | Accepted |
-| 0018 | [Lint policy: in-pass in-code normalisation, the auto-fix boundary, the capped digest](./content-model/0018-lint-pass-policy.md) | Accepted |
+| 0018 | [Lint policy: in-pass in-code normalisation, the auto-fix boundary, the capped digest](./content-model/0018-lint-pass-policy.md) | Accepted — judgement boundary and digest superseded by 0055, staleness signal by 0061 (pending ratification) |
 | 0019 | [Vocabulary rulings: a person is an `entity`; dining takes travel's overlay](./content-model/0019-type-and-overlay-vocabulary.md) | Accepted |
 | 0038 | [Search at scale and near-duplicate detection deliberately not built](./content-model/0038-search-and-dedup-not-built.md) | Accepted |
-| 0039 | [One schema file, one owner: `CLAUDE.md`, with `AGENTS.md` a plain-text pointer](./content-model/0039-schema-file-and-agents-pointer.md) | Accepted |
-| 0042 | [The adopted community pattern, and the regeneration-safety conventions](./content-model/0042-adopted-community-pattern.md) | Accepted |
+| 0039 | [One schema file, one owner: `CLAUDE.md`, with `AGENTS.md` a plain-text pointer](./content-model/0039-schema-file-and-agents-pointer.md) | Accepted — the schema's single home and later property types superseded by 0063 (pending ratification) |
+| 0042 | [The adopted community pattern, and the regeneration-safety conventions](./content-model/0042-adopted-community-pattern.md) | Accepted — agent-maintained indexes and the page-level lease superseded by 0060 (pending ratification) |
+| 0055 | [The vault system resolves its own lint findings; nothing is pushed to a human, and no finding waits on one](./content-model/0055-lint-findings-resolved-by-the-vault.md) | **Proposed** |
+| 0058 | [`source:` is stamped by the vault system's own authoring components and declared by outside writers](./content-model/0058-source-values-open-for-outside-writers.md) | **Proposed** |
+| 0061 | [Freshness is the vault system's own evidenced verdict, stamped in `verified:` only with the evidence recorded](./content-model/0061-freshness-is-the-vaults-own-verdict.md) | **Proposed** |
+| 0063 | [The schema's source is this repository; a deployed release delivers it whole, with its migration](./content-model/0063-schema-published-from-this-repository.md) | **Proposed** |
 
 ## The work queue — `work-queue/`
 
 | # | Record | Status |
 | --- | --- | --- |
 | 0020 | [NATS JetStream over RabbitMQ, on operational weight](./work-queue/0020-nats-jetstream.md) | Accepted |
-| 0021 | [Enqueue authority follows message shape, carried by per-producer credentials](./work-queue/0021-authority-by-message-shape.md) | Accepted |
+| 0021 | [Enqueue authority follows message shape, carried by per-producer credentials](./work-queue/0021-authority-by-message-shape.md) | Accepted — who holds the patch-shape credential superseded by 0059, the pointer check's formulation by 0056 (pending ratification) |
 | 0022 | [Batch mechanics: FIFO, unsharded, stale-reject, fairness backpressure, watchdog](./work-queue/0022-batch-stream-mechanics.md) | Accepted |
-| 0023 | [Streams ship with their processors; the substrate alone carries no streams](./work-queue/0023-streams-ship-with-processors.md) | Accepted |
+| 0023 | [Streams ship with their processors; the substrate alone carries no streams](./work-queue/0023-streams-ship-with-processors.md) | Accepted — issuance as a named producer's connection unit superseded by 0057 (pending ratification) |
 | 0024 | [Captured drift rides the drift stream — superseding MinIO, keeping its siting gotcha](./work-queue/0024-drift-destination-stream-not-minio.md) | Accepted |
-| 0047 | [One subject namespace and one NATS account per message shape, private service imports, no JetStream API for any producer](./work-queue/0047-subject-scheme-and-account-topology.md) | Accepted |
+| 0047 | [One subject namespace and one NATS account per message shape, private service imports, no JetStream API for any producer](./work-queue/0047-subject-scheme-and-account-topology.md) | Accepted — the pointer check's formulation superseded by 0056, one shared credential per shape by 0059 (pending ratification) |
 | 0048 | [Batch staleness is measured per file, by content hash, never against repo head](./work-queue/0048-batch-staleness-per-file-hash.md) | Accepted |
 | 0049 | [A processor whose run stops the agent MCP instance is scheduled, not supervised](./work-queue/0049-processor-scheduled-not-supervised.md) | Accepted |
 | 0050 | [Streams are created by a scheduled provisioner holding stream creation but not stream update](./work-queue/0050-stream-provisioner-create-not-update.md) | Accepted |
 | 0051 | [The consuming processor holds its own identity inside the stream-holding account](./work-queue/0051-consumer-identity-in-stream-account.md) | Accepted |
 | 0052 | [Batch mode stops the agent MCP instance itself, scaled to zero, with the lease taken before the stop](./work-queue/0052-batch-mode-stops-the-agent-instance.md) | **Proposed** |
+| 0056 | [The inbox is promotion's work list: a scheduled sweep announces what no client did](./work-queue/0056-inbox-is-promotions-work-list.md) | **Proposed** |
+| 0060 | [The roll-up pass is `promotion-processor`'s: salience sets prominence, and a merge copies its sources verbatim](./work-queue/0060-roll-up-pass-owned-by-promotion-processor.md) | **Proposed** |
 
 ## Replication and devices — `replication/`
 
@@ -107,6 +118,8 @@ build state never lives here.
 | 0030 | [The committer: a CronJob with a detached git dir, structurally unable to author](./replication/0030-committer-shape.md) | Accepted |
 | 0031 | [The apps staged out of replication; installing them is a deliberate day-one reset](./replication/0031-staged-app-rollout.md) | Accepted |
 | 0044 | [The vault has one git remote: GitHub](./replication/0044-vault-remote-github.md) | Accepted |
+| 0065 | [`local-replicator` converges on the deployed version by itself, verifies what it installs, and proves its own schedule](./replication/0065-local-replicator-upgrades-itself.md) | **Proposed** |
+| 0066 | [The device seed sets the Tasks plugin's task format by key, without carrying any plugin's `data.json`](./replication/0066-seed-sets-tasks-format-by-key.md) | **Proposed** |
 
 ## Platform — `platform/`
 
@@ -116,14 +129,17 @@ build state never lives here.
 | 0033 | [Volume and deployment shape: RWX, one replica, `Recreate`, vault in a subdirectory](./platform/0033-volume-and-deployment-shape.md) | Accepted |
 | 0034 | [Infrastructure named by function, never by codename](./platform/0034-naming-function-over-codename.md) | Accepted |
 | 0035 | [Tooling: Python with uv; one repository, one package](./platform/0035-tooling-python-one-repo.md) | Accepted |
-| 0040 | [Content foundation provisioning: manual seed, mode discipline, day-one settings lock](./platform/0040-first-seed-and-settings-lock.md) | Accepted |
-| 0041 | [The MCP stack selection, and the REST-bridge/filesystem-native fork it resolved](./platform/0041-mcp-stack-selection.md) | Accepted |
+| 0040 | [Content foundation provisioning: manual seed, mode discipline, day-one settings lock](./platform/0040-first-seed-and-settings-lock.md) | Accepted — property types declared after day one superseded by 0063 (pending ratification) |
+| 0041 | [The MCP stack selection, and the REST-bridge/filesystem-native fork it resolved](./platform/0041-mcp-stack-selection.md) | Accepted — where tool grants are enforced superseded by 0059 (pending ratification) |
 | 0043 | [Paths handed to git are always literal-marked pathspecs](./platform/0043-git-pathspecs-literal.md) | Accepted |
 | 0046 | [Git through the real CLI, behind one seam](./platform/0046-git-cli-one-seam.md) | Accepted |
+| 0054 | [The vault system's agentic work runs in one agent runtime of its own, which judges and never writes](./platform/0054-agent-runtime.md) | **Proposed** |
 
 ## Operability — `operability/`
 
 | # | Record | Status |
 | --- | --- | --- |
-| 0036 | [Alerting deferred until AI triage; emission front-loaded](./operability/0036-alerting-deferred-emission-first.md) | Accepted |
+| 0036 | [Alerting deferred until AI triage; emission front-loaded](./operability/0036-alerting-deferred-emission-first.md) | Accepted — the "until AI triage" condition superseded by 0062 (pending ratification) |
+| 0062 | [Nothing is pushed to a person: alerting is excluded, not deferred](./operability/0062-nothing-is-pushed-to-a-person.md) | **Proposed** |
+| 0064 | [Every operational condition the vault system can observe has a resolver inside it, or is a stated residue with its consequence](./operability/0064-operational-conditions-have-resolvers.md) | **Proposed** |
 | 0037 | [The vault-loaded signal: an independent exporter, not a probe](./operability/0037-vault-loaded-exporter.md) | Accepted |

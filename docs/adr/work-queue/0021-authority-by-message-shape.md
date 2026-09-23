@@ -1,6 +1,6 @@
 # 0021. Enqueue authority follows message shape, carried by per-producer NATS credentials — never by network position
 
-**Status:** Accepted ·
+**Status:** Accepted — who holds the patch-shape credential superseded by [ADR-0059](../write-model/0059-one-holder-per-credential-access-record.md), and the pointer check's formulation by [ADR-0056](./0056-inbox-is-promotions-work-list.md) (both Proposed), marked where they stand ·
 **Pillar:** [Authority is carried by capability](../../../DESIGN.md#authority-is-carried-by-capability-not-by-network-position) ·
 **Serves:** [S1](../../../USE_CASES.md#s1--admitted)
 
@@ -22,10 +22,11 @@ NATS account per producer population, subject-scoped to the one stream it may pu
 - **Patch-carrying** (batch): content *and* destination — the enqueuer effectively writes with the
   processor's own handle, so exactly one producer holds the credential. Consequence stated plainly:
   **no unattended agent can restructure the vault**; anything structural comes through the
-  supervised workspace, which means a human started it.
+  supervised workspace, which means a human started it. *Who holds the patch-shape credential superseded by [ADR-0059](../write-model/0059-one-holder-per-credential-access-record.md), pending its ratification.*
 - **Pointer-carrying** (promotion): confers nothing — *provided* the processor refuses any pointer
   naming a path outside the enqueuer's own scope. Without that check, a prompt-injected agent could
   point the widest handle at curated content; with it, every interactive agent may announce a write.
+  *The check's formulation ("outside the enqueuer's own scope") superseded by [ADR-0056](./0056-inbox-is-promotions-work-list.md), pending its ratification.*
 - **Content-carrying, fixed destination** (drift): confers nothing — the destination is the
   processor's, never the message's; sole producer by credential.
 

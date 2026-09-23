@@ -1,6 +1,6 @@
 # 0047. One subject namespace and one NATS account per message shape, with private service imports and no JetStream API for any producer
 
-**Status:** Accepted ·
+**Status:** Accepted — the pointer check's formulation superseded by [ADR-0056](./0056-inbox-is-promotions-work-list.md), and one shared credential per shape by [ADR-0059](../write-model/0059-one-holder-per-credential-access-record.md) (both Proposed), marked where they stand ·
 **Pillar:** [Authority is carried by capability](../../../DESIGN.md#authority-is-carried-by-capability-not-by-network-position) ·
 **Serves:** [S1](../../../USE_CASES.md#s1--admitted)
 
@@ -21,11 +21,14 @@ One top-level subject token per stream, and one account per **message shape**:
 | --- | --- | --- | --- |
 | patch-carrying | a git patch — content *and* destination | the consuming processor's own write scope, the widest in the system | `batch.>` |
 | pointer-carrying | a pointer to something already written in the inbox | nothing, given the processor refuses a pointer outside the enqueuer's scope | `promotion.>` |
+
+*The pointer check's formulation superseded by [ADR-0056](./0056-inbox-is-promotions-work-list.md), pending its ratification.*
 | content-carrying, destination fixed by the processor | content whose destination is not the message's to choose | nothing | `drift.>` |
 
 The account is cut by what the message carries, never by who holds the credential. A new holder is
 therefore never a reason to mint an account: a holder of an existing shape takes that shape's
 credential, and issuance to a named holder is a connection question rather than a substrate one.
+*One shared credential per shape superseded by [ADR-0059](../write-model/0059-one-holder-per-credential-access-record.md), pending its ratification.*
 
 Streams live in one account holding every stream and every consuming processor; no producer is a
 member of it. Each producer account imports exactly one subject **as a service** — service rather

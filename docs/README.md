@@ -54,8 +54,9 @@ found to be wrong or outdated against primary sources, including:
 
 - **CANON-1's claim that a Claude Code `PostToolUse` hook blocks a write that fails validation is false** — the
   tool has already run by the time that hook fires; only `PreToolUse` can block. This is the highest-severity
-  correction, and the design builds around it explicitly: prevention lives at the curated boundary, the
-  runner hook is detective ([ADR-0007](./adr/write-model/0007-validation-placement.md)).
+  correction. The design goes further than the correction: any runner hook belongs to a client the vault system
+  does not know, so no control of the vault's rests on one, and prevention lives at the curated boundary
+  ([ADR-0007](./adr/write-model/0007-validation-placement.md)).
 - CANON-2's claim that `shanehull/obsidian-remote` published no pullable image was outdated — a pullable image
   now exists — though the design sets the project aside anyway, on different and stronger grounds (no GUI, own
   bundled MCP server; [ADR-0041](./adr/platform/0041-mcp-stack-selection.md)).
