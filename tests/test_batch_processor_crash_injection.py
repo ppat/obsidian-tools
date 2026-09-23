@@ -57,6 +57,7 @@ from test_batch_processor_stream import (
     creating,
     dead_letter_count,
     modifying,
+    note,
     publish,
 )
 from vault_stub import TOOL_WRITE, FakeVault, running_vault
@@ -218,7 +219,7 @@ def test_a_kill_mid_run_redelivers_the_chunk_and_the_watchdog_restarts_the_insta
     not resume its interrupted chunk immediately, it resumes it one `ack_wait` later.
     """
     config = config_for(broker, vault, tag, ack_wait_seconds=1.0)
-    publish(broker, tag, chunk_of(*creating("10-areas/x.md", "one\n")))
+    publish(broker, tag, chunk_of(*creating("10-areas/x.md", note("one\n"))))
 
     run_until_crash(config, seam)
 
@@ -238,7 +239,7 @@ def test_a_kill_mid_run_redelivers_the_chunk_and_the_watchdog_restarts_the_insta
     # either route produced a second write: that is the double-apply the whole-chunk pre-flight
     # exists to remove. Red on the exit code means a crash costs the *next* run its clean bill of
     # health, and the parked copy would block every later chunk that links to what it wrote.
-    assert vault.written("10-areas/x.md") == "one\n"
+    assert vault.written("10-areas/x.md") == note("one\n")
     assert [call for call in vault.calls if call[0] == TOOL_WRITE] == [(TOOL_WRITE, "10-areas/x.md")]
     assert dead_letter_count(broker, tag) == 0
 
@@ -258,7 +259,7 @@ def test_a_restart_inside_the_acknowledgement_window_says_the_stream_is_not_drai
     two minutes after a crash lands in this window.
     """
     config = config_for(broker, vault, tag, ack_wait_seconds=30.0)
-    publish(broker, tag, chunk_of(*creating("10-areas/x.md", "one\n")))
+    publish(broker, tag, chunk_of(*creating("10-areas/x.md", note("one\n"))))
     run_until_crash(config, "settle")
 
     with caplog.at_level(logging.INFO):
@@ -276,7 +277,7 @@ def test_a_drained_stream_reports_nothing_left(
     """The control for the test above, and what stops the warning becoming noise every run learns to
     ignore. Red if a run that really did drain the stream still reported work left: the signal would
     fire on every healthy nightly run and would then mean nothing at all."""
-    publish(broker, tag, chunk_of(*creating("10-areas/x.md", "one\n")))
+    publish(broker, tag, chunk_of(*creating("10-areas/x.md", note("one\n"))))
 
     with caplog.at_level(logging.INFO):
         processor.run(config_for(broker, vault, tag))
@@ -301,7 +302,7 @@ def test_a_kill_between_taking_the_lease_and_stopping_leaves_the_instance_runnin
     The debris left behind is the live lease, which the next pass past its deadline drops.
     """
     config = config_for(broker, vault, tag, ack_wait_seconds=1.0)
-    publish(broker, tag, chunk_of(*creating("10-areas/x.md", "one\n")))
+    publish(broker, tag, chunk_of(*creating("10-areas/x.md", note("one\n"))))
 
     run_until_crash(config, "stop_instance")
 
@@ -326,12 +327,12 @@ def test_a_kill_between_starting_the_instance_and_releasing_the_lease_leaves_it_
     stream was drained.
     """
     config = config_for(broker, vault, tag, ack_wait_seconds=1.0)
-    publish(broker, tag, chunk_of(*creating("10-areas/x.md", "one\n")))
+    publish(broker, tag, chunk_of(*creating("10-areas/x.md", note("one\n"))))
 
     run_until_crash(config, "release_lease")
 
     assert vault.agent_replicas == 1, "the instance is started before the lease is released"
-    assert vault.written("10-areas/x.md") == "one\n"
+    assert vault.written("10-areas/x.md") == note("one\n")
     assert watchdog_pass(config) is WatchdogVerdict.RELEASE_STALE_LEASE
     assert vault.lease == {}
 
@@ -342,7 +343,7 @@ def test_a_kill_before_the_writes_leaves_the_vault_untouched(broker: str, vault:
     redelivered onto content its own earlier writes moved, which is the case ADR-0048's whole-chunk
     ordering exists to remove."""
     config = config_for(broker, vault, tag, ack_wait_seconds=1.0)
-    publish(broker, tag, chunk_of(*creating("10-areas/x.md", "one\n")))
+    publish(broker, tag, chunk_of(*creating("10-areas/x.md", note("one\n"))))
 
     run_until_crash(config, "apply_writes")
 
@@ -383,21 +384,25 @@ class CrashInjectionMachine(RuleBasedStateMachine):
 
     # --- rules ------------------------------------------------------------------------------------
 
-    @rule(path=st.sampled_from(("10-areas/a.md", "05-raw/b.md")), body=st.text(alphabet="abc", min_size=1, max_size=3))
-    def enqueue_create(self, path: str, body: str) -> None:
+    @rule(
+        path=st.sampled_from(("10-areas/a.md", "05-raw/b.md")),
+        body=st.text(alphabet="abc", min_size=1, max_size=3),
+        admissible=st.booleans(),
+    )
+    def enqueue_create(self, path: str, body: str, admissible: bool) -> None:
         # The serial keeps every generated chunk's content distinct, and that is a constraint of the
         # accounting invariant rather than a choice about coverage: a create whose note already
         # holds exactly its content is *settled by an ack*, contributing to neither the writes nor
         # the parked copies the invariant counts, so a duplicate would read there as a chunk that
         # vanished. That case is proven deterministically instead — see the re-run and duplicate
         # delivery tests in `test_batch_processor_stream.py`.
-        content = f"{body}-{self.published}\n"
+        content = self._content(f"{body}-{self.published}\n", admissible)
         publish(_broker_url, self.tag, chunk_of(*creating(path, content)))
-        self._note(path, content)
+        self._declare(path, content, admissible)
         self.published += 1
 
-    @rule(body=st.text(alphabet="xyz", min_size=1, max_size=3))
-    def enqueue_modify(self, body: str) -> None:
+    @rule(body=st.text(alphabet="xyz", min_size=1, max_size=3), admissible=st.booleans())
+    def enqueue_modify(self, body: str, admissible: bool) -> None:
         """A modify against whatever the vault currently holds — a chunk the producer could really
         have generated. Against any other pre-image it would simply reject as stale, which is
         correct but tests only one branch."""
@@ -405,10 +410,23 @@ class CrashInjectionMachine(RuleBasedStateMachine):
         before = self.vault.written(path)
         if before is None:
             return
-        after = f"{body}\n"
+        after = self._content(f"{body}\n", admissible)
         publish(_broker_url, self.tag, chunk_of(*modifying(path, before, after)))
-        self._note(path, after)
+        self._declare(path, after, admissible)
         self.published += 1
+
+    @staticmethod
+    def _content(body: str, admissible: bool) -> str:
+        """An admissible note, or the bare body — which curated space refuses and the raw layer,
+        being exempt, takes as it is."""
+        return note(body) if admissible else body
+
+    def _declare(self, path: str, content: str, admissible: bool) -> None:
+        """Record `content` as legal at `path` only if the path may ever hold it. A refused
+        post-image is never declared, so the invariant below reads one landing — under any sequence
+        of crashes, redeliveries and re-runs — as content no chunk was entitled to write."""
+        if admissible or not path.startswith(("10-areas/", "20-projects/")):
+            self._note(path, content)
 
     @rule()
     def run_cleanly(self) -> None:
@@ -426,9 +444,10 @@ class CrashInjectionMachine(RuleBasedStateMachine):
 
     @invariant()
     def no_note_holds_content_no_chunk_ever_declared(self) -> None:
-        """The vault only ever holds something a chunk actually asked for. Red on any partial or
-        garbled application — a truncated patch, a hunk applied to the wrong pre-image, a write of
-        the empty string where a delete belonged."""
+        """The vault only ever holds something a chunk actually asked for and was entitled to write.
+        Red on any partial or garbled application — a truncated patch, a hunk applied to the wrong
+        pre-image, a write of the empty string where a delete belonged — and on any post-image the
+        admission bar refuses reaching curated space by any route."""
         for path, content in self.vault.notes.items():
             assert content in self.legal_contents.get(path, set()), (
                 f"{path!r} holds {content!r}, which no published chunk ever declared"
