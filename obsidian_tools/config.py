@@ -543,3 +543,55 @@ class WatchdogConfig:
     @classmethod
     def from_env(cls) -> WatchdogConfig:
         return cls(agent_instance=AgentInstanceConfig.from_env())
+
+
+@dataclass(frozen=True, slots=True)
+class LintPassConfig:
+    """Configuration for the `lint` subcommand — the lint pass (unit A5, ot#83).
+
+    Its own dataclass: it shares the MCP seam with `batch-processor` but not its key, its tools or
+    its reach. Its key is granted read, write and append only — never delete (ADR-0004) — so no
+    delete tool is configurable here at all.
+    """
+
+    vault_dir: str
+    """The vault on the read-only mount: `/vault/brain`, the git committer's stanza."""
+    mcp_url: str
+    # Carries the ingestor handle's write scope. Never logged, never echoed in an error message
+    # (`batch_processor/mcp_client.py`).
+    mcp_api_key: str
+    # Required with no default, as for `batch-processor`: a tool's name is deployment identity, and a
+    # guessed one fails as a refusal at every call site.
+    mcp_tool_read: str
+    mcp_tool_write: str
+    mcp_tool_append: str
+    mcp_timeout_seconds: float
+    mcp_verify_tls: bool
+    mcp_retries: int
+    # The review digest's destination and its bearer token, both deployment facts with no default.
+    digest_hook_url: str
+    digest_hook_token: str
+    digest_hook_timeout_seconds: float
+    # ADR-0018's "hard-capped at roughly seven".
+    digest_max_items: int
+
+    @classmethod
+    def from_env(cls) -> LintPassConfig:
+        max_items = get_env_int("LINT_DIGEST_MAX_ITEMS", 7)
+        if max_items < 1:
+            raise ConfigError(f"LINT_DIGEST_MAX_ITEMS={max_items} must be at least 1")
+        return cls(
+            vault_dir=get_env("LINT_VAULT_DIR", "/vault/brain"),
+            mcp_url=require_env("LINT_MCP_URL"),
+            mcp_api_key=require_env("LINT_MCP_API_KEY"),
+            mcp_tool_read=require_env("LINT_MCP_TOOL_READ"),
+            mcp_tool_write=require_env("LINT_MCP_TOOL_WRITE"),
+            mcp_tool_append=require_env("LINT_MCP_TOOL_APPEND"),
+            mcp_timeout_seconds=get_env_float("LINT_MCP_TIMEOUT_SECONDS", 30.0),
+            mcp_verify_tls=get_env_bool("LINT_MCP_VERIFY_TLS", True),
+            mcp_retries=get_env_int("LINT_MCP_RETRIES", 3),
+            digest_hook_url=require_env("LINT_DIGEST_HOOK_URL"),
+            digest_hook_token=require_env("LINT_DIGEST_HOOK_TOKEN"),
+            digest_hook_timeout_seconds=get_env_float("LINT_DIGEST_HOOK_TIMEOUT_SECONDS", 10.0),
+            digest_max_items=max_items,
+        )

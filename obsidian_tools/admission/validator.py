@@ -133,11 +133,20 @@ def admit(path: str, content: str) -> Verdict:
     resolved = _resolve(path)
     if not resolved.startswith(CURATED_PREFIXES):
         return Verdict(resolved, crossing=False, refusals=())
+    return Verdict(resolved, crossing=True, refusals=refusals_for(content, finance=resolved.startswith(FINANCE_PREFIX)))
 
+
+def refusals_for(content: str, *, finance: bool) -> tuple[Refusal, ...]:
+    """The refused tier's rules applied to one note, with the zone decision left to the caller.
+
+    `admit` is the gate and the only caller that may turn these into a refusal. The lint pass calls
+    this directly for a note already sitting outside curated space, where the same conditions are
+    reported rather than refused (ADR-0007: the agent zone is detective only) — so both read the
+    rules from here, and neither restates them.
+    """
     parsed = parse_note(content)
     if isinstance(parsed, Unparseable):
-        refusal = Refusal(ReasonCode.FRONTMATTER_UNPARSEABLE, None, parsed.describe())
-        return Verdict(resolved, crossing=True, refusals=(refusal,))
+        return (Refusal(ReasonCode.FRONTMATTER_UNPARSEABLE, None, parsed.describe()),)
 
     values = parsed.frontmatter.as_dict()
     refusals = _wrong_types(values)
@@ -152,9 +161,9 @@ def admit(path: str, content: str) -> Verdict:
         if text is not None and parse_date(text) is None:
             refusals.append(Refusal(ReasonCode.DATE_UNPARSEABLE, name, f"{text!r} is not an ISO or year-first date"))
 
-    if resolved.startswith(FINANCE_PREFIX):
+    if finance:
         refusals.extend(_finance(values, mistyped, parsed.body))
-    return Verdict(resolved, crossing=True, refusals=tuple(refusals))
+    return tuple(refusals)
 
 
 def _finance(values: dict[str, Value], mistyped: set[str | None], body: str) -> list[Refusal]:

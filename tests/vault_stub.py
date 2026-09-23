@@ -48,6 +48,7 @@ from typing import cast
 TOOL_READ = "stub_read_note"
 TOOL_WRITE = "stub_write_note"
 TOOL_DELETE = "stub_delete_note"
+TOOL_APPEND = "stub_append_to_note"
 
 NAMESPACE = "stub-vault"
 DEPLOYMENT = "stub-mcp-obsidian-agent"
@@ -267,6 +268,14 @@ def running_vault(vault: FakeVault) -> Generator[FakeVault]:
                 vault.writes += 1
                 vault.agent_replicas_during_writes.append(vault.agent_replicas)
                 self._reply(200, _mcp_result(f"**{path}** written"))
+                return
+            if tool == TOOL_APPEND:
+                # As the deployed tool does without a section: append at the end of the file, or
+                # create an absent file with the appended text as the whole of it. A stub that refused
+                # the absent case would hide exactly the fragment a caller must guard against.
+                vault.notes[path] = vault.notes.get(path, "") + cast("str", arguments.get("content", ""))
+                vault.writes += 1
+                self._reply(200, _mcp_result(f"**{path}** appended"))
                 return
             if tool == TOOL_DELETE:
                 if path not in vault.notes:
