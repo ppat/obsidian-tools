@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.8.0](https://github.com/ppat/obsidian-tools/compare/v0.7.0...v0.8.0) (2026-09-23)
+
+
+### 🛠 Improvements
+
+* add the lint pass's second-pass ticket to the roadmap's A5 unit and restate A5's state ([#178](https://github.com/ppat/obsidian-tools/issues/178)) ([a44043a](https://github.com/ppat/obsidian-tools/commit/a44043a0fd5c9214f59c973efb331318f8976bd0))
+* bring the roadmap to the platform's current state, ticking the completed V1 units and V2's A4 and A6 ([#171](https://github.com/ppat/obsidian-tools/issues/171)) ([7d242ff](https://github.com/ppat/obsidian-tools/commit/7d242ff6b862ebc092f9e701e8476d871f592f1a))
+
+
+### ✨ Features
+
+* **processor:** judge every curated post-image with the admission validator before a chunk writes ([#173](https://github.com/ppat/obsidian-tools/issues/173)) ([504e940](https://github.com/ppat/obsidian-tools/commit/504e9403346dcc98a400f62d317037bc5b590fbf))
+* **validator:** admission validator for curated writes, on a stdlib schema core shared with the lint pass ([#172](https://github.com/ppat/obsidian-tools/issues/172)) ([4410f58](https://github.com/ppat/obsidian-tools/commit/4410f58b0a29ba2a3845f81261c94352d3bcbebb))
+* **worker:** lint pass with its S2 tolerance line: checks, admitted frontmatter fixes, records and a ranked digest ([#174](https://github.com/ppat/obsidian-tools/issues/174)) ([1fa6104](https://github.com/ppat/obsidian-tools/commit/1fa6104ca10f323901f8d847c323966e949f5c29))
+
+
+### 🚀 Enhancements + Bug Fixes
+
+* read MCP tool errors by the pinned server's real forms, refuse case-fallback reads, drop the doubled log separator ([#176](https://github.com/ppat/obsidian-tools/issues/176)) ([232ec7c](https://github.com/ppat/obsidian-tools/commit/232ec7c26843d96a4e1190cf27dffc2adcfeb304))
+
 ## [0.7.0](https://github.com/ppat/obsidian-tools/compare/v0.6.0...v0.7.0) (2026-09-22)
 
 
