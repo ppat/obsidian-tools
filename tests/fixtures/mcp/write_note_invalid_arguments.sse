@@ -1,0 +1,2 @@
+event: message
+data: {"result":{"content":[{"type":"text","text":"MCP error -32602: Input validation error: Invalid arguments for tool obsidian_write_note: [\n  {\n    \"code\": \"invalid_type\",\n    \"expected\": \"object\",\n    \"path\": [\n      \"target\"\n    ],\n    \"message\": \"Invalid input: expected object, received undefined\"\n  }\n]"}],"isError":true},"jsonrpc":"2.0","id":21}

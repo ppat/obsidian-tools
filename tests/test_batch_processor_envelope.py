@@ -2,13 +2,15 @@
 
 The whole module exists because a write-gate refusal is HTTP 200 with the error inside the JSON-RPC
 envelope, so every case below is stated as a literal body: what makes a table the right shape here
-is that the inputs are exactly what a server puts on the wire, and no fixture stands between the
-assertion and that text.
+is that the inputs are exactly what a server puts on the wire. Where the server's own exact shape
+is the argument, the body is the one captured from the pinned image (`tests/fixtures/mcp/`) rather
+than a literal modelled on it.
 """
 
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -70,6 +72,21 @@ def test_several_text_blocks_are_joined_rather_than_the_first_one_taken() -> Non
 
 # --- absence, which is a fact about the vault rather than about authority ------------------------
 
+_FIXTURES = Path(__file__).parent / "fixtures" / "mcp"
+
+
+def _captured(name: str) -> bytes:
+    """A response captured from the pinned server image (`tests/fixtures/mcp/`), byte for byte."""
+    return (_FIXTURES / name).read_bytes()
+
+
+@pytest.mark.parametrize("name", ["get_note_absent.sse", "delete_note_absent.sse"])
+def test_absence_is_read_from_the_structured_reason(name: str) -> None:
+    """ADR-0048's create branch and the idempotent delete both turn on absence. Red if either
+    captured absence — the read tool's and the delete tool's, which come from different code paths
+    in the server — came back as anything else."""
+    assert classify_response(200, _captured(name)).kind is OutcomeKind.NOT_FOUND
+
 
 @pytest.mark.parametrize(
     "message",
@@ -78,28 +95,64 @@ def test_several_text_blocks_are_joined_rather_than_the_first_one_taken() -> Non
         "10-areas/x.md does not exist",
         "no such file or directory",
         "Error 404 while reading the note",
-        "FILE NOT FOUND",
-    ],
-)
-def test_a_refusal_saying_the_note_is_absent_is_classified_as_absent(message: str) -> None:
-    """ADR-0048's create branch turns on absence. Red if any of these came back as a plain refusal:
-    a create would then be dead-lettered for a target that was legitimately not there."""
-    assert classify_response(200, _result(message, is_error=True)).kind is OutcomeKind.NOT_FOUND
-
-
-@pytest.mark.parametrize(
-    "message",
-    [
         "path_forbidden: outside the active write scope",
-        "the tool 'obsidian_read' is not available on this key",
         "permission denied",
     ],
 )
-def test_a_refusal_that_does_not_say_absent_stays_a_refusal(message: str) -> None:
-    """The other direction, and the one that matters more: red if the absence markers ever widened
-    into a catch-all, because a refusal misread as absence turns a create's pre-flight from "the
-    target is not there" into "I was not allowed to look", and the create then overwrites."""
+def test_an_error_with_no_structured_reason_is_never_absence(message: str) -> None:
+    """Absence is never inferred from wording. Red if any of these read as absence: a refusal
+    misread as absence turns a create's pre-flight from "the target is not there" into "I was not
+    allowed to look", and a delete into a success that deleted nothing."""
     assert classify_response(200, _result(message, is_error=True)).kind is OutcomeKind.REFUSED
+
+
+def test_a_tool_the_server_does_not_have_is_a_failure_not_an_absence() -> None:
+    """The captured answer to a tool name the server does not have: `MCP error -32602: Tool … not
+    found`, inside an `isError` result with no structured body. Red on the prose rule this replaced,
+    which read "not found" as the note's absence — a misnamed delete tool then acked every delete
+    without deleting anything."""
+    outcome = classify_response(200, _captured("tool_unknown.sse"))
+
+    assert outcome.kind is OutcomeKind.FAILED
+    assert "not found" in outcome.detail
+
+
+def test_malformed_arguments_are_a_failure_of_this_client() -> None:
+    """The captured answer to arguments that do not fit the tool's schema. Red if it read as the
+    gate refusing — the fix is here, not in the gateway's configuration."""
+    assert classify_response(200, _captured("write_note_invalid_arguments.sse")).kind is OutcomeKind.FAILED
+
+
+@pytest.mark.parametrize("name", ["write_note_path_forbidden.sse", "write_note_file_exists.sse"])
+def test_a_decision_with_a_reason_is_a_refusal(name: str) -> None:
+    """The gate's `path_forbidden` and the anti-clobber `file_exists`, as captured. Red if either
+    were retried or read as absence."""
+    assert classify_response(200, _captured(name)).kind is OutcomeKind.REFUSED
+
+
+def test_the_vault_not_answering_is_retryable_not_a_refusal() -> None:
+    """The captured answer when Obsidian's REST API is down: `isError`, `code: -32603`, no reason.
+    Red on the rule this replaced, which read it as the gate refusing — an Obsidian restart during a
+    batch run then dead-lettered every chunk it touched instead of retrying them."""
+    assert classify_response(200, _captured("write_note_upstream_unreachable.sse")).kind is OutcomeKind.UNAVAILABLE
+
+
+@pytest.mark.parametrize("code", [-32000, -32003, -32004, -32603])
+def test_a_transient_code_is_retryable_only_without_a_reason(code: int) -> None:
+    """The other half of the rule: every decision the server makes names its reason, so a transient
+    code carrying one is still that decision. Red if the code alone decided."""
+
+    def body(data: dict[str, object] | None) -> bytes:
+        error: dict[str, object] = {"code": code, "message": "m", **({"data": data} if data else {})}
+        result = {
+            "content": [{"type": "text", "text": "Error: m"}],
+            "structuredContent": {"error": error},
+            "isError": True,
+        }
+        return json.dumps({"jsonrpc": "2.0", "id": 1, "result": result}).encode("utf-8")
+
+    assert classify_response(200, body(None)).kind is OutcomeKind.UNAVAILABLE
+    assert classify_response(200, body({"reason": "path_forbidden"})).kind is OutcomeKind.REFUSED
 
 
 # --- the failure kinds are not interchangeable ---------------------------------------------------

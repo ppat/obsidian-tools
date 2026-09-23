@@ -8,14 +8,16 @@ status code, and no metric derived from one, can ever observe the gate. The enve
 place a refusal is visible at all, which makes this classification a decision rather than
 plumbing — and decisions in this codebase are pure functions with tables behind them.
 
-## The four shapes a single `tools/call` can come back as
+## The shapes a single `tools/call` can come back as
 
 | On the wire | Means | `OutcomeKind` |
 | --- | --- | --- |
 | 200, `{"result": {"content": [...], "isError": false}}` | the write happened | `OK` |
 | 200, `{"result": {"content": [...], "isError": true}}` | **the gate refused it** | `REFUSED` |
-| the same, whose error names a reason of absence | the note is not there | `NOT_FOUND` |
-| 200, `{"error": {"code": …, "message": …}}` | the call was malformed, or the tool does not exist | `FAILED` |
+| the same, whose `structuredContent.error.data.reason` is one of absence | the note is not there | `NOT_FOUND` |
+| the same, carrying a transient error code and no reason | the vault behind the server did not answer | `UNAVAILABLE` |
+| the same, whose only content is the SDK's `MCP error -32602: …` | a malformed call, or no such tool | `FAILED` |
+| 200, `{"error": {"code": …, "message": …}}` | a protocol failure the server did not fold into a result | `FAILED` |
 | a 5xx, a timeout, a dropped connection | nobody decided anything | `UNAVAILABLE` |
 
 `isError` is the load-bearing one and the easiest to miss: MCP puts a *tool's own* failure inside a
@@ -38,9 +40,25 @@ reads what went wrong, and it is never where a caller takes a value it intends t
 Both travel on `McpOutcome`; which one a given tool's caller must read is that tool's contract, and
 lives with the caller.
 
-The same split decides absence. A tool error carrying `structuredContent.error.data.reason` has
-stated its cause as a field, and that field is authoritative here; prose matching remains only for
-an error that carries no reason at all.
+## `isError` carries more than refusals
+
+The pinned server (`cyanheads/obsidian-mcp-server`) folds *every* failure into an `isError` result,
+not only the gate's decisions, and the three that are not decisions must not read as one:
+
+- **Absence is a structured reason and nothing else.** Every absence the tools this repository
+  calls can report carries `reason: note_missing`. The server's only error *without* a structured
+  body is the SDK's own `MCP error -32602: …` — malformed arguments, or `Tool <name> not found` for
+  a tool it does not have — so reading absence from prose could only ever misread that: a misnamed
+  delete tool would "succeed" on every note, and a misnamed read tool would report every target
+  absent.
+- **The vault being unreachable is not a refusal.** When Obsidian's REST API does not answer, the
+  server reports `code: -32603` with no `reason`; a 502/503/504 from it arrives as
+  `-32000`/`-32004`, also without one. A refusal always names its reason
+  (`path_forbidden`, `file_exists`, …), so a transient code *without* a reason is classified
+  `UNAVAILABLE`. Read as a refusal, an Obsidian restart mid-run would dead-letter every chunk it
+  touched.
+- **A malformed call is a failure of this client, not of the gate** — `FAILED`, fixed here rather
+  than in the gateway's configuration.
 
 ## Two shapes of body, both legal
 
@@ -70,13 +88,15 @@ _RETRYABLE_STATUSES = frozenset({408, 429})
 # fails loudly rather than being let through in front of a note that exists.
 _ABSENT_REASONS = frozenset({"note_missing"})
 
-# The same distinction taken from the refusal's prose, used only when the error carries no
-# structured reason at all. Prose is the weaker instrument in both directions: it is a property of
-# the server's wording rather than of its contract, and a refusal for some *other* cause whose text
-# happens to match reads as absence. Kept because a surface that declares no structured error shape
-# would otherwise have no absence signal whatsoever, and matched case-insensitively as an
-# allow-list for the same reason `_ABSENT_REASONS` is one.
-_NOT_FOUND_MARKERS = ("not found", "does not exist", "no such file", "404")
+# Tool-error codes (the server framework's `JsonRpcErrorCode`) that mean the call never reached a
+# decision: ServiceUnavailable, RateLimited, Timeout, and InternalError — the last being what an
+# unreachable REST API is reported as. Only ever applied to an error carrying no `reason`, because
+# every decision the server makes names one.
+_TRANSIENT_TOOL_ERROR_CODES = frozenset({-32000, -32003, -32004, -32603})
+
+# The MCP SDK's rendering of a protocol-level error it folded into a tool result: invalid arguments,
+# or a tool name the server does not have. It arrives with no `structuredContent` at all.
+_SDK_INVALID_PARAMS_PREFIX = "MCP error -32602:"
 
 
 class OutcomeKind(Enum):
@@ -87,14 +107,16 @@ class OutcomeKind(Enum):
     """The gate said no, inside a 200. Permanent for this chunk: the scope is server configuration."""
 
     NOT_FOUND = auto()
-    """A refusal whose stated reason — or, failing that, whose text — says the note is absent. A
-    fact about the vault, not about authority."""
+    """A tool error whose structured reason says the note is absent. A fact about the vault, not
+    about authority."""
 
     FAILED = auto()
-    """A JSON-RPC error, a permanent HTTP status, or a body this module cannot read. Never retried."""
+    """A JSON-RPC error, a call the server rejected as malformed, a permanent HTTP status, or a body
+    this module cannot read. Never retried."""
 
     UNAVAILABLE = auto()
-    """Nothing decided anything: a 5xx, a timeout, a dropped connection. The only retryable kind."""
+    """Nothing decided anything: a 5xx, a timeout, a dropped connection, or a tool error reporting
+    that the vault behind the server did not answer. The only retryable kind."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,8 +184,11 @@ def classify_response(status: int, body: bytes) -> McpOutcome:
     raw_structured = fields.get("structuredContent")
     structured = cast("dict[str, object]", raw_structured) if isinstance(raw_structured, dict) else None
     if fields.get("isError") is True:
-        kind = OutcomeKind.NOT_FOUND if _reads_as_absent(structured, text) else OutcomeKind.REFUSED
-        return McpOutcome(kind, text or "the tool reported an error with no message", structured=structured)
+        return McpOutcome(
+            _tool_error_kind(structured, text),
+            text or "the tool reported an error with no message",
+            structured=structured,
+        )
     return McpOutcome(OutcomeKind.OK, "", text, structured)
 
 
@@ -211,20 +236,28 @@ def _content_text(content: object) -> str:
     return "\n".join(parts)
 
 
-def _reads_as_absent(structured: dict[str, object] | None, text: str) -> bool:
-    """Whether a tool error says the note is not there.
+def _tool_error_kind(structured: dict[str, object] | None, text: str) -> OutcomeKind:
+    """What an `isError` result is: see "`isError` carries more than refusals" above.
 
-    **The structured reason decides whenever there is one, and the prose is not consulted then.**
-    A refusal carrying a reason has already answered the question; falling through to the markers
-    after reading one would let a refusal whose *cause* is something else be read as absence
-    because its message happens to contain "not found" — the direction that puts a create in front
-    of a note that exists.
+    **Absence is taken from the structured reason alone, never from the message.** The direction
+    that matters is a non-absence read as absence — it puts a create in front of a note that exists,
+    or acks a delete that never ran — and the one unstructured error the server emits says "not
+    found" about a *tool*.
     """
+    if structured is None and text.startswith(_SDK_INVALID_PARAMS_PREFIX):
+        return OutcomeKind.FAILED
     reason = _error_reason(structured)
-    if reason is not None:
-        return reason in _ABSENT_REASONS
-    lowered = text.lower()
-    return any(marker in lowered for marker in _NOT_FOUND_MARKERS)
+    if reason is None:
+        return (
+            OutcomeKind.UNAVAILABLE if _error_code(structured) in _TRANSIENT_TOOL_ERROR_CODES else OutcomeKind.REFUSED
+        )
+    return OutcomeKind.NOT_FOUND if reason in _ABSENT_REASONS else OutcomeKind.REFUSED
+
+
+def _error_code(structured: dict[str, object] | None) -> object:
+    """`structuredContent.error.code`, when there is one."""
+    error = structured.get("error") if structured is not None else None
+    return cast("dict[str, object]", error).get("code") if isinstance(error, dict) else None
 
 
 def _error_reason(structured: dict[str, object] | None) -> str | None:

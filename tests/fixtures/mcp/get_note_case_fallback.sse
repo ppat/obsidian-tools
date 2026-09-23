@@ -1,0 +1,2 @@
+event: message
+data: {"result":{"content":[{"type":"text","text":"**_ops/case.md** (format: content)\n\nlower case\n"}],"structuredContent":{"result":{"format":"content","path":"_ops/case.md","content":"lower case\n"}}},"jsonrpc":"2.0","id":4}

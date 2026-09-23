@@ -38,8 +38,8 @@ access group the key reaches the server through, not by the server's own name, s
 renames every tool without changing anything about what the tools do — and a guessed name would be
 wrong in a way that presents as a refusal at every call site. The argument shape is the opposite
 kind of fact: the target envelope below is a discriminated object the schema requires, which no
-key-name setting can express, and a wrong shape arrives as a malformed-arguments JSON-RPC error
-that `envelope.py` classifies `FAILED` — loud, and needing no knob to fix.
+key-name setting can express, and a wrong shape arrives as the SDK's `MCP error -32602` inside an
+`isError` result, which `envelope.py` classifies `FAILED` — loud, and needing no knob to fix.
 
 The session handshake is streamable HTTP's: `initialize`, then the `notifications/initialized`
 notification, carrying `Mcp-Session-Id` on every later request if the server issued one. A server
@@ -263,13 +263,28 @@ def _note_content(outcome: McpOutcome, path: str) -> str:
 
     A success carrying no typed result is refused rather than fallen back on. The fallback's
     failure mode is the silent one above; this one stops the run and names the tool.
+
+    **A read can answer for a different file, and says so only in `result.path`.** When the exact
+    path is absent, the server retries it case-insensitively and, on a single match, returns *that*
+    note as a success — so `Foo.md` reads as present, with `foo.md`'s bytes, on a vault holding only
+    `foo.md`. Its writes and deletes match the exact path only, so a create of `Foo.md` would then
+    succeed beside `foo.md`: two files that collide on any case-insensitive checkout of the vault.
+    Neither "present" nor "absent" is true of the path asked about in a way this component can act
+    on, so the answer is refused, naming both paths.
     """
     result = (outcome.structured or {}).get("result")
-    content = cast("dict[str, object]", result).get("content") if isinstance(result, dict) else None
+    fields = cast("dict[str, object]", result) if isinstance(result, dict) else {}
+    content = fields.get("content")
     if not isinstance(content, str):
         raise McpFailedError(
             f"read {path!r}: the response carried no structured note content, so there are no bytes "
             "to hash that the surface has vouched for"
+        )
+    answered_for = fields.get("path")
+    if answered_for != path:
+        raise McpFailedError(
+            f"read {path!r}: the surface answered with the note at {answered_for!r} instead — {path!r} "
+            "itself is absent and differs from an existing note only in letter case"
         )
     return content
 

@@ -290,7 +290,9 @@ def test_an_absent_log_is_not_created_as_a_fragment(tmp_path: Path) -> None:
     assert door.written("log.md") is None
 
 
-def test_a_log_without_a_final_line_break_gets_one_before_the_new_line(tmp_path: Path) -> None:
+def test_a_log_without_a_final_line_break_gets_exactly_one_before_the_new_line(tmp_path: Path) -> None:
+    """The append tool adds the missing line break itself (measured against the pinned image, and
+    modelled by the stub). Red if the pass adds its own as well — a blank line in the log."""
     mount = {**CLEAN, "log.md": "# log\n\n- 2026-09-01 | claude-code | bootstrapped"}
     code, door, _ = _pass(tmp_path, mount)
     assert code == EXIT_OK

@@ -134,11 +134,11 @@ def _read_result(path: str, content: str) -> bytes:
     return _mcp_result(rendered, structured=structured)
 
 
-def _tool_error(message: str, *, reason: str, path: str) -> bytes:
+def _tool_error(message: str, *, reason: str, path: str, code: int = -32001) -> bytes:
     """A tool's own failure: prose for a reader, and the cause as a field. `reason` is what
     `envelope.py` classifies on, so a stub that omitted it would prove nothing about that path."""
     structured: dict[str, object] = {
-        "error": {"code": -32001, "message": message, "data": {"path": path, "reason": reason}}
+        "error": {"code": code, "message": message, "data": {"path": path, "reason": reason}}
     }
     return _mcp_result(f"Error: {message}", is_error=True, structured=structured)
 
@@ -248,9 +248,12 @@ def running_vault(vault: FakeVault) -> Generator[FakeVault]:
             if path in vault.refuse_paths or (
                 vault.fail_after_writes is not None and vault.writes >= vault.fail_after_writes
             ):
-                # The gateway's own refusal, which carries prose and no structured cause — the
-                # shape proven at content-foundation acceptance (`docs/VERIFICATIONS.md` §1).
-                self._reply(200, _mcp_result(f"path_forbidden: {path}", is_error=True))
+                # The gate's refusal as the server words it (`docs/VERIFICATIONS.md` §1): a reason
+                # and the Forbidden code, which is what keeps it from reading as absence or as the
+                # vault being down.
+                self._reply(
+                    200, _tool_error(f"path_forbidden: {path}", reason="path_forbidden", path=path, code=-32005)
+                )
                 return
 
             if tool == TOOL_WRITE:
@@ -270,10 +273,17 @@ def running_vault(vault: FakeVault) -> Generator[FakeVault]:
                 self._reply(200, _mcp_result(f"**{path}** written"))
                 return
             if tool == TOOL_APPEND:
-                # As the deployed tool does without a section: append at the end of the file, or
-                # create an absent file with the appended text as the whole of it. A stub that refused
-                # the absent case would hide exactly the fragment a caller must guard against.
-                vault.notes[path] = vault.notes.get(path, "") + cast("str", arguments.get("content", ""))
+                # As the pinned tool does without a section, measured: append at the end of the file,
+                # first adding a line break if the file does not already end in one, or create an
+                # absent file with the appended text as the whole of it. A stub that refused the
+                # absent case would hide exactly the fragment a caller must guard against, and one
+                # that only concatenated would hide a caller adding a second line break.
+                existing = vault.notes.get(path)
+                appended = cast("str", arguments.get("content", ""))
+                if existing is None:
+                    vault.notes[path] = appended
+                else:
+                    vault.notes[path] = existing + ("" if existing.endswith("\n") else "\n") + appended
                 vault.writes += 1
                 self._reply(200, _mcp_result(f"**{path}** appended"))
                 return
@@ -286,7 +296,9 @@ def running_vault(vault: FakeVault) -> Generator[FakeVault]:
                 vault.agent_replicas_during_writes.append(vault.agent_replicas)
                 self._reply(200, _mcp_result(f"**{path}** deleted"))
                 return
-            self._reply(200, b'{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown tool"}}')
+            # As the pinned server answers a tool it does not have: the SDK's own error, folded into
+            # an `isError` result with no structured body.
+            self._reply(200, _mcp_result(f"MCP error -32602: Tool {tool} not found", is_error=True))
 
         def log_message(self, format: str, *args: object) -> None:
             return
