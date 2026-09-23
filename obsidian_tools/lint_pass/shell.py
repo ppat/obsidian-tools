@@ -172,8 +172,9 @@ def run_pass(*, root: Path, mcp: McpClient, hook: DigestHook, digest_limit: int,
     if log_content is None:
         failures.append(f"log line: {LOG_PATH} is not on the mount, and appending would create it as a fragment")
     else:
-        separator = "" if log_content.endswith(b"\n") or not log_content else "\n"
-        attempt("log line", lambda: mcp.append_note(LOG_PATH, separator + log_line(today, decision, outcomes)))
+        # No separator of our own: the append tool starts a new line itself when the file does not
+        # end in one, so prefixing one here would leave a blank line in the log.
+        attempt("log line", lambda: mcp.append_note(LOG_PATH, log_line(today, decision, outcomes)))
     if items:
         attempt("digest", lambda: hook.push(digest_message(today, items, digest_total)))
 

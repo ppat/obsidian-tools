@@ -108,10 +108,10 @@ overlap with the rule is a single case.
 **The redundancy that does exist is worth having, because the two rest on different things and fail
 independently.** The pre-flight's create branch turns on the target reading as absent, and the tool
 surface reports absence as an error carrying a structured reason of its own — a fact about the
-vault, told apart from a refusal about authority without either one's message being read. Not every
-refusal reaching this component carries that structure, the gateway ahead of the surface refusing
-with message text alone, so absence is recognised from the structured reason where an error offers
-one and from the message where none is offered. `overwrite: false` rests on something different
+vault, told apart from a refusal about authority without either one's message being read. Absence
+is recognised from that structured reason alone: the one error the surface emits without structure
+is its SDK's own, which says "not found" about a *tool*, so reading absence from a message could
+only misread it. `overwrite: false` rests on something different
 again: the server's own existence test, at the moment of the write. A determination of absence that
 went wrong in the unsafe direction would put a create in front of a note that exists, and the flag
 refuses it. Which of the two is the backstop is

@@ -115,13 +115,14 @@ _FIXTURES = Path(__file__).parent / "fixtures" / "mcp"
 
 
 def captured(name: str) -> tuple[int, bytes, dict[str, str]]:
-    """A response captured from the deployed gateway, replayed byte for byte.
+    """A response captured off the wire, replayed byte for byte.
 
-    Both files are the gateway's own SSE framing around its own envelope. `get_note_absent.sse` is
-    verbatim; `get_note_content.sse` carries a short body in place of the note that was read, with
-    the rendering rebuilt by the surface's own rule — the title line the capture showed, glued to
-    the body — because the note itself is private vault content and its length is the only thing
-    about it this test uses.
+    `get_note_absent.sse` and `get_note_content.sse` were captured through the deployed gateway;
+    the latter carries a short body in place of the note that was read, with the rendering rebuilt
+    by the surface's own rule — the title line the capture showed, glued to the body — because the
+    note itself is private vault content and its length is the only thing about it this test uses.
+    The rest were captured verbatim from the pinned server image, run against the pinned Obsidian
+    image, because the failures they show cannot be provoked on the deployment without breaking it.
     """
     return 200, (_FIXTURES / name).read_bytes(), {"Content-Type": "text/event-stream"}
 
@@ -224,13 +225,37 @@ def test_a_persistent_transient_failure_exhausts_the_retries_and_stops(stub: Stu
     assert len(stub.requests) == 3
 
 
-def test_a_missing_note_reads_as_absent_from_prose_when_no_reason_is_stated(stub: Stub) -> None:
-    """The fallback path: an error carrying no structured cause at all, where the wording is the
-    only signal there is. Red if the fallback were dropped — a surface that stops declaring an
-    error shape would fail every create rather than degrading to the weaker instrument."""
-    stub.replies = [refusal("File not found: 05-raw/new.md")]
+def test_a_delete_through_a_tool_the_server_lacks_fails_rather_than_succeeding(stub: Stub) -> None:
+    """The captured answer to an unknown tool says "not found" — about the tool. Red on the prose
+    rule this replaced, under which the delete below returned as if the note were already gone: a
+    misnamed delete tool acked every delete in a batch and deleted nothing."""
+    stub.replies = [captured("tool_unknown.sse")]
 
-    assert mcp_client(stub).read_note("05-raw/new.md") is None
+    with pytest.raises(McpFailedError, match="not found"):
+        mcp_client(stub).delete_note("10-areas/x.md")
+
+    assert len(stub.requests) == 1
+
+
+def test_a_read_answered_by_a_case_variant_is_refused(stub: Stub) -> None:
+    """Captured: `_ops/CASE.md` asked for, `_ops/case.md` answered — the server's case-insensitive
+    fallback, reported as a success. Red if the client took those bytes as the asked-for note: the
+    pre-flight would judge a path by another file's content, while the write that follows matches
+    the exact path only and creates a second file differing in case."""
+    stub.replies = [captured("get_note_case_fallback.sse")]
+
+    with pytest.raises(McpFailedError, match=r"_ops/case\.md"):
+        mcp_client(stub).read_note("_ops/CASE.md")
+
+
+def test_a_write_the_vault_did_not_answer_is_retried(stub: Stub) -> None:
+    """Captured: Obsidian's REST API down, reported inside an `isError` result. Red on the rule
+    this replaced, which raised a gate refusal on the first attempt and never retried."""
+    stub.replies = [captured("write_note_upstream_unreachable.sse"), ok("")]
+
+    mcp_client(stub).write_note("10-areas/x.md", "body\n", overwrite=True)
+
+    assert len(stub.requests) == 2
 
 
 def test_a_delete_of_an_already_absent_note_succeeds(stub: Stub) -> None:

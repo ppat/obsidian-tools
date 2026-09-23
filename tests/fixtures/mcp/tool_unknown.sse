@@ -1,0 +1,2 @@
+event: message
+data: {"result":{"content":[{"type":"text","text":"MCP error -32602: Tool obsidian_nope not found"}],"isError":true},"jsonrpc":"2.0","id":32}

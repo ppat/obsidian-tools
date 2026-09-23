@@ -1,0 +1,2 @@
+event: message
+data: {"result":{"content":[{"type":"text","text":"Error: Unable to connect. Is the computer able to access the url?"}],"structuredContent":{"error":{"code":-32603,"message":"Unable to connect. Is the computer able to access the url?"}},"isError":true},"jsonrpc":"2.0","id":3}
