@@ -35,9 +35,12 @@ the unit it serves (one unit per ticket); every unit here names its tickets; and
 **Position** line below is re-dated whenever the checklists are reconciled against the tickets, so
 staleness is detectable instead of silent.
 
-**Position: 2026-09-06** — reconciled against the V1 tickets, which were read against the merged
-pull requests and against these checklists; the two agree, and no unit has reached
-deployed-and-observed.
+**Position: 2026-09-23** — reconciled against every unit's tickets, the releases of both
+repositories, the clusters repo's pins and the running cluster. Four V1 units are completed and
+ticked: [A1](#group-a--pipeline-mechanisms) and [D1](#group-d--operability) are also deployed, [A2](#group-a--pipeline-mechanisms) and [B1](#group-b--connection-work) are not yet. [C1](#group-c--content-work) is
+deferred by the owner, and [D4](#group-d--operability)'s window and drain are unbuilt. Of [V2](#v2--the-safeguard-minimum), [A4](#group-a--pipeline-mechanisms) and [A6](#group-a--pipeline-mechanisms) are
+completed and ticked, neither yet released or deployed; [A5](#group-a--pipeline-mechanisms) is in progress — its code is merged, its
+deployment is not.
 
 ## Delivery posture
 
@@ -75,15 +78,19 @@ iterate-on-it-afterwards first pass; and post-done iterations are out of scope f
 
 | | State |
 | --- | --- |
-| Substrate (namespace, volume, headless Obsidian, both MCP instances, network isolation, secrets) | **Deployed and observed** (`apps-ai-v0.8.0`) [measured 2026-08-27] |
+| Substrate (namespace, volume, headless Obsidian, both MCP instances, network isolation, secrets) | **Deployed and observed** [measured 2026-08-27]; since moved with the rest of the vault out of `apps-ai` into its own module, `apps-obsidian-vault`, which the cluster runs [measured 2026-09-22] |
 | Content foundation (schema, skeleton, settings lock, property types; agents read-only) | **Deployed**, with one known defect: the daily-note `format` key was never written to the instance — satisfied only by Obsidian's default [measured 2026-08-27] |
 | Read replication (committer → GitHub → `local-replicator` → iCloud), capture gate included | **Deployed and observed**: committer every 15 min in-cluster; `local-replicator` under launchd since 2026-08-28, acceptance closed at 5 of 6 criteria, no component defect found [measured 2026-08-28] |
-| Work queue and the batch path (broker, accounts, credentials, batch stream; `batch-processor`, the batch producer, the batch-mode watchdog, the vault-loaded exporter) | **Built and merged, never run**: the code is released in [`v0.5.1`](https://github.com/ppat/obsidian-tools/releases/tag/v0.5.1); the manifests are merged into the `apps-ai` module ([apps#3947](https://github.com/ppat/homelab-ops-kubernetes-apps/pull/3947), [apps#3953](https://github.com/ppat/homelab-ops-kubernetes-apps/pull/3953), [apps#3956](https://github.com/ppat/homelab-ops-kubernetes-apps/pull/3956)) and await the module release named in the delivery-gap row below [measured 2026-09-06] |
-| Everything else (promotion and drift streams, `promotion-processor`, `drift-processor`, validator, lint, the remaining connections, content, the rest of operability) | **Unbuilt** — no manifest and no module exists for any of them [measured 2026-09-06 by grep over both repos] |
-| **The delivery gap** | `v0.5.1` (2026-09-06) is the latest release and `main` carries nothing beyond it; the `.obsidian/` overlay fix ([ot#71](https://github.com/ppat/obsidian-tools/pull/71)) shipped in `v0.5.0`. Whether the Mac has been upgraded to either is **unmeasured** — the Mac is upgraded by hand, so for `local-replicator` "fixed" still means "released", nothing stronger. On the cluster side the clusters repo now pins `apps-ai-v0.8.1`; the module release carrying every manifest of this increment, [`apps#3910`](https://github.com/ppat/homelab-ops-kubernetes-apps/pull/3910) (`apps-ai-v0.8.2`), is open and unmerged, so none of the work above has reached a cluster [measured 2026-09-06] |
+| Work queue substrate and the vault-loaded exporter ([A1](#group-a--pipeline-mechanisms), [D1](#group-d--operability)) | **Deployed and observed**: the broker runs with its accounts and every producer credential minted, [measured 2026-09-07], and its per-stream metrics are scraped and queryable; the exporter's gauge and last-success timestamp are scraped and current [measured 2026-09-22] |
+| The batch path ([A2](#group-a--pipeline-mechanisms)'s stream and `batch-processor`, [D4](#group-d--operability)'s watchdog) | **Deployed, not yet observed doing its job**: both streams exist, and the processor and watchdog run on schedule, but no batch has ever been drained and the watchdog has never restored an instance [measured 2026-09-22]. The deployed processor's MCP write semantics were found wrong against the live tool surface and are corrected in `obsidian-tools` [`v0.7.0`](https://github.com/ppat/obsidian-tools/releases/tag/v0.7.0) (ADR-0053); that correction is not yet on the cluster — see the delivery-gap row |
+| The batch producer ([B1](#group-b--connection-work)) | **Code released**; issuing its credential to the workspace is a run-time act performed at the import run ([C1](#group-c--content-work)), not a manifest |
+| The safeguard minimum ([A4](#group-a--pipeline-mechanisms)'s admission validator, [A5](#group-a--pipeline-mechanisms)'s lint pass, [A6](#group-a--pipeline-mechanisms)'s tolerance line) | **Code merged, not released, not deployed**: the validator and the shared frontmatter schema core ([ot#172](https://github.com/ppat/obsidian-tools/pull/172)), the validator wired into `batch-processor` so a chunk with any note refused admission to curated space writes nothing and is dead-lettered ([ot#173](https://github.com/ppat/obsidian-tools/pull/173)), the lint pass with the tolerance line as a table in its code ([ot#174](https://github.com/ppat/obsidian-tools/pull/174)). The lint pass's deployment is open: its gateway key ([terraform#338](https://github.com/ppat/homelab-ops-terraform/pull/338)) and its CronJob ([apps#4075](https://github.com/ppat/homelab-ops-kubernetes-apps/pull/4075), a draft awaiting the release's image) [measured 2026-09-23] |
+| Everything else (promotion and drift streams, `promotion-processor`, `drift-processor`, the remaining connections, content, the rest of operability) | **Unbuilt** — no manifest and no module exists for any of them [measured 2026-09-23] |
+| **The delivery gap** | The cluster runs `obsidian-tools` `v0.6.0`, through its pin of `apps-obsidian-vault-v0.1.1`. `v0.7.0` (2026-09-22) is the latest release; the module release that moves every vault workload to it, `apps-obsidian-vault-v0.1.3`, is cut, and the clusters-repo change that would pin it ([clusters#1091](https://github.com/ppat/homelab-ops-kubernetes-clusters/pull/1091)) is a draft held by the owner. Merged but unreleased: the safeguard minimum above and a fix aligning `batch-processor`'s and the lint pass's reading of MCP responses with the pinned server's real forms ([ot#176](https://github.com/ppat/obsidian-tools/pull/176)) — all carried by the open release PR for `v0.8.0` ([ot#175](https://github.com/ppat/obsidian-tools/pull/175)) [measured 2026-09-23]. On the Mac, the `.obsidian/` overlay fix ([ot#71](https://github.com/ppat/obsidian-tools/pull/71)) shipped in `v0.5.0`; whether the Mac has been upgraded to it or later is **unmeasured** — the Mac is upgraded by hand, so for `local-replicator` "fixed" still means "released", nothing stronger |
 
-Ruled harmless deliberately: nothing merged since 2026-08-28 is deployed, the Mac has no downstream
-consumer while NATS is not deployed, and the committer bump rides the next production deployment.
+Why the gaps are tolerable today [inferred]: nothing enqueues onto the batch stream until the import
+runs, so the uncorrected write path on the cluster has nothing to apply; and the Mac's drainer
+discards by design until [B7](#group-b--connection-work), so its version gates nothing downstream.
 
 ## Delivered, mapped to outcomes
 
@@ -100,7 +107,7 @@ consumer while NATS is not deployed, and the committer bump rides the next produ
   waived**, to [ot#69](https://github.com/ppat/obsidian-tools/issues/69) — testable only at the app rollout.
 
 What the delivered work did **not** deliver, so a cold reader does not assume it did: agents cannot
-write yet ([S1](./USE_CASES.md#s1--admitted)'s queue admission path does not exist; the write keys are read-only); nothing yet
+write yet ([S1](./USE_CASES.md#s1--admitted)'s queue admission path is deployed but has never applied a write; the write keys are read-only); nothing yet
 checks whether written content is any good ([S2](./USE_CASES.md#s2--sound) has property types and nothing else); [W6](./USE_CASES.md#axis-2--writers-connected)'s dispatch
 half does not exist (the drainer discards); and the Obsidian apps are installed nowhere,
 deliberately.
@@ -134,6 +141,10 @@ read surface that already exists ([R2](./USE_CASES.md#axis-3--readers-connected)
 **Why it is first:** the import needs **no validator at all** — raw is immutable and exempt by
 design — so nothing [S2](./USE_CASES.md#s2--sound)-shaped blocks it. The corpus it lands is also the instrument every later
 acceptance depends on.
+**The import run is deferred by the owner's decision.** [C1](#group-c--content-work) waits until the system is more
+complete, so that features built after it cannot damage real notes. The rest of V1 is deployed,
+or for the producer released; the increment's value — the corpus — does not ship until the run
+happens, so [V2](#v2--the-safeguard-minimum)'s units proceed ahead of it.
 
 ### V2 — The safeguard minimum
 
@@ -193,12 +204,15 @@ unit: the [verification catalogue](./docs/VERIFICATIONS.md).
 
 ### Group A — pipeline mechanisms
 
-A1 and A2 are built and merged — the code released in `v0.5.1`, the manifests awaiting the module
-release named in the delivery-gap row — and neither is deployed. A3 to A8 are unimplemented
-[measured 2026-09-06]. The boxes below track units, so both stay unticked until deployed and
-observed.
+A box ticks when its unit is completed — the work it asks for is done. Deployed is the state after
+completed: the completed work running on the cluster. A1 is completed and deployed; it still owes the
+decisive credential-refusal injection in the [verification catalogue](./docs/VERIFICATIONS.md). A2 is
+completed — its corrected write path is released and its manifest merged — but not yet deployed: the
+cluster still runs the earlier release, so no batch has drained. A4 and A6 are completed — their code
+merged, awaiting the next release — and not yet deployed. A5 is in progress: its code is merged, its
+deployment is not. A3, A7 and A8 are unimplemented [measured 2026-09-23].
 
-- [ ] **A1 — NATS substrate and credential machinery** → [S1](./USE_CASES.md#s1--admitted) · [apps#3444](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3444) · [V1](#v1--content-in-content-readable)
+- [x] **A1 — NATS substrate and credential machinery** → [S1](./USE_CASES.md#s1--admitted) · [apps#3444](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3444) · [V1](#v1--content-in-content-readable)
   JetStream as a single-replica Deployment; the off-cluster ingress; one NATS account per producer
   population, subject-scoped. **No streams** — each stream ships with its processor (A2/A3/A7), so
   no stream is ever reachable with no consumer and no credential control behind it. The credential
@@ -206,7 +220,7 @@ observed.
   subject outside its grant) before any processor exists.
   *[O1](./USE_CASES.md#o1--measured) criteria ride on it:* per-stream depth, ack, nack, dead-letter metrics collected and
   queryable.
-- [ ] **A2 — the batch stream and `batch-processor`** → [S1](./USE_CASES.md#s1--admitted) · [ot#5](https://github.com/ppat/obsidian-tools/issues/5) (code) + [apps#3875](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3875) (deploy) · [V1](#v1--content-in-content-readable)
+- [x] **A2 — the batch stream and `batch-processor`** → [S1](./USE_CASES.md#s1--admitted) · [ot#5](https://github.com/ppat/obsidian-tools/issues/5) (code) + [apps#3875](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3875) (deploy) · [V1](#v1--content-in-content-readable)
   Strict FIFO; stale patches rejected to the producer; the raw layer's create-only enforcement;
   backpressure keyed on promotion-stream depth; dead-letter path. *Criteria:* raw-refusals and
   backpressure engagements countable.
@@ -214,7 +228,7 @@ observed.
   Real-time pointer draining; refuses any pointer outside `00-inbox/`; calls the admission validator
   on every relocation. *Criteria:* refused pointers counted — a rising count is exactly the
   prompt-injection attempt the check exists to catch.
-- [ ] **A4 — the admission validator** → [S2](./USE_CASES.md#s2--sound) · [ot#6](https://github.com/ppat/obsidian-tools/issues/6) · [V2](#v2--the-safeguard-minimum)
+- [x] **A4 — the admission validator** → [S2](./USE_CASES.md#s2--sound) · [ot#6](https://github.com/ppat/obsidian-tools/issues/6) · [V2](#v2--the-safeguard-minimum)
   One shared admission check, three callers (promotion, batch, lint), two enforcement strengths;
   quarantine-never-delete with machine-readable reasons, counted. First pass: the mechanical checks
   and the finance hard block, nothing speculative. See [Open decisions](#open-decisions) for the
@@ -224,7 +238,7 @@ observed.
   normalisation in the pass's own code; the review digest. Runs against whatever content exists —
   it does not depend on agent writes being open. *Criteria:* inbox depth, quarantine depth,
   rejection counts, unstamped-note counts emitted from the pass itself.
-- [ ] **A6 — the [S2](./USE_CASES.md#s2--sound) tolerance line** → [S2](./USE_CASES.md#s2--sound) · [ot#84](https://github.com/ppat/obsidian-tools/issues/84) · [V2](#v2--the-safeguard-minimum)
+- [x] **A6 — the [S2](./USE_CASES.md#s2--sound) tolerance line** → [S2](./USE_CASES.md#s2--sound) · [ot#84](https://github.com/ppat/obsidian-tools/issues/84) · [V2](#v2--the-safeguard-minimum)
   A written statement of tolerated badness, placed inside the linter — the instrument that makes
   "minimum confidence" falsifiable and keeps [V2](#v2--the-safeguard-minimum) from creeping toward scenario coverage. Written
   before A5 it is a specification; after, a retrofit onto behaviour that already became the
@@ -244,8 +258,10 @@ observed.
 
 Largely the same shape each time — a credential, a handle, agreement on the message form — which is
 why each lands independently. [W1](./USE_CASES.md#axis-2--writers-connected) is two connections through two mechanisms at two different gates.
+B1's code is released; its credential reaches the workspace at the import run. B2 to B8 are
+unbuilt [measured 2026-09-22].
 
-- [ ] **B1 — [W1](./USE_CASES.md#axis-2--writers-connected)-bulk: the Coder workspace onto the batch stream** → [W1](./USE_CASES.md#axis-2--writers-connected) · [ot#125](https://github.com/ppat/obsidian-tools/issues/125) (code) + [apps#3878](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3878) (credential/deploy) · [V1](#v1--content-in-content-readable)
+- [x] **B1 — [W1](./USE_CASES.md#axis-2--writers-connected)-bulk: the Coder workspace onto the batch stream** → [W1](./USE_CASES.md#axis-2--writers-connected) · [ot#125](https://github.com/ppat/obsidian-tools/issues/125) (code) + [apps#3878](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3878) (credential/deploy) · [V1](#v1--content-in-content-readable)
   The only credential in the system permitted to enqueue patch-carrying work; the producer side that
   generates and enqueues patches.
 - [ ] **B2 — [W1](./USE_CASES.md#axis-2--writers-connected)-interactive: Claude Code's direct writes** → [W1](./USE_CASES.md#axis-2--writers-connected) · [apps#3879](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3879) · [V3](#v3--writers-on-iterate-in-production)
@@ -300,7 +316,11 @@ ticket is how [O1](./USE_CASES.md#o1--measured) got deferred to the end original
 be recovered later. The units below are the remainder: signals needing an independent observer, and
 shared mechanisms nothing else owns. *Criteria distribute; shared mechanisms do not.*
 
-- [ ] **D1 — the vault-loaded exporter** → [O1](./USE_CASES.md#o1--measured) · [ot#121](https://github.com/ppat/obsidian-tools/issues/121) (code) + [apps#3946](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3946) (deploy) · [V1](#v1--content-in-content-readable)
+D1 is completed and deployed. D4's watchdog is deployed and runs its scheduled passes but has never
+restored an instance, and its window and drain are unbuilt, so D4 is not completed. D2,
+D3, D5 and D6 are unbuilt [measured 2026-09-22].
+
+- [x] **D1 — the vault-loaded exporter** → [O1](./USE_CASES.md#o1--measured) · [ot#121](https://github.com/ppat/obsidian-tools/issues/121) (code) + [apps#3946](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3946) (deploy) · [V1](#v1--content-in-content-readable)
   An authenticated call that enumerates vault content and exposes a gauge + last-success timestamp.
   Exists to **contradict the component's own account of itself** — the pod has already been Ready
   and serving while unable to open the vault at all [measured 2026-07-30]. Not foldable into a
@@ -343,7 +363,7 @@ ticket; the reconciliation of 2026-08-29 left none.
 
 | Outcome | Delivered already by | Remaining units | Gaps |
 | --- | --- | --- | --- |
-| [S1](./USE_CASES.md#s1--admitted) Admitted | Substrate; content foundation (gate proven both directions) | [A1](#group-a--pipeline-mechanisms) · [A2](#group-a--pipeline-mechanisms) · [D5](#group-d--operability) (assignment arguable) | — |
+| [S1](./USE_CASES.md#s1--admitted) Admitted | Substrate; content foundation (gate proven both directions); [A1](#group-a--pipeline-mechanisms) | [A2](#group-a--pipeline-mechanisms) · [D5](#group-d--operability) (assignment arguable) | — |
 | [S2](./USE_CASES.md#s2--sound) Sound | Property types only | [A4](#group-a--pipeline-mechanisms) · [A5](#group-a--pipeline-mechanisms) · [A6](#group-a--pipeline-mechanisms) | — |
 | [S3](./USE_CASES.md#s3--placed) Placed | — | [A3](#group-a--pipeline-mechanisms) · [A8](#group-a--pipeline-mechanisms) | — |
 | [S4](./USE_CASES.md#s4--retrievable) Retrievable | Read handles; the whole replication chain | — (its human-device remainder is [R1](./USE_CASES.md#axis-3--readers-connected)'s) | — |
@@ -356,7 +376,7 @@ ticket; the reconciliation of 2026-08-29 left none.
 | [R1](./USE_CASES.md#axis-3--readers-connected) humans, native on device | Content reaches the device | [B8](#group-b--connection-work) | — |
 | [R2](./USE_CASES.md#axis-3--readers-connected)–[R4](./USE_CASES.md#axis-3--readers-connected) agent readers | Delivered — no build work exists, correctly | — | — |
 | [R5](./USE_CASES.md#axis-3--readers-connected) humans, conversational | Delivered | — | — |
-| [O1](./USE_CASES.md#o1--measured) Measured | LiteLLM scrape groundwork (coverage unverified) | [D1](#group-d--operability) · [D2](#group-d--operability) · [D6](#group-d--operability), plus criteria riding on [A1](#group-a--pipeline-mechanisms)/[A2](#group-a--pipeline-mechanisms)/[A4](#group-a--pipeline-mechanisms)/[A5](#group-a--pipeline-mechanisms) | — |
+| [O1](./USE_CASES.md#o1--measured) Measured | LiteLLM scrape groundwork (coverage unverified); [D1](#group-d--operability); [A1](#group-a--pipeline-mechanisms)'s per-stream metrics | [D2](#group-d--operability) · [D6](#group-d--operability), plus criteria riding on [A2](#group-a--pipeline-mechanisms)/[A4](#group-a--pipeline-mechanisms)/[A5](#group-a--pipeline-mechanisms) | — |
 | [O2](./USE_CASES.md#o2--survives-its-failure-modes) Survives failure | — | [D3](#group-d--operability) · [D4](#group-d--operability) | — |
 | [O3](./USE_CASES.md#o3--alerting) Alerting | Non-outcome by standing ruling | — | — |
 
@@ -403,8 +423,8 @@ curated-targeting batch work waits for [V2](#v2--the-safeguard-minimum).
 
 ### Operational — bookkeeping, not design
 
-- **Upgrade the Mac to `v0.5.1`.** The release is cut ([ot#54](https://github.com/ppat/obsidian-tools/pull/54) merged, `v0.5.0` on
-  2026-09-05, `v0.5.1` on 2026-09-06); the install is a hand operation on the operator's Mac, so
+- **Upgrade the Mac to the current release.** The overlay fix first shipped in `v0.5.0`
+  (2026-09-05); the install is a hand operation on the operator's Mac, so
   everything downstream on the [W6](./USE_CASES.md#axis-2--writers-connected) axis waits on that and not on a decision. A
   `local-replicator` upgrade **fails indistinguishably from healthy**
   ([ot#66](https://github.com/ppat/obsidian-tools/issues/66)) — verify after upgrading, not just after installing.
@@ -441,7 +461,8 @@ Where a decision is recorded, the row cites its ADR number; records are resolved
 | **Ratify the admission validator's placement** ([A4](#group-a--pipeline-mechanisms)): one shared check with three callers, fired at every crossing of the curated boundary; staging detective-only; raw exempt | [A4](#group-a--pipeline-mechanisms)'s unit shape; the answer to "where do validate/lint/digest kick in" | Adopted by these documents from [ot#6](https://github.com/ppat/obsidian-tools/issues/6) (the newer, explicit text) over older prose describing a scheduled-validator shape; recorded as ADR-0007, status proposed — the owner has not ratified it |
 | **Resolve [W2](./USE_CASES.md#axis-2--writers-connected)'s authority conflict** ([B3](#group-b--connection-work)) | [W2](./USE_CASES.md#axis-2--writers-connected) | Four candidate shapes: the watcher inside the Coder workspace's trust boundary; a fourth stream; a narrow-handle writer announcing via promotion; or an n8n workflow (conversion already lives in n8n/OpenClaw). None chosen |
 | **When the apps go on** ([B8](#group-b--connection-work)) | [R1](./USE_CASES.md#axis-3--readers-connected), [ot#69](https://github.com/ppat/obsidian-tools/issues/69) | Owner's want; the stated criterion is "enough content to read". Preconditions [ot#47](https://github.com/ppat/obsidian-tools/issues/47), [ot#72](https://github.com/ppat/obsidian-tools/issues/72) |
-| **Batch staleness measurement** | [A2](#group-a--pipeline-mechanisms) | Recorded as ADR-0048 — per file, by content hash, never against repo head; status proposed, the owner has not ratified it |
+| **Batch staleness measurement** | [A2](#group-a--pipeline-mechanisms) | **Decided** — ADR-0048, accepted: per file, by content hash, never against repo head |
+| **Batch write semantics** | [A2](#group-a--pipeline-mechanisms) | Recorded as ADR-0053 — a chunk applies as whole-note writes, create and modify told apart by the anti-clobber flag; status proposed, the owner has not ratified it |
 | **The `salience:`/`confidence:` correlation audit at ~200 notes** | [A8](#group-a--pipeline-mechanisms)'s fields | Scheduled decision: if they track, `salience:` is removed; the audit and its grounds are recorded in ADR-0012 |
 | **CI strategy for the vault workloads** ([apps#3440](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3440)) | Every Group A unit's validation | **Execution gap resolved, network isolation still open.** A position posted on the ticket on 2026-09-04 and adopted in V1 planning splits the two suites by role: component behaviour is proven in `obsidian-tools`' own CI, including integration tests against a real NATS JetStream rather than mocks standing in for its consume/acknowledge/redeliver/dead-letter semantics; this repo's chainsaw suite asserts only what it alone can — that the workload objects exist, are shaped correctly and become Ready — with no component-behaviour tests duplicated across the repository boundary. Every Group A workload PR of the V1 increment ([apps#3947](https://github.com/ppat/homelab-ops-kubernetes-apps/pull/3947), [apps#3953](https://github.com/ppat/homelab-ops-kubernetes-apps/pull/3953), [apps#3956](https://github.com/ppat/homelab-ops-kubernetes-apps/pull/3956)) was validated under it. [ot#25](https://github.com/ppat/obsidian-tools/issues/25) stays deferred: the position adopts its two-suite role split, not its consolidation proposals. Standing measurement [2026-09-02]: the suite has booted the real Obsidian image in kind and asserted it Ready since [apps#3462](https://github.com/ppat/homelab-ops-kubernetes-apps/pull/3462) (2026-07-29; the feared cost basis was a stale estimate inherited from the abandoned base image — the real one is 282 MB, ~9 s pull), and the MCP tier proves out with no Obsidian behind it. **Still open:** the sole-control NetworkPolicy kind cannot exercise — untouched by the position and still parked |
 | **The NetworkPolicy packet test** | Confidence in a sole control | Reopened on new evidence and re-parked on a smaller residual [measured 2026-09-02]: cluster-level enforcement is packet-proven by another project's standing probe on the same cluster; what remains config-level is the vault namespace's own policy objects — see the [verification catalogue](./docs/VERIFICATIONS.md) |
