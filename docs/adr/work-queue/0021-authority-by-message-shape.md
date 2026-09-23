@@ -20,9 +20,9 @@ NATS account per producer population, subject-scoped to the one stream it may pu
 ([the stream table in DESIGN §3](../../../DESIGN.md#3-the-write-path-end-to-end)):
 
 - **Patch-carrying** (batch): content *and* destination — the enqueuer effectively writes with the
-  processor's own handle, so exactly one producer holds the credential. Consequence stated plainly:
-  **no unattended agent can restructure the vault**; anything structural comes through the
-  supervised workspace, which means a human started it.
+  processor's own handle, so exactly one producer holds the credential, and which client it is issued to — attended or
+  not — is an issuance decision. Consequence stated plainly: **restructuring the vault is confined
+  to that one credential's holder.**
 - **Pointer-carrying** (promotion): confers nothing — *provided* the processor refuses any pointer
   naming a path outside the enqueuer's own scope. Without that check, a prompt-injected agent could
   point the widest handle at curated content; with it, every interactive agent may announce a write.

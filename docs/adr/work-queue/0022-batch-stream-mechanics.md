@@ -103,6 +103,6 @@ Where a target *has* drifted, cycles stop short of complete and further cycles c
 conflicting chunk is refused on its merits, its direct dependents are parked, and everything else
 settles. **That is a pause, not a loss, and the distinction is measured:** resolving the one
 conflicting note and regenerating completes the import on the very next cycle. So the residue is
-what a genuine conflict is supposed to cost — a human decision, which no number of further cycles
+what a genuine conflict is supposed to cost — a decision by the producer, which no number of further cycles
 can substitute for — and the run names it by exiting non-zero with the conflicting path in the
 rejection.

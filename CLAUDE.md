@@ -25,8 +25,8 @@ stable documents cite decision records **by number, through the index only** —
 One Python package holding every BRAIN component. Shipped and running: the **git committer**
 (`obsidian_tools/commands/commit.py` — in-cluster CronJob) and **`local-replicator`**
 (`replicate.py` + `drain.py` — launchd on the operator's Mac; the drainer discards by design until
-the work queue exists). Specified but unbuilt: the work queue's three processors, the admission
-validator, the lint pass — see [`ROADMAP.md`](./ROADMAP.md), which also names each unit's tickets.
+the work queue exists). Specified, not yet deployed-and-observed: the work queue's three processors, the admission
+validator, the lint pass, the vault's agentic workflow — see [`ROADMAP.md`](./ROADMAP.md), which also names each unit's tickets.
 
 **`main` is not deployed state, in either direction.** A change reaches the cluster only after
 release-please cuts a tag *and* the apps/clusters repos bump their pins; the Mac is upgraded by

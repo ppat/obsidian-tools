@@ -38,7 +38,7 @@ Two properties are the point of the enumeration:
   [ADR-0002](./0002-gui-exception-dormant-vnc.md)), and operator-triggered restore (the recovery
   exception).
 - **Entries mirror grants.** `log.md` appears in the *agent* scope as a bare filename — a prefix
-  matching only itself — because the gateway grants n8n "append to `log.md`, and nothing else"
+  matching only itself — because the narrow write grant includes "append to `log.md`, and nothing else"
   ([ADR-0003](./0003-two-instances-two-handles.md)), and a gateway grant is exercisable only if
   the instance's path scope also admits the path: who-may-call (the handle) and
   where-a-write-may-land (the scope) are separate layers, and a write needs both to say yes.

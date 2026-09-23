@@ -22,12 +22,12 @@ Handles and instances are separate axes, two of each:
 
 Each distinct path scope needs its own instance, not merely its own handle: two handles onto one
 instance would leak that instance's path scope to whoever held the other handle. Tool grants are
-per client on the agent handle, and two are worth recording: **n8n gets a narrow write grant, not
-read-only** — the founding research said read-only, but its daily-organise workflow needs writes,
-resolved as frontmatter-status updates plus appends to the log and nothing else (no queue access,
-and no write path to the global todo, which holds queries only — n8n reaches the gateway through
-its own SSRF allowlist, and only the gateway); and **the human-facing browser
-chat is read-only** — the human is not a writer
+per credential on the agent handle, cut by what the holder's writes need, and two are worth
+recording: **a narrow write grant, not read-only**, for a client whose workflow needs writes but
+only these — frontmatter-status updates plus appends to the log and nothing else (no queue access,
+and no write path to the global todo, which holds queries only); the case that motivated it is an
+automation client's daily organise (for example n8n's), where the founding research had said
+read-only; and **the human-facing browser chat is read-only** — the human is not a writer
 ([the pillar](../../../DESIGN.md#humans-originate-agents-act)). Batch runs stop the agent
 *instance*, leaving every handle onto it unreachable and the ingestor instance untouched, which is
 what lets promotion keep draining mid-batch

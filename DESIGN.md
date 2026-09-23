@@ -44,7 +44,8 @@ always fresh, and native Obsidian on devices via a one-way replication chain.
 | **`promotion-processor`** | Relocate notes out of the inbox into curated homes, in real time, gated by the admission validator | Cluster | Unbuilt |
 | **`drift-processor`** | Classify captured device edits (intentional or not), reconcile them against upstream history, and dispatch survivors into the funnel as ordinary ingest | Cluster | Unbuilt |
 | **The admission validator** | Decide whether content meets the schema and provenance bar at the curated boundary; quarantine, never delete | Library, called by the three processors above and lint | Unbuilt |
-| **The lint pass** | Walk the whole vault on a schedule: conformance, hygiene, normalisation, and the review digest | Cluster (CronJob) | Unbuilt |
+| **The vault's agentic workflow** | Do the judgment work the vault's own jobs require — never a client's, never the owner's | Library, run inside the lint pass (and A8's roll-up pass, when built) | Unbuilt |
+| **The lint pass** | Walk the whole vault on a schedule: conformance, hygiene, normalisation; judgment findings handed to the vault's agentic workflow | Cluster (CronJob) | First pass built, not deployed |
 | **Observability** | Make behaviour answerable from stored metrics and logs | Cluster | Groundwork only |
 | **ExternalSecrets / Bitwarden** | Custody of every in-cluster credential | Cluster | Live |
 
@@ -172,8 +173,9 @@ Who may do what is decided by the credential in hand, at every layer:
   scope to whoever held the other handle.
 - **Queue enqueue authority follows message shape, carried by per-producer NATS credentials.** A
   *patch-carrying* message (batch stream) confers the processor's own write scope on its enqueuer,
-  so exactly one producer — the operator's workspace — may publish there: no unattended agent can
-  restructure the vault. A *pointer-carrying* message (promotion stream) confers nothing, provided
+  so exactly one producer may publish there, by credential: restructuring the vault is confined to
+  that one credential's holder, and which client holds it — attended or not — is an issuance
+  decision. A *pointer-carrying* message (promotion stream) confers nothing, provided
   the processor refuses any pointer naming a path outside the enqueuer's own scope — so every
   interactive agent may announce what it wrote. A *content-carrying, fixed-destination* message
   (drift stream) confers nothing either; its sole producer is `local-replicator`, by credential.
@@ -196,8 +198,8 @@ answers two:
 | Does content meet the schema and provenance bar | the admission validator — asked of *everything* entering curated space, whoever carries it |
 | Did a human *mean* to make this device edit | `drift-processor`'s classifier — asked only of drift, upstream of the validator, never merged with it |
 | What shape frontmatter takes | the lint pass's normalisation — in the scheduled pass, never on save, so the validator's approval cannot be silently reshaped afterwards |
-| Whether a promotion happens | the validator admits; agents and n8n only propose |
-| History | three granularities, deliberately three owners: git (the bytes), the append-only log (events), the audit trail in `_ops/audit/` (every normalisation change) |
+| Whether a promotion happens | the validator admits; agents only propose |
+| History | three granularities, deliberately three owners: git (the bytes), the append-only log (events), the audit trail in `_ops/audit/` (every change the lint pass makes, normalisation and resolutions alike) |
 
 The corollary that resolves where validation "kicks in": **the admission validator fires at the
 curated boundary, on every write that crosses it, regardless of route or caller** — promotion out of
@@ -288,20 +290,16 @@ Every route to the vault's bytes, and what sits on it:
 
 ```mermaid
 flowchart TB
-    OC["OpenClaw (WhatsApp)"] -->|"writes via the agent handle:<br/>agent zone only"| GW
-    N8N["n8n"] -->|"writes via the agent handle:<br/>agent zone only"| GW
-    CC["Claude Code, incremental"] -->|"writes via the agent handle:<br/>agent zone only"| GW
-    CW["Coder workspace (Claude Code, bulk)"] -->|"enqueues git patches — sole holder<br/>of the batch credential"| BS["batch stream<br/>(patch-carrying)"]
-    OC -.->|"after writing: pointer into 00-inbox/"| PS["promotion stream<br/>(pointer-carrying)"]
-    N8N -.->|"after writing: pointer into 00-inbox/"| PS
-    CC -.->|"after writing: pointer into 00-inbox/"| PS
+    IW["interactive writers — any client holding an agent-handle write credential<br/>(e.g. OpenClaw, n8n, Claude Code)"] -->|"writes via the agent handle:<br/>agent zone only"| GW
+    CW["the batch producer — the one client issued the batch credential<br/>(e.g. Claude Code in the operator's workspace)"] -->|"enqueues git patches — sole holder<br/>of the batch credential"| BS["batch stream<br/>(patch-carrying)"]
+    IW -.->|"after writing: pointer into 00-inbox/"| PS["promotion stream<br/>(pointer-carrying)"]
     LR["local-replicator's drainer (Mac)"] -->|"publishes captured device drift — sole<br/>holder of the drift credential"| DS["drift stream (content-carrying;<br/>destination fixed by the processor)"]
     BS -->|"drained in strict FIFO by"| BP["batch-processor"]
     PS -->|"drained in real time by"| PP["promotion-processor"]
     DS -->|"classified (intentional or not), then drained by"| DP["drift-processor"]
     BP -->|"writes via the ingestor handle: wide scope"| GW
     PP -->|"writes via the ingestor handle: wide scope"| GW
-    LINT["lint pass (scheduled)"] -->|"writes via the ingestor handle: wide scope"| GW
+    LINT["lint pass (scheduled; its judgment work<br/>by the vault's own agentic workflow)"] -->|"writes via the ingestor handle: wide scope"| GW
     DP -->|"dispatches surviving edits via the<br/>agent handle into 00-inbox/"| GW
     BP -.->|"invokes at every curated-boundary crossing"| AV["admission validator:<br/>admits or quarantines, never deletes"]
     PP -.->|"invokes at every curated-boundary crossing"| AV
@@ -316,7 +314,7 @@ The ordered controls on a write, named as gates throughout the tickets and this 
 
 | Gate | Control | The question it answers | Character |
 | --- | --- | --- | --- |
-| 0 | Runner-level pre-write hook (exists for Claude Code's runner only) | should this write have happened | Detective, after the fact |
+| 0 | Client-side pre-write hook, only where a client's runner offers one (for example Claude Code's) — the vault relies on it for nothing | should this write have happened | Detective, after the fact |
 | 1 | The handle: per-caller tool visibility at whatever fronts the instances; delete withheld from the agent handle entirely | who may call, with which tools | Preventive |
 | 2 | MCP instance path scope (`OBSIDIAN_WRITE_PATHS`) | where may this write land | Preventive — path-granular only |
 | 3 | Editing primitives: anti-clobber create; append/patch preferred wherever the writer holds a region-shaped edit; clobber self-detection on modify | does this write silently clobber a concurrent one | Preventive on create, detective on modify |
@@ -348,8 +346,8 @@ waiting), not merely to health signals.
 
 | Stream | The message carries | What enqueueing confers | May publish (by credential) | Drained by |
 | --- | --- | --- | --- | --- |
-| Batch | A git patch — content *and* destination | The processor's own write scope, the widest in the system — hence the tightest producer set | The Coder workspace only | `batch-processor` |
-| Promotion | A pointer to something already written in `00-inbox/` | Nothing — the processor refuses any pointer outside the enqueuer's own scope | OpenClaw, n8n, Claude Code | `promotion-processor` |
+| Batch | A git patch — content *and* destination | The processor's own write scope, the widest in the system — hence the tightest producer set | One credential, issued to exactly one client (for example Claude Code in the operator's workspace) | `batch-processor` |
+| Promotion | A pointer to something already written in `00-inbox/` | Nothing — the processor refuses any pointer outside the enqueuer's own scope | Any client holding an agent-handle write credential (for example OpenClaw, n8n, Claude Code) | `promotion-processor` |
 | Drift | Content, with the destination fixed by the processor, never the message | Nothing — the destination is not the message's to choose | `local-replicator` only | `drift-processor` |
 
 The lint pass walks the whole vault on a schedule, from a read-only mount (whole-vault reads through
@@ -361,21 +359,20 @@ ever sees a GUI-exception write. Normalisation lives in the lint pass's own code
 Linter/Frontmatter-style plugins were dropped, and the community plugin set is deliberately minimal
 (Tasks and Dataview only), so frontmatter shape has one owner in one place.
 
-Its findings surface in three tiers: a full report in `_ops/lint/`; the **review digest** — ranked,
-hard-capped at roughly seven items, pushed over WhatsApp with actionable replies — which is the
-human review loop, arriving where the human already is; and metrics.
+Its findings surface in two tiers — a full report in `_ops/lint/` and metrics — and nothing is
+pushed to the owner. Mechanical findings the pass fixes in its own code; judgment findings it hands
+to the vault's own agentic workflow, which resolves them through the pass's own gated write path
+(the ingestor handle, the admission validator at the curated boundary, every change in the audit
+trail) or leaves them recorded in the report. No client agent and no human is part of the loop
+(ADR-0018 and ADR-0054, through the [decision-record index](./docs/adr/README.md)).
 
 ## 4. The read path
 
 Two planes, deliberately asymmetric:
 
-- **Plane A — conversational.** WhatsApp ↔ OpenClaw, and Open WebUI in a browser, reading the
-  authoritative volume live through read-only handles. Always fresh, works anywhere, independent of
-  any device being awake. This is the primary phone surface, and it pushes rather than waiting to
-  be opened — two pushed surfaces, kept distinct: the **daily task digest** (n8n's daily organise
-  reads inbox and due-state, proposes `status:` transitions and hands a ranked digest to OpenClaw
-  for WhatsApp — proposals only; the admission validator alone decides promotion) and the lint
-  pass's **review digest** (below).
+- **Plane A — conversational.** Conversational clients — for example OpenClaw over WhatsApp, or
+  Open WebUI in a browser — reading the authoritative volume live through read-only handles. Always
+  fresh, works anywhere, independent of any device being awake. This is the primary phone surface.
 - **Plane B — native Obsidian.** One-way chain: volume → committer → GitHub → `local-replicator` →
   iCloud → the Mac and iOS apps. Rich (backlinks, graph, offline), and laggier: device freshness is
   gated on the Mac waking, because only the Mac can write its own iCloud folder. The iCloud
@@ -387,7 +384,8 @@ What must be up for what — the availability contract the two planes buy:
 | Capability | Requires |
 | --- | --- |
 | Any agent write; ingest, lint, promotion | Cluster only |
-| Bulk restructuring | Cluster + the Coder workspace — i.e. a human started it |
+| Lint's judgment work (the vault's agentic workflow) | Cluster + its model endpoint |
+| Bulk restructuring | Cluster + the batch credential's holder |
 | Conversational read, any device, anywhere | Cluster + internet + the chat surface |
 | Native Obsidian read on macOS or iOS | Nothing — the local iCloud copy, offline |
 | *Freshness* of the native copies | The Mac awake, plus cluster and network |
@@ -405,8 +403,8 @@ query, never copied rows; task metadata uses the Tasks plugin's bracket format, 
 flowchart TB
     VOL[("vault volume — the authoritative bytes")]
     subgraph planeA["Plane A — conversational: always fresh, Mac-independent, primary on the phone"]
-        WA["WhatsApp"] -->|"asks"| OCr["OpenClaw"]
-        WEB["Open WebUI, in a browser"]
+        OCr["a chat client<br/>(e.g. OpenClaw over WhatsApp)"]
+        WEB["a browser chat client<br/>(e.g. Open WebUI)"]
     end
     OCr -->|"reads live, read-only handle"| VOL
     WEB -->|"reads live, read-only handle"| VOL
@@ -450,7 +448,7 @@ records behind them (ADR-0006, ADR-0012, ADR-0022, ADR-0033 among others) are re
   is measured, and if they track, `salience:` is removed. The audit is a scheduled decision, not a
   hope.
 - **The [W2](./USE_CASES.md#axis-2--writers-connected) (NAS drop) writer has no place in the current authority model** — its content routes to
-  bulk import, whose stream is closed to all but the operator's workspace. Connecting it is a design
+  bulk import, whose stream is closed to all but the one batch-credential holder. Connecting it is a design
   decision (see [`ROADMAP.md`'s open decisions](./ROADMAP.md#open-decisions)).
 - **Search at scale and near-duplicate detection are deliberately not built.** Named techniques
   exist for the day the thresholds are hit; pre-building them would be a regression.
@@ -474,8 +472,9 @@ different name, the retired synonym is noted.
   versioned as a whole). **`ppat/homelab-ops-kubernetes-apps`** — the deployment manifests (module
   `apps-ai`). **`ppat/homelab-ops-kubernetes-clusters`** — composes modules onto the real clusters;
   a change reaches a cluster only after a release is cut *and* that repo bumps its pinned tag.
-- **The Coder workspace** — the operator's development environment, itself a pod in the cluster; the
-  home of writer [W1](./USE_CASES.md#axis-2--writers-connected) and the only holder of the batch stream's producer credential.
+- **The Coder workspace** — the operator's development environment, itself a pod in the cluster —
+  an example client: the environment [W1](./USE_CASES.md#axis-2--writers-connected)'s example writer runs in, and the holder the batch
+  producer credential is issued to. Not a design element; the design knows only the credential.
 
 ### Vault areas and content
 
@@ -501,9 +500,11 @@ different name, the retired synonym is noted.
   caused the write: `human`/`schedule`/`event`; mechanical).
 - **`confidence:`** — how sure a claim is (`high`/`medium`/`speculation`); orthogonal to
   `authority:`.
-- **`salience:`** — an integer 1–10 an automated pass scores for roll-up ranking; normalised within
+- **`salience:`** — an integer 1–10 the roll-up pass scores for roll-up ranking; normalised within
   a batch, never thresholded on the absolute number. **`consolidated:`** — the date a note was last
   folded into a roll-up; compared against `updated:` to re-qualify re-edited notes.
+- **The roll-up pass** — A8's consolidation pass (unbuilt): scores `salience:` and folds notes into
+  roll-ups.
 - **The tolerance line** — the written statement, inside the linter, of what badness [S2](./USE_CASES.md#s2--sound) tolerates;
   what makes [S2](./USE_CASES.md#s2--sound)'s acceptance falsifiable.
 
@@ -520,8 +521,8 @@ different name, the retired synonym is noted.
   instances are separate axes. A batch run stops the agent instance and leaves the ingestor instance
   running, so every handle onto the agent instance — write and read alike — is unreachable for the
   run's duration.
-- **The gates** — the ordered controls on a write: Gate 0 (runner pre-write hook, detective,
-  Claude Code only), Gate 1 (handle: tool visibility), Gate 2 (instance: path scope), Gate 3
+- **The gates** — the ordered controls on a write: Gate 0 (client-side runner pre-write hook,
+  detective, only where a client's runner offers one), Gate 1 (handle: tool visibility), Gate 2 (instance: path scope), Gate 3
   (editing primitives: anti-clobber create, clobber self-detection on modify), Gate 4 (event-loop
   serialisation), **Gate 5 — the admission validator, the decisive gate**, Gate 6 (network
   isolation of the REST surface).
@@ -532,16 +533,16 @@ different name, the retired synonym is noted.
   additive-only normalisation, flag-vs-autofix boundary, and the only observer of GUI-exception
   writes. *Retired synonyms: "the maintenance pass", "the vault worker" (a dead component name whose
   other entrypoint became `promotion-processor`).*
-- **The review digest** — the lint pass's ranked, hard-capped (~7 items) findings pushed over
-  WhatsApp with actionable replies (approve/skip/explain); the human review loop. This is the
-  "digest" wherever older material pairs "lint/digest". Distinct from the **daily task digest** —
-  n8n's ranked what's-due/triage push over the same channel, which proposes and never admits.
+- **The vault's agentic workflow** — the vault's own model-driven judgment stage, run inside its
+  existing jobs (the lint pass, and A8's roll-up pass, when built): it decides and resolves judgment findings
+  through the host job's own gated write path, and never calls a client agent or pushes to the
+  owner (ADR-0054, through the [decision-record index](./docs/adr/README.md)). Replaces the review digest; older material pairing "lint/digest" refers to it.
 - **Quarantine** (`_ops/quarantine/`) — where a note failing validation goes, with a
   machine-readable reason; never deleted.
 - **The work queue** — three NATS JetStream streams, one per processor, each shipped with its
-  consumer and credential grant: the **batch stream** (patch-carrying; sole producer: the Coder
-  workspace) drained by `batch-processor`; the **promotion stream** (pointer-carrying; producers:
-  OpenClaw, n8n, Claude Code) drained by `promotion-processor`; the **drift stream**
+  consumer and credential grant: the **batch stream** (patch-carrying; one producer credential,
+  issued to one client) drained by `batch-processor`; the **promotion stream** (pointer-carrying;
+  producers: any holder of an agent-handle write credential) drained by `promotion-processor`; the **drift stream**
   (content-carrying, fixed destination; sole producer: `local-replicator`) drained by
   `drift-processor`.
 - **Chunk** — one message on the batch stream: a logically-split piece of a git patch, and the

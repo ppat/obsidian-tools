@@ -24,7 +24,7 @@ displays the wrong things and is cheap to rebuild later.
 Four hard-won signal rules travel with this record: **watch the absence of writes, not only
 errors** — the editor can wedge without raising one, and silence is the dangerous state;
 **watch image age, not "a newer version exists"** — the risk is maintenance lapsing entirely, and
-"newer exists" is permanently true and low-signal; **watch unreviewed-finding age, not finding
+"newer exists" is permanently true and low-signal; **watch unresolved-finding age, not finding
 count** — the review loop's death shows as findings growing old, not numerous; and **watch read
 volume, not write volume alone** — reading is agent-heavy by design, so the signal is the whole
 read side (the agent readers and the conversational surface alike) declining while writes

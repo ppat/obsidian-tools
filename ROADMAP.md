@@ -122,7 +122,7 @@ each names the smallest shape that ships.
 flowchart TB
     V1n["V1 — content in, content readable:<br/>A1 A2 B1 C1 D1, + D4's watchdog before any unattended run"]
     V2n["V2 — the safeguard minimum:<br/>A4 A5 A6"]
-    V3n["V3 — writers on, iterate in production:<br/>B2 B4 B5, the C2 corpus, the C3 gate"]
+    V3n["V3 — writers on, iterate in production:<br/>B2 B4 B5, A5's second pass, the C2 corpus, the C3 gate"]
     V4n["V4 — placement, through its first pass:<br/>A3, and A8 (required for project-done)"]
     V5n["V5 — humans on devices:<br/>v0.5.0 to the Mac, B7, A7, B8"]
     V6n["V6 — harden and tighten, from experience:<br/>D2 D3 D5 D6"]
@@ -149,17 +149,17 @@ happens, so [V2](#v2--the-safeguard-minimum)'s units proceed ahead of it.
 ### V2 — The safeguard minimum
 
 **Units:** [A4](#group-a--pipeline-mechanisms) · [A5](#group-a--pipeline-mechanisms) (first pass) · [A6](#group-a--pipeline-mechanisms).
-**Value shipped:** curated space can start filling safely; the review digest starts reaching the
-phone. The bar is deliberately minimal: the mechanical checks and the finance hard block, with the
+**Value shipped:** curated space can start filling safely; the lint report and its metrics exist,
+and nothing is pushed to the owner. The bar is deliberately minimal: the mechanical checks and the finance hard block, with the
 tolerance line ([A6](#group-a--pipeline-mechanisms)) written into the linter as *the* statement of what is accepted — minimum
 confidence, not scenario coverage. Everything the first weeks of linting teaches becomes the second
 pass.
 
 ### V3 — Writers on; iterate in production
 
-**Units:** [B2](#group-b--connection-work) · [B4](#group-b--connection-work) · [B5](#group-b--connection-work), then the safeguard ↔ writers loop.
+**Units:** [B2](#group-b--connection-work) · [B4](#group-b--connection-work) · [B5](#group-b--connection-work) · [A5](#group-a--pipeline-mechanisms)'s second pass ([ot#177](https://github.com/ppat/obsidian-tools/issues/177)), then the safeguard ↔ writers loop.
 **Value shipped:** agents capture into the vault daily — conversational captures, automation notes,
-incremental Claude Code writes. This is where the learn-in-prod loop actually runs: real traffic
+incremental writes from a development-environment agent. This is where the learn-in-prod loop actually runs: real traffic
 calibrates the linter and the tolerance line, and discoveries that can wait become out-of-scope
 tickets. The definition-of-done gate ([C3](#group-c--content-work), against [C2](#group-c--content-work)'s 100–200 curated notes) sits inside this
 increment as the checkpoint that the schema and ownership contract survived contact with volume.
@@ -210,7 +210,7 @@ decisive credential-refusal injection in the [verification catalogue](./docs/VER
 completed — its corrected write path is released and its manifest merged — but not yet deployed: the
 cluster still runs the earlier release, so no batch has drained. A4 and A6 are completed — their code
 merged, awaiting the next release — and not yet deployed. A5's first-pass code is merged, its
-deployment is outstanding, and its second pass ([ot#177](https://github.com/ppat/obsidian-tools/issues/177)) is unbuilt, so A5 is not completed. A3, A7
+deployment is outstanding, and its second pass ([ot#177](https://github.com/ppat/obsidian-tools/issues/177)) is unbuilt, so A5 is not completed. The merged first pass still pushes its digest to a client hook; that push is removed before A5 deploys ([ot#181](https://github.com/ppat/obsidian-tools/issues/181)), and its CronJob ([apps#4075](https://github.com/ppat/homelab-ops-kubernetes-apps/pull/4075)), which carries the push, is held until then. A3, A7
 and A8 are unimplemented [measured 2026-09-23].
 
 - [x] **A1 — NATS substrate and credential machinery** → [S1](./USE_CASES.md#s1--admitted) · [apps#3444](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3444) · [V1](#v1--content-in-content-readable)
@@ -234,11 +234,14 @@ and A8 are unimplemented [measured 2026-09-23].
   quarantine-never-delete with machine-readable reasons, counted. First pass: the mechanical checks
   and the finance hard block, nothing speculative. See [Open decisions](#open-decisions) for the
   ratification this unit needs.
-- [ ] **A5 — the lint pass** → [S2](./USE_CASES.md#s2--sound) · [ot#83](https://github.com/ppat/obsidian-tools/issues/83) (code, first pass) + [apps#3445](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3445) (CronJob manifests) · [V2](#v2--the-safeguard-minimum) · [ot#177](https://github.com/ppat/obsidian-tools/issues/177) (code, second pass — outside V2)
+- [ ] **A5 — the lint pass** → [S2](./USE_CASES.md#s2--sound) · [ot#83](https://github.com/ppat/obsidian-tools/issues/83) (code, first pass) + [apps#3445](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3445) (CronJob manifests) · [V2](#v2--the-safeguard-minimum) · [ot#177](https://github.com/ppat/obsidian-tools/issues/177) (code, second pass — [V3](#v3--writers-on-iterate-in-production))
   Whole-vault conformance and hygiene; the `trigger:`/`authority:` consistency check; additive-only
-  normalisation in the pass's own code; the review digest. Runs against whatever content exists —
+  normalisation in the pass's own code; judgment findings resolved by the vault's own agentic
+  workflow (ADR-0054), built in the second pass. The merged first pass still pushes a digest to a
+  client hook; removing it ([ot#181](https://github.com/ppat/obsidian-tools/issues/181)) precedes A5's deployment. Runs against whatever content exists —
   it does not depend on agent writes being open. *Criteria:* inbox depth, quarantine depth,
-  rejection counts, unstamped-note counts emitted from the pass itself.
+  rejection counts, unstamped-note counts, resolved and unresolved finding counts and unresolved-finding
+  age, emitted from the pass itself.
 - [x] **A6 — the [S2](./USE_CASES.md#s2--sound) tolerance line** → [S2](./USE_CASES.md#s2--sound) · [ot#84](https://github.com/ppat/obsidian-tools/issues/84) · [V2](#v2--the-safeguard-minimum)
   A written statement of tolerated badness, placed inside the linter — the instrument that makes
   "minimum confidence" falsifiable and keeps [V2](#v2--the-safeguard-minimum) from creeping toward scenario coverage. Written
@@ -258,7 +261,9 @@ and A8 are unimplemented [measured 2026-09-23].
 ### Group B — connection work
 
 Largely the same shape each time — a credential, a handle, agreement on the message form — which is
-why each lands independently. [W1](./USE_CASES.md#axis-2--writers-connected) is two connections through two mechanisms at two different gates.
+why each lands independently. Each unit issues a credential shape to one example client; the design
+does not change with which client holds it, and another client of the same kind would take the same
+credential. [W1](./USE_CASES.md#axis-2--writers-connected) is two connections through two mechanisms at two different gates.
 B1's code is released; its credential reaches the workspace at the import run. B2 to B8 are
 unbuilt [measured 2026-09-22].
 
@@ -305,7 +310,7 @@ works or not. The one-unit-one-outcome rule is deliberately not forced here.
   Enough curated content for promotion decisions to be judgeable and every view to render non-empty.
 - [ ] **C3 — the definition-of-done gate** · [obsidian-vault#3](https://github.com/ppat/obsidian-vault/issues/3) · [V3](#v3--writers-on-iterate-in-production)
   Six checks against the 100–200-note vault: zero schema errors; views render non-empty; the inbox
-  empties end-to-end once; a lint report is genuinely acted on; a factual-grounding sample; the
+  empties end-to-end once; a lint report is genuinely acted on by the vault's own agentic workflow, with no owner action; a factual-grounding sample; the
   round-trip test (a human-edited passage survives agent regeneration — the violation injection for
   this stage). A gate is *supposed* to test several outcomes at once; it is not a braid to untangle.
 
@@ -368,10 +373,10 @@ ticket; the reconciliation of 2026-08-29 left none.
 | [S2](./USE_CASES.md#s2--sound) Sound | Property types only | [A4](#group-a--pipeline-mechanisms) · [A5](#group-a--pipeline-mechanisms) · [A6](#group-a--pipeline-mechanisms) | — |
 | [S3](./USE_CASES.md#s3--placed) Placed | — | [A3](#group-a--pipeline-mechanisms) · [A8](#group-a--pipeline-mechanisms) | — |
 | [S4](./USE_CASES.md#s4--retrievable) Retrievable | Read handles; the whole replication chain | — (its human-device remainder is [R1](./USE_CASES.md#axis-3--readers-connected)'s) | — |
-| [W1](./USE_CASES.md#axis-2--writers-connected) Claude Code / workspace | — | [B1](#group-b--connection-work) · [B2](#group-b--connection-work) · [C1](#group-c--content-work) (the run is [W1](./USE_CASES.md#axis-2--writers-connected)'s only demonstration) | — |
+| [W1](./USE_CASES.md#axis-2--writers-connected) development-environment agent | — | [B1](#group-b--connection-work) · [B2](#group-b--connection-work) · [C1](#group-c--content-work) (the run is [W1](./USE_CASES.md#axis-2--writers-connected)'s only demonstration) | — |
 | [W2](./USE_CASES.md#axis-2--writers-connected) NAS drop | — | [B3](#group-b--connection-work) (blocked on a design decision) | — |
-| [W3](./USE_CASES.md#axis-2--writers-connected) OpenClaw | Read-only key | [B4](#group-b--connection-work) | — |
-| [W4](./USE_CASES.md#axis-2--writers-connected) n8n | Read-only key | [B5](#group-b--connection-work) | — |
+| [W3](./USE_CASES.md#axis-2--writers-connected) conversational agent | Read-only key | [B4](#group-b--connection-work) | — |
+| [W4](./USE_CASES.md#axis-2--writers-connected) automation platform | Read-only key | [B5](#group-b--connection-work) | — |
 | [W5](./USE_CASES.md#axis-2--writers-connected) ad-hoc scripts | — | [B6](#group-b--connection-work) (possibly nothing — the judgement is unrecorded) | — |
 | [W6](./USE_CASES.md#axis-2--writers-connected) humans / device | Capture half, proven by injection | [A7](#group-a--pipeline-mechanisms) · [B7](#group-b--connection-work) | — |
 | [R1](./USE_CASES.md#axis-3--readers-connected) humans, native on device | Content reaches the device | [B8](#group-b--connection-work) | — |
@@ -407,6 +412,7 @@ Three kinds, kept apart because the old phase numbering conflated them.
 | [B8](#group-b--connection-work) → [ot#47](https://github.com/ppat/obsidian-tools/issues/47) + [ot#72](https://github.com/ppat/obsidian-tools/issues/72) | Both land at the reset, where the baseline becomes real configuration irreversibly |
 | [C1](#group-c--content-work) → [B1](#group-b--connection-work) + [A2](#group-a--pipeline-mechanisms) | A credential to enqueue with and a processor to apply patches |
 | [C3](#group-c--content-work) → [C2](#group-c--content-work) | The gate does not produce its own subject |
+| [C3](#group-c--content-work) → [A5](#group-a--pipeline-mechanisms)'s second pass ([ot#177](https://github.com/ppat/obsidian-tools/issues/177)) | The gate's lint check needs the vault's own agentic workflow to act on a report |
 | [A2](#group-a--pipeline-mechanisms)'s raw enforcement → [A2](#group-a--pipeline-mechanisms) itself | Path scope cannot express "create yes, modify no"; the validator sees the wrong side of the boundary; `batch-processor` is the only component on both sides |
 
 One subtlety inside [V1](#v1--content-in-content-readable): a batch chunk targeting **curated** space needs [A4](#group-a--pipeline-mechanisms) (row four), but the
@@ -460,10 +466,11 @@ Where a decision is recorded, the row cites its ADR number; records are resolved
 | Decision | Gates | Standing |
 | --- | --- | --- |
 | **Ratify the admission validator's placement** ([A4](#group-a--pipeline-mechanisms)): one shared check with three callers, fired at every crossing of the curated boundary; staging detective-only; raw exempt | [A4](#group-a--pipeline-mechanisms)'s unit shape; the answer to "where do validate/lint/digest kick in" | Adopted by these documents from [ot#6](https://github.com/ppat/obsidian-tools/issues/6) (the newer, explicit text) over older prose describing a scheduled-validator shape; recorded as ADR-0007, status proposed — the owner has not ratified it |
-| **Resolve [W2](./USE_CASES.md#axis-2--writers-connected)'s authority conflict** ([B3](#group-b--connection-work)) | [W2](./USE_CASES.md#axis-2--writers-connected) | Four candidate shapes: the watcher inside the Coder workspace's trust boundary; a fourth stream; a narrow-handle writer announcing via promotion; or an n8n workflow (conversion already lives in n8n/OpenClaw). None chosen |
+| **Resolve [W2](./USE_CASES.md#axis-2--writers-connected)'s authority conflict** ([B3](#group-b--connection-work)) | [W2](./USE_CASES.md#axis-2--writers-connected) | Four candidate shapes: the watcher inside the batch-credential holder's trust boundary; a fourth stream; a narrow-handle writer announcing via promotion; or a workflow on an automation client (for example n8n — conversion already lives in the capture clients). None chosen |
 | **When the apps go on** ([B8](#group-b--connection-work)) | [R1](./USE_CASES.md#axis-3--readers-connected), [ot#69](https://github.com/ppat/obsidian-tools/issues/69) | Owner's want; the stated criterion is "enough content to read". Preconditions [ot#47](https://github.com/ppat/obsidian-tools/issues/47), [ot#72](https://github.com/ppat/obsidian-tools/issues/72) |
 | **Batch staleness measurement** | [A2](#group-a--pipeline-mechanisms) | **Decided** — ADR-0048, accepted: per file, by content hash, never against repo head |
 | **Batch write semantics** | [A2](#group-a--pipeline-mechanisms) | Recorded as ADR-0053 — a chunk applies as whole-note writes, create and modify told apart by the anti-clobber flag; status proposed, the owner has not ratified it |
+| **Ratify the vault's own agentic workflow** ([A5](#group-a--pipeline-mechanisms)'s second pass) | [A5](#group-a--pipeline-mechanisms)'s second pass ([ot#177](https://github.com/ppat/obsidian-tools/issues/177)); [C3](#group-c--content-work)'s lint check; [A8](#group-a--pipeline-mechanisms)'s model calls | Recorded as ADR-0054 — a library inside the vault's existing jobs, writing only through their gated paths; status proposed, the owner has not ratified it |
 | **The `salience:`/`confidence:` correlation audit at ~200 notes** | [A8](#group-a--pipeline-mechanisms)'s fields | Scheduled decision: if they track, `salience:` is removed; the audit and its grounds are recorded in ADR-0012 |
 | **CI strategy for the vault workloads** ([apps#3440](https://github.com/ppat/homelab-ops-kubernetes-apps/issues/3440)) | Every Group A unit's validation | **Execution gap resolved, network isolation still open.** A position posted on the ticket on 2026-09-04 and adopted in V1 planning splits the two suites by role: component behaviour is proven in `obsidian-tools`' own CI, including integration tests against a real NATS JetStream rather than mocks standing in for its consume/acknowledge/redeliver/dead-letter semantics; this repo's chainsaw suite asserts only what it alone can — that the workload objects exist, are shaped correctly and become Ready — with no component-behaviour tests duplicated across the repository boundary. Every Group A workload PR of the V1 increment ([apps#3947](https://github.com/ppat/homelab-ops-kubernetes-apps/pull/3947), [apps#3953](https://github.com/ppat/homelab-ops-kubernetes-apps/pull/3953), [apps#3956](https://github.com/ppat/homelab-ops-kubernetes-apps/pull/3956)) was validated under it. [ot#25](https://github.com/ppat/obsidian-tools/issues/25) stays deferred: the position adopts its two-suite role split, not its consolidation proposals. Standing measurement [2026-09-02]: the suite has booted the real Obsidian image in kind and asserted it Ready since [apps#3462](https://github.com/ppat/homelab-ops-kubernetes-apps/pull/3462) (2026-07-29; the feared cost basis was a stale estimate inherited from the abandoned base image — the real one is 282 MB, ~9 s pull), and the MCP tier proves out with no Obsidian behind it. **Still open:** the sole-control NetworkPolicy kind cannot exercise — untouched by the position and still parked |
 | **The NetworkPolicy packet test** | Confidence in a sole control | Reopened on new evidence and re-parked on a smaller residual [measured 2026-09-02]: cluster-level enforcement is packet-proven by another project's standing probe on the same cluster; what remains config-level is the vault namespace's own policy objects — see the [verification catalogue](./docs/VERIFICATIONS.md) |

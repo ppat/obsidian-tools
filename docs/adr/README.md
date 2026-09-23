@@ -73,11 +73,12 @@ build state never lives here.
 | 0015 | [The raw layer: write-once, validation-exempt, enforced in `batch-processor`](./content-model/0015-raw-immutability.md) | Accepted |
 | 0016 | [Task metadata: the bracket format, settled vault-wide](./content-model/0016-task-metadata-bracket-format.md) | Accepted |
 | 0017 | [Community plugins: Tasks and Dataview only; no in-app validation plugin](./content-model/0017-plugin-set-tasks-dataview.md) | Accepted |
-| 0018 | [Lint policy: in-pass in-code normalisation, the auto-fix boundary, the capped digest](./content-model/0018-lint-pass-policy.md) | Accepted |
+| 0018 | [Lint policy: in-pass in-code normalisation, the auto-fix boundary, findings resolved by the vault's agentic workflow](./content-model/0018-lint-pass-policy.md) | Accepted |
 | 0019 | [Vocabulary rulings: a person is an `entity`; dining takes travel's overlay](./content-model/0019-type-and-overlay-vocabulary.md) | Accepted |
 | 0038 | [Search at scale and near-duplicate detection deliberately not built](./content-model/0038-search-and-dedup-not-built.md) | Accepted |
 | 0039 | [One schema file, one owner: `CLAUDE.md`, with `AGENTS.md` a plain-text pointer](./content-model/0039-schema-file-and-agents-pointer.md) | Accepted |
 | 0042 | [The adopted community pattern, and the regeneration-safety conventions](./content-model/0042-adopted-community-pattern.md) | Accepted |
+| 0054 | [The vault does its own agentic work, inside its existing jobs and through their gated paths](./content-model/0054-vault-owned-agentic-workflow.md) | **Proposed** |
 
 ## The work queue — `work-queue/`
 
