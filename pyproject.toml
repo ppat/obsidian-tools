@@ -23,9 +23,9 @@ build-backend = "hatchling.build"
 [dependency-groups]
 dev = [
   "pytest==9.1.1",
-  "hypothesis==6.165.10",
-  "ruff==0.16.5",
-  "pyright==1.1.411",
+  "hypothesis==6.168.0",
+  "ruff==0.16.9",
+  "pyright==1.1.414",
   # Test-only: the independent oracle the frontmatter dialect (obsidian_tools/vault_schema/frontmatter.py)
   # is checked against. Never a runtime dependency -- the image is built `--no-dev` -- because its
   # compiled extension would break the one-virtualenv, two-architecture image build noted above.
