@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.8.1](https://github.com/ppat/obsidian-tools/compare/v0.8.0...v0.8.1) (2026-10-11)
+
+
+### 🚀 Enhancements + Bug Fixes
+
+* update @commitlint/config-conventional (21.2.2 -&gt; 21.2.3) ([#166](https://github.com/ppat/obsidian-tools/issues/166)) ([2c94c40](https://github.com/ppat/obsidian-tools/commit/2c94c40859bf72b9ad15dfdbbfad8723796a4b59))
+* update @commitlint/ensure (21.2.0 -&gt; 21.2.3) ([#167](https://github.com/ppat/obsidian-tools/issues/167)) ([978759b](https://github.com/ppat/obsidian-tools/commit/978759bccd8e4b6e58d67f1df575ace31700b8e3))
+* update @commitlint/lint (21.2.2 -&gt; 21.2.3) ([#168](https://github.com/ppat/obsidian-tools/issues/168)) ([aabe189](https://github.com/ppat/obsidian-tools/commit/aabe189a5ca7a0837555555388226b34afaa41af))
+* update @commitlint/load (21.2.2 -&gt; 21.2.3) ([#169](https://github.com/ppat/obsidian-tools/issues/169)) ([979fb7d](https://github.com/ppat/obsidian-tools/commit/979fb7d1a5b5b2a43c9cee4c2e96d50aa4d6da94))
+
 ## [0.8.0](https://github.com/ppat/obsidian-tools/compare/v0.7.0...v0.8.0) (2026-09-23)
 
 
