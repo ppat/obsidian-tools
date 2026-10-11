@@ -1,7 +1,7 @@
 [tools]
 pre-commit = "4.6.2"
-python     = "3.14.7"
-uv         = "0.12.17"
+python     = "3.14.8"
+uv         = "0.12.24"
 
 [settings]
 python.uv_venv_auto = "source"
