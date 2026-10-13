@@ -11,7 +11,7 @@ requires-python = ">=3.14"
 # environment is copied into both (Dockerfile), an assumption any compiled extension would
 # invalidate. ADR-0047 rejected NATS's decentralized JWT model on exactly this ground, because its
 # client-side nonce signing pulls in `nkeys`.
-dependencies = ["nats-py==2.15.0"]
+dependencies = ["nats-py==2.16.0"]
 
 [project.scripts]
 obsidian-tools = "obsidian_tools.cli:main"
