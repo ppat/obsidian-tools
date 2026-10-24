@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.9.0](https://github.com/ppat/obsidian-tools/compare/v0.8.0...v0.9.0) (2026-10-24)
+
+
+### ✨ Features
+
+* update nats-py (2.15.0 -&gt; 2.16.0) ([#182](https://github.com/ppat/obsidian-tools/issues/182)) ([0d76735](https://github.com/ppat/obsidian-tools/commit/0d7673515143f72b78bd56a02d8c3e85be4d4462))
+
+
+### 🚀 Enhancements + Bug Fixes
+
+* update @commitlint/cli (21.2.3 -&gt; 21.2.4) ([#192](https://github.com/ppat/obsidian-tools/issues/192)) ([e9aa363](https://github.com/ppat/obsidian-tools/commit/e9aa3636d79add8ebd154c7636329a6407846bfe))
+* update @commitlint/config-conventional (21.2.2 -&gt; 21.2.3) ([#166](https://github.com/ppat/obsidian-tools/issues/166)) ([2c94c40](https://github.com/ppat/obsidian-tools/commit/2c94c40859bf72b9ad15dfdbbfad8723796a4b59))
+* update @commitlint/config-conventional (21.2.3 -&gt; 21.2.4) ([#193](https://github.com/ppat/obsidian-tools/issues/193)) ([ef15c8c](https://github.com/ppat/obsidian-tools/commit/ef15c8c7a45368a939fc90a013e3aaed76850314))
+* update @commitlint/ensure (21.2.0 -&gt; 21.2.3) ([#167](https://github.com/ppat/obsidian-tools/issues/167)) ([978759b](https://github.com/ppat/obsidian-tools/commit/978759bccd8e4b6e58d67f1df575ace31700b8e3))
+* update @commitlint/ensure (21.2.3 -&gt; 21.2.4) ([#194](https://github.com/ppat/obsidian-tools/issues/194)) ([b14e8ff](https://github.com/ppat/obsidian-tools/commit/b14e8ff5b23b9289ecd51b9a6daa35f5ec37e741))
+* update @commitlint/lint (21.2.2 -&gt; 21.2.3) ([#168](https://github.com/ppat/obsidian-tools/issues/168)) ([aabe189](https://github.com/ppat/obsidian-tools/commit/aabe189a5ca7a0837555555388226b34afaa41af))
+* update @commitlint/lint (21.2.3 -&gt; 21.2.4) ([#195](https://github.com/ppat/obsidian-tools/issues/195)) ([1a742ce](https://github.com/ppat/obsidian-tools/commit/1a742ce25db716959a0207a8cc9c1aa2f9e4f0d4))
+* update @commitlint/load (21.2.2 -&gt; 21.2.3) ([#169](https://github.com/ppat/obsidian-tools/issues/169)) ([979fb7d](https://github.com/ppat/obsidian-tools/commit/979fb7d1a5b5b2a43c9cee4c2e96d50aa4d6da94))
+
 ## [0.8.0](https://github.com/ppat/obsidian-tools/compare/v0.7.0...v0.8.0) (2026-09-23)
 
 
