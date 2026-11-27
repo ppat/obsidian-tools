@@ -40,7 +40,7 @@ permissions:
 
 jobs:
   test-deep:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # An order of magnitude more Hypothesis examples, plus the git/rsync-heavy stateful harness --
     # deliberately given far more room than the ordinary `test` job's 15 minutes.
     timeout-minutes: 60
